@@ -27,9 +27,17 @@ class GantryResult:
     """
     timestamp: float = 0.0
 
-    # ---- 双中心距离（距离堆场原点，米）----
-    center_elec_side: float = 0.0    # 电气房侧中心距离堆场原点（米）
-    center_engine_side: float = 0.0  # 柴油机侧中心距离堆场原点（米）
+    # ---- 大车双作业点 L-Point（堆场 LYCS，米）----
+    # 接收机1 天线 A1(主) → 电气房侧作业点；字段名历史遗留 center_elec_*
+    center_elec_side: float = 0.0
+    center_elec_y: float = 0.0
+    # 接收机1 天线 A2(副) → 柴油机侧作业点；字段名历史遗留 center_engine_*
+    center_engine_side: float = 0.0
+    center_engine_y: float = 0.0
+    a1_valid: bool = False   # 电气房侧作业点有效（A1 + l_arm_elec）
+    a2_valid: bool = False   # 柴油机侧作业点有效（A2 + l_arm_diesel）
+    recv1_live: bool = False  # gantry_a1 / 9001 接收机在线
+    recv2_live: bool = False  # gantry_a2 / 9002 接收机在线（监控用）
 
     # ---- 四个门腿相对跑道中心线偏移（米）----
     # 排列顺序：左前、左后、右前、右后
@@ -83,6 +91,8 @@ class TrolleyResult:
     # ---- 速度（m/s）----
     speed: float = 0.0
 
+    is_valid: bool = False
+
     data_source: DataSource = DataSource.INVALID
 
 
@@ -97,6 +107,31 @@ class PositionResult:
 
     gantry: GantryResult = field(default_factory=GantryResult)
     trolley: TrolleyResult = field(default_factory=TrolleyResult)
+
+    # 参考 GNSS 主天线 WGS84（解算输入，非 L-Point）
+    latitude: float = 0.0
+    longitude: float = 0.0
+    altitude: float = 0.0
+    ref_receiver_id: str = ""       # 如 gantry_a2、gantry_a1+gantry_a2
+
+    # 主天线 ECEF（全精度，杆臂标定优先使用，避免 WGS84 显示/量化误差）
+    ref_ecef_x: float = 0.0
+    ref_ecef_y: float = 0.0
+    ref_ecef_z: float = 0.0
+
+    # 接收机1 副天线 A2 WGS84（杆臂标定 / 柴油机侧解算输入）
+    antenna2_latitude: float = 0.0
+    antenna2_longitude: float = 0.0
+    antenna2_altitude: float = 0.0
+    antenna2_ecef_x: float = 0.0
+    antenna2_ecef_y: float = 0.0
+    antenna2_ecef_z: float = 0.0
+    antenna2_valid: bool = False
+
+    # L-Point 解算输出 WGS84（由堆场 LYCS 反算）
+    lpoint_latitude: float = 0.0
+    lpoint_longitude: float = 0.0
+    lpoint_altitude: float = 0.0
 
     # 系统健康状态
     gnss_fix_quality: int = 0       # 当前 GNSS 定位质量

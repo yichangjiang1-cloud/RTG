@@ -8,13 +8,14 @@
 """
 
 import json
-import logging
 import threading
 import time
 from typing import Optional, Callable, Dict, Any
 import paho.mqtt.client as mqtt
 
-logger = logging.getLogger(__name__)
+from src.utils.enhanced_logger import EnhancedLogger
+
+logger = EnhancedLogger.get_logger(__name__)
 
 
 class MqttClient:
@@ -60,6 +61,7 @@ class MqttClient:
 
         # 回调注册
         self._control_callback: Optional[Callable[[dict], None]] = None
+        self._connected_callback: Optional[Callable[[], None]] = None
         self._lock = threading.Lock()
 
         # 连接状态
@@ -71,13 +73,14 @@ class MqttClient:
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message    = self._on_message
 
-        logger.info("MQTT Client 初始化完成，Vehicle ID: %s", self._vehicle_id)
+        logger.info(f"MQTT Client 初始化完成，Vehicle ID: {self._vehicle_id}")
 
     # ------------------------------------------------------------------
     # 生命周期管理
     # ------------------------------------------------------------------
     def start(self) -> None:
         """启动 MQTT 客户端，连接 Broker。"""
+        logger.info(f"启动 MQTT 客户端，目标 Broker: {self._broker_host}:{self._broker_port}")
         try:
             self._client.connect(
                 self._broker_host, 
@@ -85,18 +88,18 @@ class MqttClient:
                 self._keepalive
             )
             self._client.loop_start()
-            logger.info("MQTT 连接中: %s:%d", self._broker_host, self._broker_port)
+            logger.info("MQTT 后台循环已启动，等待连接回调...")
         except Exception as e:
-            logger.error("MQTT 连接失败: %s", e)
+            logger.error(f"MQTT 连接失败: {e}")
             raise
 
     def stop(self) -> None:
         """停止 MQTT 客户端。"""
-        logger.info("MQTT Client 停止中...")
+        logger.info("正在停止 MQTT 客户端...")
         self._stop_event.set()
         self._client.loop_stop()
         self._client.disconnect()
-        logger.info("MQTT Client 已停止")
+        logger.info("✓ MQTT Client 已停止")
 
     def is_connected(self) -> bool:
         """返回连接状态。"""
@@ -112,7 +115,7 @@ class MqttClient:
         """
         old_id = self._vehicle_id
         self._vehicle_id = new_id
-        logger.info("Vehicle ID 更新: %s -> %s", old_id, new_id)
+        logger.info(f"Vehicle ID 更新: {old_id} -> {new_id}")
         
         # 取消旧订阅，订阅新 Topic
         if self._connected:
@@ -145,9 +148,11 @@ class MqttClient:
         try:
             result = self._client.publish(topic, payload, qos=0)
             if result.rc != mqtt.MQTT_ERR_SUCCESS:
-                logger.warning("遥测数据发布失败: rc=%d", result.rc)
+                logger.warning(f"遥测数据发布失败: rc={result.rc}, topic={topic}")
+            else:
+                logger.debug(f"遥测数据已发布到 {topic}, 数据大小: {len(payload)} 字节")
         except Exception as e:
-            logger.exception("发布遥测数据异常: %s", e)
+            logger.exception(f"发布遥测数据异常: {e}")
 
     def publish_status(self, status_data: Dict[str, Any]) -> None:
         """
@@ -157,11 +162,12 @@ class MqttClient:
         """
         topic = f"rtg/{self._vehicle_id}/status"
         payload = json.dumps(status_data, ensure_ascii=False)
+        event_type = status_data.get("event", "unknown")
         try:
             self._client.publish(topic, payload, qos=1)
-            logger.info("设备状态已发布: %s", status_data.get("event", "unknown"))
+            logger.info(f"✓ 设备状态已发布: 事件={event_type}, topic={topic}")
         except Exception as e:
-            logger.exception("发布状态异常: %s", e)
+            logger.exception(f"发布设备状态异常: {e}")
 
     def publish_discovery(self, device_info: Dict[str, Any]) -> None:
         """
@@ -173,9 +179,9 @@ class MqttClient:
         payload = json.dumps(device_info, ensure_ascii=False)
         try:
             self._client.publish(topic, payload, qos=1)
-            logger.info("设备发现消息已广播: %s", device_info)
+            logger.info(f"✓ 设备发现消息已广播: temp_id={device_info.get('temp_id')}, mac={device_info.get('mac')}")
         except Exception as e:
-            logger.exception("发布发现消息异常: %s", e)
+            logger.exception(f"发布发现消息异常: {e}")
 
     # ------------------------------------------------------------------
     # 订阅接口
@@ -189,6 +195,11 @@ class MqttClient:
         with self._lock:
             self._control_callback = callback
 
+    def set_on_connected_callback(self, callback: Callable[[], None]) -> None:
+        """MQTT 连接成功（含重连）后的回调，用于上报上线 / discovery。"""
+        with self._lock:
+            self._connected_callback = callback
+
     # ------------------------------------------------------------------
     # MQTT 事件回调
     # ------------------------------------------------------------------
@@ -196,21 +207,29 @@ class MqttClient:
         """MQTT 连接回调。"""
         if rc == 0:
             self._connected = True
-            logger.info("✓ MQTT 已连接: %s:%d", self._broker_host, self._broker_port)
+            logger.info(f"✓ MQTT 已连接成功: {self._broker_host}:{self._broker_port}")
             
             # 订阅控制指令 Topic
             control_topic = f"rtg/{self._vehicle_id}/control"
             client.subscribe(control_topic, qos=1)
-            logger.info("订阅控制 Topic: %s", control_topic)
+            logger.info(f"✓ 已订阅控制 Topic: {control_topic}")
+
+            with self._lock:
+                cb = self._connected_callback
+            if cb:
+                try:
+                    cb()
+                except Exception as e:
+                    logger.error(f"✗ MQTT 连接回调执行失败: {e}")
         else:
             self._connected = False
-            logger.error("✗ MQTT 连接失败: rc=%d", rc)
+            logger.error(f"✗ MQTT 连接失败: rc={rc}, 原因: {self._get_rc_meaning(rc)}")
 
     def _on_disconnect(self, client, userdata, rc):
         """MQTT 断连回调。"""
         self._connected = False
         if rc != 0:
-            logger.warning("MQTT 意外断开: rc=%d，将自动重连", rc)
+            logger.warning(f"⚠ MQTT 意外断开: rc={rc}, 将自动重连...")
         else:
             logger.info("MQTT 正常断开")
 
@@ -219,17 +238,32 @@ class MqttClient:
         try:
             # 解析控制指令
             payload = json.loads(msg.payload.decode("utf-8"))
-            logger.info("收到 MQTT 消息 [%s]: %s", msg.topic, payload)
+            cmd_type = payload.get("cmd", "unknown")
+            logger.info(f"← 收到 MQTT 消息: topic={msg.topic}, cmd={cmd_type}")
+            logger.debug(f"消息内容: {payload}")
             
             # 调用控制回调
             with self._lock:
                 if self._control_callback:
                     self._control_callback(payload)
                 else:
-                    logger.warning("控制指令无处理器: %s", payload)
+                    logger.warning(f"⚠ 控制指令无处理器: cmd={cmd_type}")
         except json.JSONDecodeError as e:
-            logger.error("MQTT 消息解析失败: %s", e)
+            logger.error(f"✗ MQTT 消息解析失败: {e}, payload={msg.payload[:100]}")
         except Exception as e:
-            logger.exception("处理 MQTT 消息异常: %s", e)
+            logger.exception(f"✗ 处理 MQTT 消息异常: {e}")
+    
+    @staticmethod
+    def _get_rc_meaning(rc: int) -> str:
+        """获取 MQTT 返回码含义"""
+        meanings = {
+            0: "成功",
+            1: "协议版本不正确",
+            2: "客户端 ID 无效",
+            3: "服务器不可用",
+            4: "用户名或密码错误",
+            5: "未授权",
+        }
+        return meanings.get(rc, f"未知错误码: {rc}")
 
 

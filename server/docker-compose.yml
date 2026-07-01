@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # MQTT Broker - Mosquitto
+  mosquitto:
+    image: eclipse-mosquitto:latest
+    container_name: rtg-mosquitto
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-logs:/mosquitto/log
+    networks:
+      - rtg-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-h", "localhost", "-t", "$SYS/broker/uptime"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # RTG 后端服务
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rtg-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - MQTT_BROKER_HOST=mosquitto
+      - MQTT_BROKER_PORT=1883
+      - DATABASE_URL=sqlite:///./data/ground_truth.db
+      - LOG_LEVEL=INFO
+      - DEBUG=false
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    networks:
+      - rtg-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  rtg-network:
+    driver: bridge
+
+volumes:
+  mosquitto-data:
+    driver: local
+  mosquitto-logs:
+    driver: local

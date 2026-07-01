@@ -1,43 +1,48 @@
 import { useState, useEffect } from 'react';
-import { Car, Map, CheckCircle2, AlertTriangle, Wifi, WifiOff, Loader2, ToggleLeft, ToggleRight, Edit2, X, Save, Plus, Zap, RefreshCw } from 'lucide-react';
+import { Car, Map, CheckCircle2, AlertTriangle, Wifi, WifiOff, Loader2, ToggleLeft, ToggleRight, Edit2, X, Save, Zap, RefreshCw, Settings2, Plus } from 'lucide-react';
 import { SectionHeader, showToast } from './common';
 import { useAppContext } from '../context/AppContext';
-import type { PendingDevice } from '../context/AppContext';
 import { clsx } from 'clsx';
 
-// ── 新设备初始化弹窗 ──────────────────────────────────────
-function InitDeviceModal({ device, backendBase, onClose, onDone }: {
-  device: PendingDevice;
+// ── 新建场地弹窗 ──────────────────────────────────────
+function CreateYardModal({ backendBase, onClose, onDone }: {
   backendBase: string;
   onClose: () => void;
   onDone: () => void;
 }) {
-  const { initDevice } = useAppContext();
-  const [newId, setNewId] = useState('RTG-');
-  const [label, setLabel] = useState('');
-  const [lArmX, setLArmX] = useState('1.5');
-  const [lArmY, setLArmY] = useState('0.5');
-  const [lArmZ, setLArmZ] = useState('3.2');
-  const [h, setH] = useState('22.5');
-  const [wSpan, setWSpan] = useState('23.47');
+  const [yardId, setYardId] = useState('yard_');
+  const [name, setName] = useState('');
+  const [originLat, setOriginLat] = useState('');
+  const [originLon, setOriginLon] = useState('');
+  const [originAlt, setOriginAlt] = useState('0');
+  const [bayCount, setBayCount] = useState('40');
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit() {
-    if (!newId.trim() || !label.trim()) { showToast('⚠️ 请填写正式 ID 和名称'); return; }
+    if (!yardId.trim() || !name.trim()) { showToast('请填写场地 ID 和名称'); return; }
+    if (!originLat.trim() || !originLon.trim()) { showToast('请填写原点经纬度'); return; }
     setSaving(true);
     try {
-      await initDevice({
-        temp_id: device.temp_id,
-        new_vehicle_id: newId.trim(),
-        label: label.trim(),
-        l_arm: [parseFloat(lArmX), parseFloat(lArmY), parseFloat(lArmZ)],
-        h: parseFloat(h),
-        w_span: parseFloat(wSpan),
+      const res = await fetch(`${backendBase}/api/yard/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          yard_id: yardId.trim(),
+          name: name.trim(),
+          origin_lat: parseFloat(originLat),
+          origin_lon: parseFloat(originLon),
+          origin_alt: parseFloat(originAlt) || 0,
+          heading_deg: 0,
+          bay_spacing: 0,
+          bay_count: parseInt(bayCount) || 0,
+        }),
+        signal: AbortSignal.timeout(10000),
       });
-      showToast(`✅ ${newId} 初始化成功，中控机将重启并以新 ID 上线`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      showToast(`场地 ${name.trim()} 创建成功`);
       onDone();
     } catch {
-      showToast('❌ 初始化失败，请检查后端连接', 'error');
+      showToast('创建失败，请检查后端连接', 'error');
     } finally {
       setSaving(false);
     }
@@ -47,54 +52,58 @@ function InitDeviceModal({ device, backendBase, onClose, onDone }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
       <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-5 shadow-2xl">
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-bold text-white">初始化新设备</h3>
+          <h3 className="text-base font-bold text-white">新建场地</h3>
           <button onClick={onClose} className="text-slate-500 hover:text-white"><X className="w-5 h-5" /></button>
-        </div>
-
-        <div className="p-3 bg-slate-800/60 rounded-lg text-xs space-y-1 font-mono">
-          <div className="flex justify-between"><span className="text-slate-500">临时 ID</span><span className="text-amber-400">{device.temp_id}</span></div>
-          <div className="flex justify-between"><span className="text-slate-500">MAC</span><span className="text-slate-300">{device.mac}</span></div>
         </div>
 
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="section-title block mb-1">正式 ID</label>
-              <input className="input-field font-mono" value={newId} onChange={e => setNewId(e.target.value)} placeholder="RTG-001" />
+              <label className="section-title block mb-1">场地 ID</label>
+              <input className="input-field font-mono" value={yardId} onChange={e => setYardId(e.target.value)} placeholder="yard_01" />
             </div>
             <div>
-              <label className="section-title block mb-1">显示名称</label>
-              <input className="input-field" value={label} onChange={e => setLabel(e.target.value)} placeholder="RTG 01号机" />
+              <label className="section-title block mb-1">场地名称</label>
+              <input className="input-field" value={name} onChange={e => setName(e.target.value)} placeholder="A区堆场" />
             </div>
           </div>
+
           <div>
-            <label className="section-title block mb-1">杆臂向量 L_arm [X, Y, Z] (m)</label>
+            <label className="section-title block mb-1">原点坐标 (WGS84)</label>
             <div className="grid grid-cols-3 gap-2">
-              {[['X', lArmX, setLArmX], ['Y', lArmY, setLArmY], ['Z', lArmZ, setLArmZ]].map(([axis, val, setter]) => (
-                <div key={axis as string}>
-                  <span className="text-[10px] text-slate-500">{axis as string}</span>
-                  <input type="number" step="0.01" className="input-field font-mono text-sm py-1.5" value={val as string} onChange={e => (setter as (v: string) => void)(e.target.value)} />
-                </div>
-              ))}
+              <div>
+                <span className="text-[10px] text-slate-500">纬度 Lat</span>
+                <input type="number" step="0.000001" className="input-field font-mono text-sm py-1.5" value={originLat} onChange={e => setOriginLat(e.target.value)} placeholder="30.123456" />
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-500">经度 Lon</span>
+                <input type="number" step="0.000001" className="input-field font-mono text-sm py-1.5" value={originLon} onChange={e => setOriginLon(e.target.value)} placeholder="120.654321" />
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-500">高程 Alt (m)</span>
+                <input type="number" step="0.01" className="input-field font-mono text-sm py-1.5" value={originAlt} onChange={e => setOriginAlt(e.target.value)} placeholder="5.0" />
+              </div>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="section-title block mb-1">吊具基准高度 H (m)</label>
-              <input type="number" step="0.1" className="input-field font-mono" value={h} onChange={e => setH(e.target.value)} />
-            </div>
-            <div>
-              <label className="section-title block mb-1">跨距 W_span (m)</label>
-              <input type="number" step="0.01" className="input-field font-mono" value={wSpan} onChange={e => setWSpan(e.target.value)} />
-            </div>
+
+          <div>
+            <label className="section-title block mb-1">预估贝位数</label>
+            <input type="number" step="1" className="input-field font-mono w-32" value={bayCount} onChange={e => setBayCount(e.target.value)} placeholder="40" />
+            <p className="text-[10px] text-slate-500 mt-1">实际贝位位置由 RTK 打点确定，此处仅为预估</p>
           </div>
+        </div>
+
+        <div className="p-3 bg-slate-800/60 rounded-lg">
+          <p className="text-[10px] text-slate-400 leading-relaxed">
+            原点坐标为堆场坐标系的参考原点。创建后场地状态为「未建图」，需人工持 RTK 设备逐贝位打点确定各贝位实际坐标后完成建图。贝位间距不固定，由打点数据决定。
+          </p>
         </div>
 
         <div className="flex gap-3 pt-1">
           <button onClick={onClose} className="flex-1 btn-secondary">取消</button>
           <button onClick={handleSubmit} disabled={saving} className="flex-1 btn-primary flex items-center justify-center gap-2">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-            {saving ? '初始化中…' : '确认初始化'}
+            {saving ? '创建中…' : '确认创建'}
           </button>
         </div>
       </div>
@@ -104,7 +113,7 @@ function InitDeviceModal({ device, backendBase, onClose, onDone }: {
 
 export default function Settings() {
   const {
-    vehicles, pendingDevices, yards,
+    vehicles, yards,
     selectedVehicleId, setSelectedVehicleId,
     selectedYardId, setSelectedYardId,
     useMock,
@@ -119,23 +128,22 @@ export default function Settings() {
   async function handleRefreshVehicles() {
     if (useMock || refreshingVehicles) return;
     setRefreshingVehicles(true);
-    try { await fetchVehicles(); showToast('✅ 车辆列表已刷新'); }
-    catch { showToast('⚠️ 刷新失败，请检查后端连接', 'error'); }
+    try { await fetchVehicles(); showToast('车辆列表已刷新'); }
+    catch { showToast('刷新失败，请检查后端连接', 'error'); }
     finally { setRefreshingVehicles(false); }
   }
 
   async function handleRefreshYards() {
     if (useMock || refreshingYards) return;
     setRefreshingYards(true);
-    try { await fetchYards(); showToast('✅ 场地列表已刷新'); }
-    catch { showToast('⚠️ 刷新失败，请检查后端连接', 'error'); }
+    try { await fetchYards(); showToast('场地列表已刷新'); }
+    catch { showToast('刷新失败，请检查后端连接', 'error'); }
     finally { setRefreshingYards(false); }
   }
 
   const selectedVehicle = vehicles.find(v => v.vehicle_id === selectedVehicleId) ?? null;
   const selectedYard    = yards.find(y => y.yard_id === selectedYardId) ?? null;
 
-  // 角色 C 判定：调用 GET /api/yard/map 检查 calibration_status
   const [calibrationStatus, setCalibrationStatus] = useState<'none' | 'calibrated' | null>(null);
   const [checkingRole, setCheckingRole] = useState(false);
   useEffect(() => {
@@ -145,24 +153,22 @@ export default function Settings() {
     fetch(`http://${backendConfig.host}:${backendConfig.port}/api/yard/map?yard_id=${selectedYardId}&vehicle_id=${selectedVehicleId}`,
       { signal: AbortSignal.timeout(5000) })
       .then(r => r.ok ? r.json() : null)
-      .then((json: { calibration_status?: string } | null) => {
-        setCalibrationStatus((json?.calibration_status === 'calibrated') ? 'calibrated' : 'none');
+      .then((resp: { code: number; data: { calibration_status?: string } } | null) => {
+        const cs = resp?.data?.calibration_status;
+        setCalibrationStatus(cs === 'completed' ? 'calibrated' : 'none');
       })
       .catch(() => setCalibrationStatus(null))
       .finally(() => setCheckingRole(false));
   }, [selectedVehicleId, selectedYardId, useMock, backendConfig]);
 
-  // 角色判定（A=建图，B=校准，C=作业）
   const role: 'mapping' | 'calibration' | 'worker' | null =
     !selectedYard ? null :
     !selectedYard.mapped ? 'mapping' :
     calibrationStatus === 'calibrated' ? 'worker' :
     'calibration';
 
-  // 待初始化设备弹窗
-  const [initTarget, setInitTarget] = useState<PendingDevice | null>(null);
+  const [showCreateYard, setShowCreateYard] = useState(false);
 
-  // 可编辑的后端服务地址（全局统一）
   const [editingConn, setEditingConn] = useState(false);
   const [editHost, setEditHost] = useState(backendConfig.host);
   const [editPort, setEditPort] = useState(String(backendConfig.port));
@@ -170,10 +176,9 @@ export default function Settings() {
   function toggleMock() {
     const next = !useMock;
     switchMockMode(next);
-    showToast(next ? '🧪 已切换为模拟数据模式' : '🔌 已切换为真实连接模式，正在拉取设备列表…');
+    showToast(next ? '已切换为模拟数据模式' : '已切换为真实连接模式，正在拉取设备列表…');
   }
 
-  // 当后端配置变化时，重置编辑框内容
   useEffect(() => {
     setEditHost(backendConfig.host);
     setEditPort(String(backendConfig.port));
@@ -183,29 +188,29 @@ export default function Settings() {
   function saveConnEdit() {
     const port = parseInt(editPort, 10);
     if (!editHost.trim() || isNaN(port) || port < 1 || port > 65535) {
-      showToast('⚠️ IP 或端口格式不正确');
+      showToast('IP 或端口格式不正确');
       return;
     }
     setBackendConfig({ host: editHost.trim(), port });
     setEditingConn(false);
-    showToast('✅ 后端服务地址已更新，下次连接时生效');
+    showToast('后端服务地址已更新，下次连接时生效');
   }
+
+  const baseUrl = `http://${backendConfig.host}:${backendConfig.port}`;
 
   return (
     <div className="animate-fade-in space-y-6">
-      {/* 初始化弹窗 */}
-      {initTarget && (
-        <InitDeviceModal
-          device={initTarget}
-          backendBase={`http://${backendConfig.host}:${backendConfig.port}`}
-          onClose={() => setInitTarget(null)}
-          onDone={() => setInitTarget(null)}
+      {showCreateYard && (
+        <CreateYardModal
+          backendBase={baseUrl}
+          onClose={() => setShowCreateYard(false)}
+          onDone={() => { setShowCreateYard(false); fetchYards().catch(() => {}); }}
         />
       )}
 
       <SectionHeader
         title="工作配置"
-        subtitle="选择当前操作的车辆和作业场地。场地首次建图担任「A角色」，建图后未校准的车辆担任「B角色」，已校准车辆为「C角色（作业）」。"
+        subtitle="选择车辆与场地。流程：① RTK 建图真值 → ② 车体静态参数 → ③ 校准（全场/三点/免校准）→ ④ 作业。"
       />
 
       {/* ── 模拟数据开关 ── */}
@@ -229,39 +234,6 @@ export default function Settings() {
           {useMock ? '模拟开启' : '模拟关闭'}
         </button>
       </div>
-
-      {/* ── 待初始化设备 ── */}
-      {!useMock && pendingDevices.length > 0 && (
-        <div className="card p-5 border border-amber-500/30 bg-amber-900/10 space-y-3">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-400" />
-            <h3 className="text-sm font-bold uppercase tracking-wide text-amber-300">待初始化设备</h3>
-            <span className="ml-auto text-[10px] text-amber-500">{pendingDevices.length} 台待分配</span>
-          </div>
-          <p className="text-[11px] text-amber-200/60">
-            以下设备已上线但尚未分配正式 ID。点击「初始化」填写参数后，后端将向设备下发 CMD_INIT_IDENTITY，设备重启后以新 ID 上线。
-          </p>
-          <div className="space-y-2">
-            {pendingDevices.map(dev => (
-              <div key={dev.temp_id} className="flex items-center gap-3 p-3 bg-slate-900/60 rounded-xl border border-amber-500/20">
-                <div className="w-9 h-9 rounded-lg bg-amber-900/40 border border-amber-500/30 flex items-center justify-center shrink-0">
-                  <Car className="w-4 h-4 text-amber-400" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-amber-200 font-mono">{dev.temp_id}</p>
-                  <p className="text-[10px] text-slate-500 font-mono">MAC: {dev.mac}</p>
-                </div>
-                <button
-                  onClick={() => setInitTarget(dev)}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold shrink-0"
-                >
-                  <Plus className="w-3.5 h-3.5" /> 初始化
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* ── 后端服务连接面板 ── */}
       <div className="card p-5 border border-slate-700/60 space-y-4">
@@ -291,21 +263,20 @@ export default function Settings() {
             {selectedVehicleId && <span className="text-blue-400"> 当前订阅车辆：{selectedVehicleId}</span>}
           </p>
 
-          {/* IP / 端口显示 + 编辑 */}
           {editingConn ? (
             <div className="flex items-center gap-2 flex-wrap">
               <input
                 className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-slate-200 font-mono w-44 focus:outline-none focus:border-blue-500"
                 value={editHost}
                 onChange={e => setEditHost(e.target.value)}
-                placeholder="192.168.1.200"
+                placeholder="localhost"
               />
               <span className="text-slate-500">:</span>
               <input
                 className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-slate-200 font-mono w-20 focus:outline-none focus:border-blue-500"
                 value={editPort}
                 onChange={e => setEditPort(e.target.value)}
-                placeholder="8080"
+                placeholder="8000"
               />
               <button onClick={saveConnEdit} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold">
                 <Save className="w-3.5 h-3.5" /> 保存
@@ -471,7 +442,7 @@ export default function Settings() {
                   key={v.vehicle_id}
                   onClick={() => {
                     setSelectedVehicleId(isSelected ? null : v.vehicle_id);
-                    if (!isSelected) showToast(`✅ 已选择：${v.label}`);
+                    if (!isSelected) showToast(`已选择：${v.label}`);
                   }}
                   className={clsx(
                     'w-full text-left p-4 rounded-xl border transition-all duration-150',
@@ -492,7 +463,7 @@ export default function Settings() {
                         {v.label}
                       </p>
                       <p className="text-[10px] text-slate-500 font-mono mt-0.5">
-                        {v.vehicle_id} · {v.antennas.length} 天线 · H={v.height}m · W={v.span}m
+                        {v.vehicle_id} · H={v.height}m · W={v.span}m
                       </p>
                     </div>
                     {isSelected && <CheckCircle2 className="w-5 h-5 text-blue-400 shrink-0" />}
@@ -502,9 +473,13 @@ export default function Settings() {
             })}
           </div>
 
-          <p className="text-[10px] text-slate-600 text-center pt-1">
-            天线杆臂等几何参数请在「参数配置」页编辑
-          </p>
+          <button
+            onClick={() => { window.location.hash = 'config'; }}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-slate-600 hover:border-blue-500 text-slate-400 hover:text-blue-400 text-xs font-bold transition-colors"
+          >
+            <Settings2 className="w-3.5 h-3.5" />
+            管理车辆 / 初始化新设备
+          </button>
         </div>
 
         {/* 右栏：场地列表 */}
@@ -533,7 +508,7 @@ export default function Settings() {
                   key={y.yard_id}
                   onClick={() => {
                     setSelectedYardId(isSelected ? null : y.yard_id);
-                    if (!isSelected) showToast(`✅ 已选择：${y.name}`);
+                    if (!isSelected) showToast(`已选择：${y.name}`);
                   }}
                   className={clsx(
                     'w-full text-left p-4 rounded-xl border transition-all duration-150',
@@ -554,7 +529,7 @@ export default function Settings() {
                         {y.name}
                       </p>
                       <p className="text-[10px] text-slate-500 font-mono mt-0.5">
-                        {y.yard_id} · {y.total_bays} 贝位 · 朝向 {y.heading}°
+                        {y.yard_id} · {y.total_bays} 贝位
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -574,10 +549,18 @@ export default function Settings() {
             })}
           </div>
 
-          {/* 说明框 */}
+          <button
+            onClick={() => setShowCreateYard(true)}
+            disabled={useMock}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-slate-600 hover:border-emerald-500 text-slate-400 hover:text-emerald-400 text-xs font-bold transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            新建场地
+          </button>
+
           <div className="p-3 bg-slate-900/60 border border-slate-700/40 rounded-lg">
             <p className="text-[10px] text-slate-500 leading-relaxed">
-              💡 <span className="text-slate-400 font-semibold">角色说明：</span>
+              <span className="text-slate-400 font-semibold">角色说明：</span>
               同一台车，在「未建图」场地为建图角色；在「已建图」场地为校准角色。
               角色由场地状态决定，与车辆编号无关。
             </p>

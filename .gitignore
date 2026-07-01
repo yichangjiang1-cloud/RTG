@@ -36,7 +36,10 @@ env/
 *~
 
 # 日志和运行时数据
-logs/*.log
+logs/
+src/logs/
+*.log
+*.log.*
 data/*.db
 data/*.db-journal
 data/*.json
@@ -57,6 +60,10 @@ node_modules/
 fronted/node_modules/
 fronted/.npm_cache
 
-# 忽略打包后的可执行文件
-*.exe
-*.spec
+# 临时/本地工具脚本
+tools/test.py
+tools/test_roll.py
+
+# 大型 GNSS 回放日志（本地联调用）
+tests/20260407_gnss_mock/COM*_clean.log
+tests/20260407_gnss_mock/.claude/

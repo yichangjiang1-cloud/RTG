@@ -1,12 +1,18 @@
 """
 工具模块：日志配置
 统一初始化 logging，支持控制台 + 滚动文件双输出。
+增强功能：导出 EnhancedLogger 用于自动捕获调用者信息。
 """
 
 import logging
 import logging.handlers
 import os
 from typing import Optional
+
+# 导出增强日志类
+from .enhanced_logger import EnhancedLogger, log_method_call
+
+__all__ = ['setup_logging', 'EnhancedLogger', 'log_method_call']
 
 
 def setup_logging(
@@ -25,13 +31,17 @@ def setup_logging(
     """
     numeric_level = getattr(logging, level.upper(), logging.INFO)
 
+    # 增强日志格式：添加毫秒
     formatter = logging.Formatter(
-        fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        fmt="%(asctime)s.%(msecs)03d [%(levelname)-7s] %(name)-25s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     root_logger = logging.getLogger()
     root_logger.setLevel(numeric_level)
+    
+    # 清除已有 Handler（避免重复初始化）
+    root_logger.handlers.clear()
 
     # 控制台 Handler
     console_handler = logging.StreamHandler()
@@ -50,5 +60,6 @@ def setup_logging(
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
 
-    logging.getLogger("rtg").info("日志系统初始化完成，级别: %s", level)
+    logging.getLogger("rtg").info("✓ 日志系统初始化完成，级别: %s", level)
+
 

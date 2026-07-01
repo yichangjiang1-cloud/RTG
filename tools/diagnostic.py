@@ -15,9 +15,13 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.utils.logger import setup_logging
-from src.utils.config_loader import Config
-from src.utils.database import GroundTruthDB
+from src.utils.config_loader import init_config, get_config
 import logging
+
+try:
+    import requests
+except ImportError:
+    requests = None
 
 logger = logging.getLogger(__name__)
 
@@ -60,26 +64,24 @@ def check_network() -> bool:
     return all_ok
 
 
-def check_database() -> bool:
-    """检查数据库连接。"""
-    logger.info("\n3. 检查数据库...")
-    db_path = "data/ground_truth.db"
+def check_backend_api() -> bool:
+    """检查 Web 后端 API 是否可达（RTK/校准数据在服务端库）。"""
+    logger.info("\n3. 检查后端 API...")
+    if requests is None:
+        logger.error("  ✗ requests 未安装，无法检查后端")
+        return False
     try:
-        db = GroundTruthDB(db_path)
-        logger.info("  ✓ 数据库连接成功: %s", db_path)
-       
-        # 统计数据
-        import sqlite3
-        conn = sqlite3.connect(db_path)
-        count_points = conn.execute("SELECT COUNT(*) FROM survey_points").fetchone()[0]
-        count_patches = conn.execute("SELECT COUNT(*) FROM z_patches").fetchone()[0]
-        conn.close()
-       
-        logger.info("    - RTK 打点记录: %d 条", count_points)
-        logger.info("    - Z 轴补丁: %d 条", count_patches)
-        return True
+        init_config("config/system.yaml")
+        base = get_config().get("backend.api_base_url", "http://localhost:8000").rstrip("/")
+        resp = requests.get(f"{base}/api/health", timeout=3.0)
+        if resp.status_code == 200:
+            logger.info("  ✓ 后端 API 正常: %s", base)
+            logger.info("    - RTK 建图 / 校准请使用 Web Mapping、Calibration 页或对应 REST API")
+            return True
+        logger.error("  ✗ 后端返回异常: HTTP %d", resp.status_code)
+        return False
     except Exception as e:
-        logger.error("  ✗ 数据库错误: %s", e)
+        logger.error("  ✗ 无法连接后端 API: %s", e)
         return False
 
 
@@ -129,7 +131,7 @@ def main():
     results = {
         "配置文件": check_config_files(),
         "网络端口": check_network(),
-        "数据库": check_database(),
+        "后端 API": check_backend_api(),
         "堆场地图": check_yard_map(),
         "依赖包": check_dependencies(),
     }

@@ -35,12 +35,12 @@ class Config:
         merged: dict = {}
         for path in paths:
             if not os.path.exists(path):
-                logger.warning("配置文件不存在，跳过: %s", path)
+                logger.warning(f"配置文件不存在，跳过: {path}")
                 continue
             with open(path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             merged = _deep_merge(merged, data)
-            logger.debug("已加载配置文件: %s", path)
+            logger.debug(f"已加载配置文件: {path}")
         return cls(merged)
 
     def get(self, key_path: str, default: Any = None) -> Any:

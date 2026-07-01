@@ -47,6 +47,7 @@ class PlcClient(threading.Thread):
         self._sent_count    = 0
         self._dropped_count = 0
         self._error_count   = 0
+        self._last_error_log_time = 0.0
 
     # ------------------------------------------------------------------
     # 公开接口
@@ -133,8 +134,14 @@ class PlcClient(threading.Thread):
                 self._sock.sendall(frame)
                 self._sent_count += 1
             except OSError as e:
-                logger.error("发送失败，连接断开: %s", e)
                 self._error_count += 1
+                now = time.time()
+                if now - self._last_error_log_time >= 30.0:
+                    logger.warning(
+                        "PLC 发送失败，连接断开: %s（%g s 内不再重复告警）",
+                        e, 30.0,
+                    )
+                    self._last_error_log_time = now
                 self._connected = False
                 self._close_socket()
                 break

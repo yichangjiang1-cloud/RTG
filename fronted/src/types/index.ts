@@ -7,40 +7,81 @@ export interface GpsCoord {
   alt: number;
 }
 
+/** ECEF 坐标（米），杆臂标定优先使用 */
+export interface EcefCoord {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** 解算输入：接收机主天线 WGS84 */
+export interface RefAntennaCoord extends GpsCoord {
+  receiver_id?: string;
+  ecef_x?: number;
+  ecef_y?: number;
+  ecef_z?: number;
+}
+
+/** 副天线 A2 WGS84（接收机1 柴油机侧 GGA） */
+export interface Antenna2Coord extends GpsCoord {
+  valid?: boolean;
+  ecef_x?: number;
+  ecef_y?: number;
+  ecef_z?: number;
+}
+
 export interface LocalCoord {
   x: number;
   y: number;
   z: number;
 }
 
+/** 带有效标志的堆场坐标点 */
+export interface GantryCenter {
+  x: number;
+  y: number;
+  valid?: boolean;
+}
+
 /** 大车定位输出（6.1 节） */
 export interface GantryData {
-  /** 电气房侧中心距堆场原点的坐标 (m) */
-  elec_center: { x: number; y: number };
-  /** 柴油机侧中心距堆场原点的坐标 (m) */
-  diesel_center: { x: number; y: number };
-  /** 四个门腿中心点相对跑道中心线的偏移量 (m)，正值偏向堆场外，负值偏向堆场内 */
+  /** 电气房侧作业点 L-Point（接收机1 天线 A1 + l_arm_elec） */
+  elec_lpoint?: GantryCenter;
+  /** 柴油机侧作业点 L-Point（接收机1 天线 A2 + l_arm_diesel） */
+  diesel_lpoint?: GantryCenter;
+  /** @deprecated 同 elec_lpoint */
+  receiver_left: GantryCenter;
+  /** @deprecated 同 diesel_lpoint */
+  receiver_right: GantryCenter;
+  /** @deprecated 同 elec_lpoint */
+  elec_center: GantryCenter;
+  /** @deprecated 同 diesel_lpoint */
+  diesel_center: GantryCenter;
   leg_offsets: { fl: number; fr: number; rl: number; rr: number };
-  /** 大车运行速度 (m/s)，数值增大方向为正 */
   speed: number;
 }
 
 /** 小车定位输出（6.2 节） */
 export interface TrolleyData {
-  /** 小车 A 端天线在 RTG 坐标系下的实时坐标 (m) */
+  valid?: boolean;
   ant_a: LocalCoord;
-  /** 小车 B 端天线在 RTG 坐标系下的实时坐标 (m) */
   ant_b: LocalCoord;
-  /** 小车距轨道起始点的实际运行距离 (m) */
   travel: number;
-  /** 小车运行速度 (m/s)，数值增大方向为正 */
   speed: number;
 }
 
 export interface RealtimeData {
   timestamp: string;
-  gps_coord: GpsCoord;
+  /** 解算输出：大车 L-Point WGS84 */
+  lpoint_geo: GpsCoord;
+  /** 解算输出：大车 L-Point 堆场坐标 (LYCS) */
   local_coord: LocalCoord;
+  /** 解算输入：参考接收机主天线 WGS84 */
+  ref_antenna: RefAntennaCoord;
+  /** 接收机1 副天线 A2 WGS84（智能杆臂标定柴油机侧） */
+  antenna2?: Antenna2Coord;
+  /** @deprecated 同 ref_antenna，兼容旧遥测 */
+  gps_coord?: GpsCoord;
   heading: number;
   roll: number;
   pitch: number;
@@ -60,15 +101,14 @@ export interface ReceiverStatus {
   status: GnssStatus;
   satellites: number;
   hdop: number;
+  valid?: boolean;
 }
 
 // ===== 车辆参数类型 =====
-export interface AntennArm {
+/** 天线标识：用于区分 6 根天线各自对应的物理角色（大车左前/右前/左后/右后、小车A端/B端） */
+export interface AntennaLabel {
   id: string;
   label: string;
-  dx: number;
-  dy: number;
-  dz: number;
 }
 
 /** 车辆物理几何参数（与场地角色无关，角色由场地是否建图决定） */
@@ -76,8 +116,29 @@ export interface VehicleProfile {
   vehicle_id: string;
   label: string;       // 用户可读名称，如 "RTG 01号机"
   height: number;
-  span: number;
-  antennas: AntennArm[];
+  span: number;        // 门腿跨距 W_span (m)，参考尺寸
+  /** @deprecated 兼容单杆臂；请使用 l_arm_elec / l_arm_diesel */
+  l_arm: [number, number, number];
+  /** 电气房侧作业点杆臂（天线 A1 → L-Point） */
+  l_arm_elec: [number, number, number];
+  /** 柴油机侧作业点杆臂（天线 A2 → L-Point） */
+  l_arm_diesel: [number, number, number];
+  /** 最近一次智能标定记录（可选，便于追溯） */
+  l_arm_calibration?: {
+    elec?: LArmCalibrationRecord;
+    diesel?: LArmCalibrationRecord;
+  };
+  /** 天线标签列表，标识每根天线对应的物理角色 */
+  antennas: AntennaLabel[];
+}
+
+/** 杆臂智能标定记录 */
+export interface LArmCalibrationRecord {
+  measured_at: string;
+  lpoint: GpsCoord;
+  antenna: GpsCoord;
+  attitude: { roll: number; pitch: number; heading: number };
+  l_arm: [number, number, number];
 }
 
 /**
@@ -94,6 +155,7 @@ export interface BackendConfig {
 export interface SurveyPoint {
   id: string;
   bay_id: string;
+  bay_no?: number;
   yard_id: string;
   lat: number;
   lon: number;

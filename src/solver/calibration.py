@@ -81,7 +81,7 @@ class BVehicleCalibrator:
         """
         self._points.append(CalibrationPoint(measured, reference))
         count = len(self._points)
-        logger.info("添加校准点 %d: 实测=%s 参考=%s", count, measured, reference)
+        logger.info(f"添加校准点 {count}: 实测={measured} 参考={reference}")
         return count
 
     def reset(self) -> None:

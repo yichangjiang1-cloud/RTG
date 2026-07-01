@@ -9,6 +9,28 @@ import {
 import { StatCard, StatusBadge, StatusDot, Compass } from './common';
 import type { RealtimeData } from '../types';
 
+/** 速度显示死区，与中控 motion_speed.DEADBAND_MPS 一致 */
+const SPEED_DISPLAY_DEADBAND = 0.03;
+
+function formatSpeedMps(v: number, digits = 3): string {
+  const s = Math.abs(v) < SPEED_DISPLAY_DEADBAND ? 0 : v;
+  return `${s.toFixed(digits)} m/s`;
+}
+
+function formatSignedSpeedMps(v: number, digits = 3): string {
+  const s = Math.abs(v) < SPEED_DISPLAY_DEADBAND ? 0 : v;
+  return `${s >= 0 ? '+' : ''}${s.toFixed(digits)} m/s`;
+}
+
+function formatCoordM(v: number, valid = true, digits = 4): string {
+  if (valid === false) return '无数据';
+  return `${v.toFixed(digits)} m`;
+}
+
+function isCenterValid(valid: boolean | undefined, fallback = true): boolean {
+  return valid !== false;
+}
+
 interface DashboardProps {
   data: RealtimeData;
   history: RealtimeData[];
@@ -17,13 +39,16 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ data, history, isMock, connStatus }: DashboardProps) {
+  const elecCenter = data.gantry.elec_lpoint ?? data.gantry.receiver_left ?? data.gantry.elec_center;
+  const dieselCenter = data.gantry.diesel_lpoint ?? data.gantry.receiver_right ?? data.gantry.diesel_center;
+
   const chartData = useMemo(
     () =>
       history.slice(-60).map((d, i) => ({
         t: i,
         x: parseFloat(d.local_coord.x.toFixed(4)),
         y: parseFloat(d.local_coord.y.toFixed(4)),
-        speed: parseFloat(d.speed.toFixed(3)),
+        speed: parseFloat((Math.abs(d.speed) < SPEED_DISPLAY_DEADBAND ? 0 : d.speed).toFixed(3)),
       })),
     [history],
   );
@@ -48,27 +73,10 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
         </div>
       )}
       {/* Top stat row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="card p-5 col-span-2 md:col-span-1">
-          <p className="section-title mb-3">L-Point 大地坐标</p>
-          <div className="space-y-1">
-            <div className="flex justify-between items-baseline">
-              <span className="text-[10px] text-slate-500">LAT</span>
-              <span className="font-mono text-blue-400 text-sm">{data.gps_coord.lat.toFixed(8)}°</span>
-            </div>
-            <div className="flex justify-between items-baseline">
-              <span className="text-[10px] text-slate-500">LON</span>
-              <span className="font-mono text-blue-400 text-sm">{data.gps_coord.lon.toFixed(8)}°</span>
-            </div>
-            <div className="flex justify-between items-baseline">
-              <span className="text-[10px] text-slate-500">ALT</span>
-              <span className="font-mono text-blue-400 text-sm">{data.gps_coord.alt.toFixed(3)} m</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="card p-5">
-          <p className="section-title mb-3">堆场坐标 (LYCS)</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="card p-5 sm:col-span-2 lg:col-span-1">
+          <p className="section-title mb-1">大车 L-Point（堆场坐标）</p>
+          <p className="text-[10px] text-slate-500 mb-3">解算输出 · LYCS · 原点为堆场参考点</p>
           <div className="space-y-1">
             <div className="flex justify-between items-baseline">
               <span className="text-[10px] text-slate-500">X</span>
@@ -81,6 +89,25 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
             <div className="flex justify-between items-baseline">
               <span className="text-[10px] text-slate-500">Z</span>
               <span className="font-mono text-emerald-400 text-sm">{data.local_coord.z.toFixed(4)} m</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="card p-5">
+          <p className="section-title mb-1">大车 L-Point（大地坐标）</p>
+          <p className="text-[10px] text-slate-500 mb-3">解算输出 · WGS84 · 由堆场坐标反算</p>
+          <div className="space-y-1">
+            <div className="flex justify-between items-baseline">
+              <span className="text-[10px] text-slate-500">LAT</span>
+              <span className="font-mono text-blue-400 text-sm">{data.lpoint_geo.lat.toFixed(8)}°</span>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <span className="text-[10px] text-slate-500">LON</span>
+              <span className="font-mono text-blue-400 text-sm">{data.lpoint_geo.lon.toFixed(8)}°</span>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <span className="text-[10px] text-slate-500">ALT</span>
+              <span className="font-mono text-blue-400 text-sm">{data.lpoint_geo.alt.toFixed(3)} m</span>
             </div>
           </div>
         </div>
@@ -110,7 +137,7 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
           </div>
           <StatCard
             label=""
-            value={`${data.speed.toFixed(3)} m/s`}
+            value={formatSpeedMps(data.speed)}
             sub="实时速度"
             accent="blue"
             className="!p-0 !bg-transparent !border-0 !shadow-none"
@@ -177,22 +204,33 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
               <span className="text-sm font-semibold">接收机状态</span>
             </div>
             <div className="space-y-2">
-              {data.receivers.map((r) => (
+              {data.receivers.length === 0 ? (
+                <p className="text-xs text-slate-500 py-2">暂无接收机状态</p>
+              ) : (
+                data.receivers.map((r) => (
                 <div key={r.id} className="flex items-center justify-between p-2.5 bg-slate-900/50 rounded-lg">
                   <div className="flex items-center gap-2">
-                    <StatusDot status={r.status} />
-                    <span className="text-xs text-slate-300">{r.label}</span>
+                    <StatusDot status={r.valid === false ? 'no_signal' : r.status} />
+                    <span className={`text-xs ${r.valid === false ? 'text-slate-500' : 'text-slate-300'}`}>
+                      {r.label}
+                    </span>
                   </div>
                   <div className="flex items-center gap-3 text-[10px] text-slate-500">
-                    <span>{r.satellites} sats</span>
-                    <span>HDOP {r.hdop}</span>
-                    <span className={
-                      r.status === 'fix' ? 'text-emerald-400' :
-                      r.status === 'float' ? 'text-amber-400' : 'text-red-400'
-                    }>{statusLabel}</span>
+                    {r.valid === false ? (
+                      <span className="text-slate-500">无数据</span>
+                    ) : (
+                      <>
+                        <span>{r.satellites} sats</span>
+                        <span>HDOP {r.hdop}</span>
+                        <span className={
+                          r.status === 'fix' ? 'text-emerald-400' :
+                          r.status === 'float' ? 'text-amber-400' : 'text-red-400'
+                        }>{statusLabel}</span>
+                      </>
+                    )}
                   </div>
                 </div>
-              ))}
+              )))}
             </div>
           </div>
         </div>
@@ -211,28 +249,38 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
           {/* 双中心输出 */}
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-slate-900/50 rounded-lg p-3">
-              <p className="section-title mb-2">电气房侧中心</p>
+              <p className="section-title mb-2">电气房侧作业点 (A1)</p>
+              <p className="text-[9px] text-slate-600 mb-1">接收机1 主天线 · gantry_a1</p>
               <div className="space-y-1">
                 <div className="flex justify-between items-baseline">
                   <span className="text-[10px] text-slate-500">X</span>
-                  <span className="font-mono text-blue-400 text-sm">{data.gantry.elec_center.x.toFixed(4)} m</span>
+                  <span className={`font-mono text-sm ${isCenterValid(elecCenter.valid) ? 'text-blue-400' : 'text-slate-500'}`}>
+                    {formatCoordM(elecCenter.x, elecCenter.valid)}
+                  </span>
                 </div>
                 <div className="flex justify-between items-baseline">
                   <span className="text-[10px] text-slate-500">Y</span>
-                  <span className="font-mono text-blue-400 text-sm">{data.gantry.elec_center.y.toFixed(4)} m</span>
+                  <span className={`font-mono text-sm ${isCenterValid(elecCenter.valid) ? 'text-blue-400' : 'text-slate-500'}`}>
+                    {formatCoordM(elecCenter.y, elecCenter.valid)}
+                  </span>
                 </div>
               </div>
             </div>
             <div className="bg-slate-900/50 rounded-lg p-3">
-              <p className="section-title mb-2">柴油机侧中心</p>
+              <p className="section-title mb-2">柴油机侧作业点 (A2)</p>
+              <p className="text-[9px] text-slate-600 mb-1">接收机1 副天线 · gantry_a1 双 GGA</p>
               <div className="space-y-1">
                 <div className="flex justify-between items-baseline">
                   <span className="text-[10px] text-slate-500">X</span>
-                  <span className="font-mono text-purple-400 text-sm">{data.gantry.diesel_center.x.toFixed(4)} m</span>
+                  <span className={`font-mono text-sm ${isCenterValid(dieselCenter.valid) ? 'text-purple-400' : 'text-slate-500'}`}>
+                    {formatCoordM(dieselCenter.x, dieselCenter.valid)}
+                  </span>
                 </div>
                 <div className="flex justify-between items-baseline">
                   <span className="text-[10px] text-slate-500">Y</span>
-                  <span className="font-mono text-purple-400 text-sm">{data.gantry.diesel_center.y.toFixed(4)} m</span>
+                  <span className={`font-mono text-sm ${isCenterValid(dieselCenter.valid) ? 'text-purple-400' : 'text-slate-500'}`}>
+                    {formatCoordM(dieselCenter.y, dieselCenter.valid)}
+                  </span>
                 </div>
               </div>
             </div>
@@ -267,13 +315,18 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
               data.gantry.speed > 0.01 ? 'text-blue-400' :
               data.gantry.speed < -0.01 ? 'text-amber-400' : 'text-slate-400'
             }`}>
-              {data.gantry.speed >= 0 ? '+' : ''}{data.gantry.speed.toFixed(3)} m/s
+              {formatSignedSpeedMps(data.gantry.speed)}
             </span>
           </div>
         </div>
 
         {/* 小车定位 */}
-        <div className="card p-5 space-y-4">
+        <div className="card p-5 space-y-4 relative">
+          {data.trolley.valid === false && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-950/70 rounded-2xl">
+              <p className="text-sm text-slate-400">小车无实时 GNSS 数据 (9003)</p>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <MoveHorizontal className="w-4 h-4 text-emerald-400" />
             <span className="text-sm font-semibold">小车定位</span>
@@ -317,7 +370,7 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
                 data.trolley.speed > 0.01 ? 'text-emerald-400' :
                 data.trolley.speed < -0.01 ? 'text-amber-400' : 'text-slate-400'
               }`}>
-                {data.trolley.speed >= 0 ? '+' : ''}{data.trolley.speed.toFixed(3)} m/s
+                {formatSignedSpeedMps(data.trolley.speed)}
               </span>
             </div>
           </div>
@@ -384,7 +437,7 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
 
             {/* Data labels */}
             <text x="390" y="16" fill="#64748b" fontSize="9" textAnchor="middle">
-              {`X: ${data.local_coord.x.toFixed(2)} m  |  HDG: ${data.heading.toFixed(1)}°  |  大车速度: ${data.gantry.speed >= 0 ? '+' : ''}${data.gantry.speed.toFixed(2)} m/s`}
+              {`X: ${data.local_coord.x.toFixed(2)} m  |  HDG: ${data.heading.toFixed(1)}°  |  大车速度: ${formatSignedSpeedMps(data.gantry.speed, 2)}`}
             </text>
 
             {/* Leg offset indicators */}

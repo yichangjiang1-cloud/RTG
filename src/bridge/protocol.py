@@ -8,8 +8,8 @@
   [4:8]   seq        uint32  帧序列号（循环递增）
   [8:16]  timestamp  double  UNIX 时间戳（秒）
   ---- 大车数据（36 字节）----
-  [16:20] center_elec   float32  电气房侧中心距堆场原点（m）
-  [20:24] center_engine float32  柴油机侧中心距堆场原点（m）
+  [16:20] center_elec   float32  电气房侧作业点 L-Point X（m，字段名历史遗留）
+  [20:24] center_engine float32  柴油机侧作业点 L-Point X（m，字段名历史遗留）
   [24:28] leg_lf        float32  左前腿偏移（m）
   [28:32] leg_lb        float32  左后腿偏移（m）
   [32:36] leg_rf        float32  右前腿偏移（m）

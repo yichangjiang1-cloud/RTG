@@ -1,0 +1,47 @@
+"""常量定义"""
+
+# MQTT Topics
+MQTT_TOPIC_TELEMETRY = "rtg/{vehicle_id}/telemetry"
+MQTT_TOPIC_CONTROL = "rtg/{vehicle_id}/control"
+MQTT_TOPIC_STATUS = "rtg/{vehicle_id}/status"
+MQTT_TOPIC_DISCOVERY = "rtg/discovery"
+
+# 设备状态
+DEVICE_STATUS_NEW = "new"
+DEVICE_STATUS_INITIALIZED = "initialized"
+DEVICE_STATUS_WORKING = "working"
+DEVICE_STATUS_ERROR = "error"
+
+# 定位质量
+FIX_QUALITY_NO_FIX = 0
+FIX_QUALITY_SPS = 1
+FIX_QUALITY_DGPS = 2
+FIX_QUALITY_RTK_FLOAT = 4
+FIX_QUALITY_RTK_FIXED = 5
+
+FIX_QUALITY_NAMES = {
+    0: "no_signal",
+    1: "sps",
+    2: "dgps",
+    4: "float",
+    5: "fix",
+}
+
+# 打点类型
+SURVEY_POINT_ORIGIN = "origin"
+SURVEY_POINT_BAY = "bay"
+SURVEY_POINT_MAGNET = "magnet"
+
+# 校准状态
+CALIBRATION_PENDING = "pending"
+CALIBRATION_COMPLETED = "completed"
+CALIBRATION_FAILED = "failed"
+
+# API 响应码
+API_CODE_SUCCESS = 200
+API_CODE_CREATED = 201
+API_CODE_BAD_REQUEST = 400
+API_CODE_UNAUTHORIZED = 401
+API_CODE_FORBIDDEN = 403
+API_CODE_NOT_FOUND = 404
+API_CODE_INTERNAL_ERROR = 500

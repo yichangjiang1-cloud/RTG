@@ -18,6 +18,15 @@ class FixQuality(IntEnum):
     RTK_FLOAT = 5       # RTK 浮点解
     ESTIMATED = 6
 
+    @classmethod
+    def is_rtk(cls, value: int) -> bool:
+        """NMEA GGA quality 4/5 均为可用 RTK（固定解精度高于浮点解，枚举值却更小）。"""
+        try:
+            fq = cls(int(value))
+        except ValueError:
+            return False
+        return fq in (cls.RTK_FIXED, cls.RTK_FLOAT)
+
 
 @dataclass
 class GnssRaw:
@@ -56,6 +65,21 @@ class GnssRaw:
     ecef_x: float = 0.0
     ecef_y: float = 0.0
     ecef_z: float = 0.0
+
+    # ---- 同机副天线（第二根 GGA，可选）----
+    antenna2_latitude: Optional[float] = None
+    antenna2_longitude: Optional[float] = None
+    antenna2_altitude: Optional[float] = None
+    antenna2_ecef_x: float = 0.0
+    antenna2_ecef_y: float = 0.0
+    antenna2_ecef_z: float = 0.0
+    antenna2_fix_quality: FixQuality = FixQuality.INVALID
+    antenna2_num_satellites: int = 0
+    antenna2_hdop: float = 99.9
+
+    @property
+    def has_antenna2(self) -> bool:
+        return self.antenna2_latitude is not None and self.antenna2_longitude is not None
 
     @property
     def is_valid(self) -> bool:

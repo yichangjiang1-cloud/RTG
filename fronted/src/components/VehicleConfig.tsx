@@ -1,52 +1,270 @@
-import { useState, useEffect } from 'react';
-import { Settings2, Plus, Trash2, Save, FolderOpen, Car } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, type Dispatch, type SetStateAction } from 'react';
+import { Settings2, Plus, Trash2, Save, FolderOpen, Car, Radio, RefreshCw, X, Loader2, AlertTriangle, Copy, Sparkles, WifiOff } from 'lucide-react';
 import { SectionHeader, showToast } from './common';
 import { useAppContext } from '../context/AppContext';
-import type { VehicleProfile, AntennArm } from '../types';
+import type { ConnStatus, PendingDevice } from '../context/AppContext';
+import type { VehicleProfile, AntennaLabel, RealtimeData, LArmCalibrationRecord, GpsCoord } from '../types';
 import { clsx } from 'clsx';
 import { logger } from '../utils/logger';
 
-// ============================================================
-// 天线杆臂输入行
-// ============================================================
-function ArmInput({
-  ant,
-  onChange,
-  onDelete,
-}: {
-  ant: AntennArm;
-  onChange: (id: string, key: keyof AntennArm, val: string | number) => void;
-  onDelete: (id: string) => void;
+// ── 新设备初始化弹窗 ──────────────────────────────────────
+function InitDeviceModal({ device, backendBase, onClose, onDone }: {
+  device: PendingDevice;
+  backendBase: string;
+  onClose: () => void;
+  onDone: (newVehicleId: string) => void;
 }) {
+  const { initDevice, vehicles } = useAppContext();
+  const [newId, setNewId] = useState('RTG-');
+  const [label, setLabel] = useState('');
+  const [h, setH] = useState('22.5');
+  const [wSpan, setWSpan] = useState('23.47');
+  const [saving, setSaving] = useState(false);
+  const [clonedArms, setClonedArms] = useState<{
+    l_arm_elec: [number, number, number];
+    l_arm_diesel: [number, number, number];
+  } | null>(null);
+
+  const [cloneSourceId, setCloneSourceId] = useState<string | null>(null);
+  const [loadingClone, setLoadingClone] = useState(false);
+
+  async function handleCloneSelect(sourceId: string) {
+    if (!sourceId) {
+      setCloneSourceId(null);
+      setClonedArms(null);
+      return;
+    }
+    setCloneSourceId(sourceId);
+    setLoadingClone(true);
+    try {
+      const res = await fetch(`${backendBase}/api/vehicle/config/${sourceId}`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const resp = await res.json() as { code: number; data: { l_arm?: number[]; l_arm_elec?: number[]; l_arm_diesel?: number[]; height?: number; w_span?: number } | null };
+      if (resp.code === 200 && resp.data) {
+        const d = resp.data;
+        const legacy = d.l_arm ?? [0, 0, 0];
+        const elec = (d.l_arm_elec ?? legacy).slice(0, 3) as [number, number, number];
+        const diesel = (d.l_arm_diesel ?? legacy).slice(0, 3) as [number, number, number];
+        setClonedArms({ l_arm_elec: elec, l_arm_diesel: diesel });
+        if (d.height != null) setH(String(d.height));
+        if (d.w_span != null) setWSpan(String(d.w_span));
+        showToast(`已从 ${sourceId} 复制 H/W 与杆臂（杆臂请上线后用智能标定复核）`);
+      } else {
+        showToast('该车型暂无参数配置', 'error');
+        setCloneSourceId(null);
+        setClonedArms(null);
+      }
+    } catch {
+      showToast('获取源车型参数失败', 'error');
+      setCloneSourceId(null);
+      setClonedArms(null);
+    } finally {
+      setLoadingClone(false);
+    }
+  }
+
+  async function handleSubmit() {
+    if (!newId.trim() || !label.trim()) { showToast('请填写正式 ID 和名称'); return; }
+    const zero: [number, number, number] = [0, 0, 0];
+    const elec = clonedArms?.l_arm_elec ?? zero;
+    const diesel = clonedArms?.l_arm_diesel ?? zero;
+    setSaving(true);
+    try {
+      await initDevice({
+        temp_id: device.temp_id,
+        new_vehicle_id: newId.trim(),
+        label: label.trim(),
+        l_arm: elec,
+        l_arm_elec: elec,
+        l_arm_diesel: diesel,
+        h: parseFloat(h),
+        w_span: parseFloat(wSpan),
+      });
+
+      if (cloneSourceId) {
+        try {
+          await fetch(`${backendBase}/api/vehicle/config/clone`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source_vehicle_id: cloneSourceId, new_vehicle_id: newId.trim() }),
+          });
+        } catch { /* clone 失败不阻塞初始化流程 */ }
+      }
+
+      showToast(`${newId} 初始化成功；请在中控运行后使用「智能杆臂标定」完成杆臂配置`);
+      onDone(newId.trim());
+    } catch {
+      showToast('初始化失败，请检查后端连接', 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
-    <div className="bg-slate-900/60 border border-slate-700/60 rounded-xl p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <input
-          className="input-field text-sm py-1.5 flex-1 mr-3 font-mono"
-          value={ant.label}
-          onChange={(e) => onChange(ant.id, 'label', e.target.value)}
-          placeholder="天线标签"
-        />
-        <button
-          onClick={() => onDelete(ant.id)}
-          className="p-1.5 text-slate-500 hover:text-red-400 transition-colors"
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-5 shadow-2xl">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-bold text-white">初始化新设备</h3>
+          <button onClick={onClose} className="text-slate-500 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="p-3 bg-slate-800/60 rounded-lg text-xs space-y-1 font-mono">
+          <div className="flex justify-between"><span className="text-slate-500">临时 ID</span><span className="text-amber-400">{device.temp_id}</span></div>
+          <div className="flex justify-between"><span className="text-slate-500">SN</span><span className="text-slate-300">{device.sn || '-'}</span></div>
+        </div>
+
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="section-title block mb-1">正式 ID</label>
+              <input className="input-field font-mono" value={newId} onChange={e => setNewId(e.target.value)} placeholder="RTG-001" />
+            </div>
+            <div>
+              <label className="section-title block mb-1">显示名称</label>
+              <input className="input-field" value={label} onChange={e => setLabel(e.target.value)} placeholder="RTG 01号机" />
+            </div>
+          </div>
+
+          {vehicles.length > 0 && (
+            <div>
+              <label className="section-title block mb-1">
+                <Copy className="w-3 h-3 inline mr-1 -mt-0.5" />
+                从已有车型复制参数（可选）
+              </label>
+              <div className="flex items-center gap-2">
+                <select
+                  className="input-field font-mono text-sm flex-1"
+                  value={cloneSourceId ?? ''}
+                  onChange={e => handleCloneSelect(e.target.value)}
+                  disabled={loadingClone}
+                >
+                  <option value="">— 不复制 —</option>
+                  {vehicles.map(v => (
+                    <option key={v.vehicle_id} value={v.vehicle_id}>
+                      {v.label} ({v.vehicle_id})
+                    </option>
+                  ))}
+                </select>
+                {loadingClone && <Loader2 className="w-4 h-4 text-blue-400 animate-spin shrink-0" />}
+              </div>
+              {cloneSourceId && !loadingClone && (
+                <p className="text-[10px] text-blue-400 mt-1">
+                  已复制 H/W；杆臂上线后请用智能标定重新计算
+                </p>
+              )}
+            </div>
+          )}
+
+          <p className="text-[10px] text-slate-500 leading-relaxed">
+            杆臂 L_arm 不在此录入，初始化后于「智能杆臂标定」中一键计算。
+          </p>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="section-title block mb-1">吊具基准高度 H (m)</label>
+              <input type="number" step="0.1" className="input-field font-mono" value={h} onChange={e => setH(e.target.value)} />
+            </div>
+            <div>
+              <label className="section-title block mb-1">跨距 W_span (m)</label>
+              <input type="number" step="0.01" className="input-field font-mono" value={wSpan} onChange={e => setWSpan(e.target.value)} />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex gap-3 pt-1">
+          <button onClick={onClose} className="flex-1 btn-secondary">取消</button>
+          <button onClick={handleSubmit} disabled={saving} className="flex-1 btn-primary flex items-center justify-center gap-2">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            {saving ? '初始化中…' : '确认初始化'}
+          </button>
+        </div>
       </div>
-      <div className="grid grid-cols-3 gap-2">
-        {(['dx', 'dy', 'dz'] as const).map((axis) => (
+    </div>
+  );
+}
+
+const DEFAULT_ARM: [number, number, number] = [0, 0, 0];
+
+function mergeVehicleConfig(
+  local: VehicleProfile,
+  data: {
+    l_arm?: [number, number, number];
+    l_arm_elec?: [number, number, number];
+    l_arm_diesel?: [number, number, number];
+    height?: number;
+    w_span?: number;
+    l_arm_calibration?: VehicleProfile['l_arm_calibration'];
+  } | null,
+): VehicleProfile {
+  const legacy = data?.l_arm ?? local.l_arm ?? DEFAULT_ARM;
+  return {
+    ...local,
+    height: data?.height ?? local.height,
+    span: data?.w_span ?? local.span,
+    l_arm: legacy,
+    l_arm_elec: data?.l_arm_elec ?? local.l_arm_elec ?? legacy,
+    l_arm_diesel: data?.l_arm_diesel ?? local.l_arm_diesel ?? legacy,
+    l_arm_calibration: data?.l_arm_calibration ?? local.l_arm_calibration,
+    antennas: local.antennas ?? [],
+  };
+}
+
+// ============================================================
+// 智能杆臂标定
+// ============================================================
+const MAX_CALIB_SPEED = 0.08;
+
+type CalibSide = 'elec' | 'diesel';
+
+type AntennaEcefSource = { ecef_x?: number; ecef_y?: number; ecef_z?: number };
+
+function pickAntennaEcef(src: AntennaEcefSource | undefined): { x: number; y: number; z: number } | null {
+  if (!src) return null;
+  const { ecef_x: x, ecef_y: y, ecef_z: z } = src;
+  if (![x, y, z].every(v => typeof v === 'number' && Number.isFinite(v))) return null;
+  if (x === 0 && y === 0 && z === 0) return null;
+  return { x: x!, y: y!, z: z! };
+}
+
+/** 副天线 A2 是否可用于柴油机侧杆臂标定 */
+function isAntenna2Ready(liveData: RealtimeData): boolean {
+  const a2 = liveData.antenna2;
+  if (!a2) return false;
+  if (a2.valid === true) return true;
+  const hasCoords = Math.abs(a2.lat) > 1e-6 && Math.abs(a2.lon) > 1e-6;
+  if (!hasCoords) return false;
+  const ref = liveData.ref_antenna;
+  return Math.abs(a2.lat - ref.lat) > 1e-7 || Math.abs(a2.lon - ref.lon) > 1e-7;
+}
+
+function formatArm(arm: [number, number, number]) {
+  return `[${arm.map(v => v.toFixed(3)).join(', ')}]`;
+}
+
+function ReadOnlyLArmBlock({
+  title,
+  arm,
+  uncalibrated,
+}: {
+  title: string;
+  arm: [number, number, number];
+  uncalibrated?: boolean;
+}) {
+  const isZero = arm.every(v => Math.abs(v) < 1e-6);
+  return (
+    <div className="p-3 bg-slate-900/60 rounded-lg border border-slate-700/50">
+      <p className="text-[10px] text-slate-500 mb-1">{title}</p>
+      <p className={clsx(
+        'font-mono text-sm',
+        uncalibrated || isZero ? 'text-amber-400/80' : 'text-violet-200',
+      )}>
+        {uncalibrated || isZero ? '未标定' : formatArm(arm)}
+      </p>
+      <div className="grid grid-cols-3 gap-2 mt-2 text-[10px] font-mono text-slate-500">
+        {(['X', 'Y', 'Z'] as const).map((axis, i) => (
           <div key={axis}>
-            <label className="section-title block mb-1">
-              {axis.toUpperCase()} (m)
-            </label>
-            <input
-              type="number"
-              step="0.001"
-              className="input-field text-sm py-1.5 font-mono"
-              value={ant[axis]}
-              onChange={(e) => onChange(ant.id, axis, parseFloat(e.target.value) || 0)}
-            />
+            <span className="text-slate-600">{axis}</span>
+            <p className="text-slate-400">{arm[i].toFixed(3)}</p>
           </div>
         ))}
       </div>
@@ -54,72 +272,365 @@ function ArmInput({
   );
 }
 
+function LArmSmartCalibration({
+  liveData,
+  connStatus,
+  isMock,
+  useMock,
+  baseUrl,
+  cfg,
+  setCfg,
+}: {
+  liveData: RealtimeData;
+  connStatus: ConnStatus;
+  isMock: boolean;
+  useMock: boolean;
+  baseUrl: string;
+  cfg: VehicleProfile | null;
+  setCfg: Dispatch<SetStateAction<VehicleProfile | null>>;
+}) {
+  const [lpElec, setLpElec] = useState({ lat: '', lon: '', alt: '' });
+  const [lpDiesel, setLpDiesel] = useState({ lat: '', lon: '', alt: '' });
+  const [computing, setComputing] = useState<CalibSide | null>(null);
+
+  const stationary = liveData.speed <= MAX_CALIB_SPEED;
+  const gnssOk = liveData.status === 'fix';
+  const wsOk = connStatus === 'connected' && !useMock && !isMock;
+  const a2Ok = isAntenna2Ready(liveData);
+  const canCalib = wsOk && stationary && gnssOk && !!cfg;
+
+  const liveHint = useMemo(() => {
+    if (!cfg) return '请先在上方选择要配置的车辆';
+    if (useMock || isMock) return '请关闭模拟模式，并在工作配置中选择车辆以建立 WebSocket';
+    if (connStatus !== 'connected') return 'WebSocket 未连接：请在工作配置中选择车辆';
+    if (!gnssOk) return 'GNSS 非固定解，请等待 RTK FIX';
+    if (!stationary) return `车辆未静止（速度 ${liveData.speed.toFixed(3)} m/s），请停车后标定`;
+    if (!a2Ok) {
+      return '副天线 A2 无有效坐标：请确认接收机1(9001) 已输出双天线 GGA，并重启中控使遥测包含 antenna2';
+    }
+    return '条件满足：可输入 RTK 作业点坐标并计算杆臂';
+  }, [cfg, useMock, isMock, connStatus, gnssOk, stationary, liveData.speed, a2Ok]);
+
+  async function computeSide(side: CalibSide) {
+    if (!cfg) return;
+    const lpStr = side === 'elec' ? lpElec : lpDiesel;
+    const lat = parseFloat(lpStr.lat);
+    const lon = parseFloat(lpStr.lon);
+    const alt = parseFloat(lpStr.alt);
+    if (![lat, lon, alt].every(Number.isFinite)) {
+      showToast('请填写完整的作业点经纬高', 'error');
+      return;
+    }
+    if (!canCalib) {
+      showToast(liveHint, 'error');
+      return;
+    }
+    const antenna: GpsCoord = side === 'elec'
+      ? { lat: liveData.ref_antenna.lat, lon: liveData.ref_antenna.lon, alt: liveData.ref_antenna.alt }
+      : {
+          lat: liveData.antenna2?.lat ?? 0,
+          lon: liveData.antenna2?.lon ?? 0,
+          alt: liveData.antenna2?.alt ?? 0,
+        };
+    const antennaSrc = side === 'elec' ? liveData.ref_antenna : liveData.antenna2;
+    const antennaEcef = pickAntennaEcef(antennaSrc);
+    if (side === 'diesel' && !a2Ok) {
+      showToast('副天线 A2 无有效坐标，请确认双 GGA 已接入', 'error');
+      return;
+    }
+    const attitude = { roll: liveData.roll, pitch: liveData.pitch, heading: liveData.heading };
+    const lpoint = { lat, lon, alt };
+
+    setComputing(side);
+    try {
+      const res = await fetch(`${baseUrl}/api/vehicle/compute_l_arm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          side,
+          lpoint,
+          antenna,
+          attitude,
+          ...(antennaEcef ? { antenna_ecef: antennaEcef } : {}),
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json() as { code: number; data?: { l_arm: [number, number, number] } };
+      if (json.code !== 200 || !json.data?.l_arm) throw new Error('反算失败');
+
+      const arm = json.data.l_arm;
+      const record: LArmCalibrationRecord = {
+        measured_at: new Date().toISOString(),
+        lpoint,
+        antenna,
+        attitude,
+        l_arm: arm,
+      };
+
+      setCfg(prev => {
+        if (!prev) return null;
+        const cal = { ...(prev.l_arm_calibration ?? {}) };
+        if (side === 'elec') {
+          cal.elec = record;
+          return { ...prev, l_arm_elec: arm, l_arm: arm, l_arm_calibration: cal };
+        }
+        cal.diesel = record;
+        return { ...prev, l_arm_diesel: arm, l_arm_calibration: cal };
+      });
+      showToast(`${side === 'elec' ? '电气房侧' : '柴油机侧'}杆臂已计算：[${arm.map(v => v.toFixed(3)).join(', ')}]`);
+    } catch {
+      showToast('杆臂计算失败，请检查后端与输入', 'error');
+    } finally {
+      setComputing(null);
+    }
+  }
+
+  function renderLpointInputs(side: CalibSide, val: typeof lpElec, setVal: typeof setLpElec) {
+    return (
+      <div className="grid grid-cols-3 gap-2">
+        {(['lat', 'lon', 'alt'] as const).map(k => (
+          <div key={k}>
+            <span className="text-[10px] text-slate-500 uppercase">{k}</span>
+            <input
+              className="input-field font-mono text-xs py-1.5"
+              value={val[k]}
+              onChange={e => setVal(v => ({ ...v, [k]: e.target.value }))}
+              placeholder={k === 'lat' ? '22.xxx' : k === 'lon' ? '114.xxx' : '12.xxx'}
+            />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="card p-5 border border-violet-500/30 bg-violet-900/10 space-y-4">
+      <div className="flex items-center gap-2">
+        <Sparkles className="w-4 h-4 text-violet-400" />
+        <h3 className="text-sm font-bold uppercase tracking-wide text-violet-200">智能杆臂标定</h3>
+        <span className={clsx(
+          'ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full border',
+          canCalib ? 'text-emerald-400 border-emerald-500/40 bg-emerald-900/30' : 'text-amber-400 border-amber-500/40 bg-amber-900/30',
+        )}>
+          {canCalib ? '可标定' : '等待条件'}
+        </span>
+      </div>
+
+      <p className="text-[11px] text-slate-400 leading-relaxed">
+        车辆<strong className="text-slate-300">静止</strong>且中控<strong className="text-slate-300">实时运行</strong>时，
+        输入 RTK 测量的<strong className="text-slate-300">作业点 WGS84</strong>；
+        系统用当前天线坐标与姿态（heading/pitch/roll）反算车体系杆臂 <code className="text-violet-300">L_arm = Rᵀ·(P_天线−P_作业点)</code>。
+      </p>
+
+      <div className={clsx('p-3 rounded-lg text-xs flex items-start gap-2 border', canCalib ? 'bg-slate-900/50 border-slate-700 text-slate-400' : 'bg-amber-900/20 border-amber-500/30 text-amber-200/80')}>
+        {!wsOk ? <WifiOff className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />}
+        <span>{liveHint}</span>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-[11px] font-mono">
+        <div className="p-3 bg-slate-900/60 rounded-lg space-y-1">
+          <p className="text-slate-500 mb-1">实时 A1（电气房天线）</p>
+          <p>lat {liveData.ref_antenna.lat.toFixed(8)}</p>
+          <p>lon {liveData.ref_antenna.lon.toFixed(8)}</p>
+          <p>alt {liveData.ref_antenna.alt.toFixed(3)} m</p>
+        </div>
+        <div className="p-3 bg-slate-900/60 rounded-lg space-y-1">
+          <p className="text-slate-500 mb-1">实时 A2（柴油机天线）{a2Ok ? '' : ' — 无效'}</p>
+          <p>lat {(liveData.antenna2?.lat ?? 0).toFixed(8)}</p>
+          <p>lon {(liveData.antenna2?.lon ?? 0).toFixed(8)}</p>
+          <p>alt {(liveData.antenna2?.alt ?? 0).toFixed(3)} m</p>
+        </div>
+      </div>
+
+      <div className="p-3 bg-slate-900/40 rounded-lg grid grid-cols-3 gap-3 text-xs font-mono text-slate-400">
+        <div>heading {liveData.heading.toFixed(2)}°</div>
+        <div>pitch {liveData.pitch.toFixed(2)}°</div>
+        <div>roll {liveData.roll.toFixed(2)}°</div>
+        <div>speed {liveData.speed.toFixed(3)} m/s</div>
+        <div>GNSS {liveData.status}</div>
+        <div>WS {connStatus}</div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <label className="section-title">电气房侧作业点（RTK 测量）</label>
+          {renderLpointInputs('elec', lpElec, setLpElec)}
+          <button
+            type="button"
+            disabled={!canCalib || computing !== null}
+            onClick={() => computeSide('elec')}
+            className="w-full btn-primary text-xs py-2 flex items-center justify-center gap-2 disabled:opacity-40"
+          >
+            {computing === 'elec' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            计算 l_arm_elec
+          </button>
+        </div>
+        <div className="space-y-2">
+          <label className="section-title">柴油机侧作业点（RTK 测量）</label>
+          {renderLpointInputs('diesel', lpDiesel, setLpDiesel)}
+          <button
+            type="button"
+            disabled={!canCalib || !a2Ok || computing !== null}
+            onClick={() => computeSide('diesel')}
+            className="w-full btn-primary text-xs py-2 flex items-center justify-center gap-2 disabled:opacity-40"
+          >
+            {computing === 'diesel' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            计算 l_arm_diesel
+          </button>
+        </div>
+      </div>
+
+      {cfg && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <ReadOnlyLArmBlock
+            title="当前 l_arm_elec（只读，由智能标定写入）"
+            arm={cfg.l_arm_elec}
+            uncalibrated={!cfg.l_arm_calibration?.elec}
+          />
+          <ReadOnlyLArmBlock
+            title="当前 l_arm_diesel（只读，由智能标定写入）"
+            arm={cfg.l_arm_diesel}
+            uncalibrated={!cfg.l_arm_calibration?.diesel}
+          />
+        </div>
+      )}
+
+      {cfg?.l_arm_calibration && (
+        <p className="text-[10px] text-slate-500">
+          已记录标定溯源：
+          {cfg.l_arm_calibration.elec && ` 电气房 @ ${cfg.l_arm_calibration.elec.measured_at.slice(0, 19)}`}
+          {cfg.l_arm_calibration.diesel && ` · 柴油机 @ ${cfg.l_arm_calibration.diesel.measured_at.slice(0, 19)}`}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ============================================================
 // 主组件
 // ============================================================
-export default function VehicleConfig() {
-  const { vehicles, updateVehicle, selectedVehicleId, backendConfig, useMock } = useAppContext();
+export default function VehicleConfig({
+  liveData,
+  connStatus,
+  isMock,
+}: {
+  liveData: RealtimeData;
+  connStatus: ConnStatus;
+  isMock: boolean;
+}) {
+  const { vehicles, pendingDevices, updateVehicle, selectedVehicleId, backendConfig, useMock, fetchVehicles } = useAppContext();
 
-  const defaultId = selectedVehicleId ?? (vehicles[0]?.vehicle_id ?? null);
-  const [editId, setEditId] = useState<string | null>(defaultId);
+  const [editId, setEditId] = useState<string | null>(
+    () => selectedVehicleId ?? vehicles[0]?.vehicle_id ?? null,
+  );
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [initTarget, setInitTarget] = useState<PendingDevice | null>(null);
 
   const baseVehicle = vehicles.find(v => v.vehicle_id === editId) ?? null;
   const [cfg, setCfg] = useState<VehicleProfile | null>(baseVehicle);
 
   const baseUrl = `http://${backendConfig.host}:${backendConfig.port}`;
 
-  // 切换车辆时从后端加载最新参数（模拟模式下直接使用 context 数据，不发请求）
+  // 进入页面时拉取车辆列表（与工作配置共用数据源）
+  useEffect(() => {
+    if (!useMock) {
+      fetchVehicles().catch(() => {});
+    }
+  }, [useMock, fetchVehicles]);
+
+  // 与工作配置所选车辆同步
+  useEffect(() => {
+    if (selectedVehicleId) {
+      setEditId(selectedVehicleId);
+    }
+  }, [selectedVehicleId]);
+
+  // 列表加载后：若尚未选中，默认第一台
+  useEffect(() => {
+    if (!editId && vehicles.length > 0) {
+      setEditId(selectedVehicleId ?? vehicles[0].vehicle_id);
+    }
+  }, [vehicles, editId, selectedVehicleId]);
+
   useEffect(() => {
     const local = vehicles.find(v => v.vehicle_id === editId) ?? null;
-    if (!editId || useMock) {
-      logger.debug('VehicleConfig', `模拟模式或无 editId，使用本地数据`, { editId, useMock });
-      setCfg(local);
+    if (!editId) {
+      setCfg(null);
       return;
     }
-    const url = `${baseUrl}/api/vehicle/config?vehicle_id=${editId}`;
-    logger.info('VehicleConfig', `GET /api/vehicle/config`, { vehicle_id: editId, url });
+    if (!local) {
+      setCfg(null);
+      return;
+    }
+    if (useMock) {
+      logger.debug('VehicleConfig', '模拟模式，使用本地车辆数据', { editId });
+      setCfg(mergeVehicleConfig(local, null));
+      return;
+    }
+    const url = `${baseUrl}/api/vehicle/config/${editId}`;
+    logger.info('VehicleConfig', `GET /api/vehicle/config/${editId}`, { url });
     setLoading(true);
     fetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
-      .then((data) => {
-        if (data && local) {
-          logger.info('VehicleConfig', '参数加载成功', data);
-          setCfg({ ...local, ...data });
+      .then((resp: { code: number; data: { vehicle_id?: string; l_arm?: [number,number,number]; l_arm_elec?: [number,number,number]; l_arm_diesel?: [number,number, number]; height?: number; w_span?: number; antennas?: Record<string,unknown>; l_arm_calibration?: VehicleProfile['l_arm_calibration'] } | null }) => {
+        if (resp.code === 200 && local) {
+          if (resp.data) {
+            logger.info('VehicleConfig', '参数加载成功', resp.data);
+          } else {
+            logger.warn('VehicleConfig', '后端尚无配置记录，使用车辆列表默认值');
+          }
+          setCfg(mergeVehicleConfig(local, resp.data));
         } else {
-          logger.warn('VehicleConfig', '返回数据为空，使用本地数据');
-          setCfg(local);
+          setCfg(mergeVehicleConfig(local, null));
         }
       })
       .catch((e) => {
         logger.error('VehicleConfig', '参数加载失败，fallback 到本地数据', e);
-        setCfg(local);
+        setCfg(mergeVehicleConfig(local, null));
       })
       .finally(() => setLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editId, baseUrl, useMock]);
+  }, [editId, baseUrl, useMock, vehicles]);
 
   const handleSelectVehicle = (id: string) => {
     setEditId(id);
   };
 
-  const handleAntChange = (id: string, key: keyof AntennArm, val: string | number) => {
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    if (useMock) return;
+    setRefreshing(true);
+    try {
+      await fetchVehicles();
+      showToast('车辆列表已刷新');
+    } catch {
+      showToast('刷新失败', 'error');
+    } finally {
+      setRefreshing(false);
+    }
+  }, [useMock, fetchVehicles]);
+
+  const handleInitDone = useCallback((newVehicleId: string) => {
+    setInitTarget(null);
+    setEditId(newVehicleId);
+  }, []);
+
+  const handleAntLabelChange = (id: string, newLabel: string) => {
     setCfg((prev) => prev ? ({
       ...prev,
-      antennas: prev.antennas.map((a) => (a.id === id ? { ...a, [key]: val } : a)),
+      antennas: prev.antennas.map((a) => (a.id === id ? { ...a, label: newLabel } : a)),
     }) : null);
   };
 
   const handleAddAnt = () => {
     if (!cfg) return;
-    const newAnt: AntennArm = {
+    const newAnt: AntennaLabel = {
       id: `ant_${Date.now()}`,
       label: `Antenna ${cfg.antennas.length + 1}`,
-      dx: 0, dy: 0, dz: 0,
     };
     setCfg((prev) => prev ? { ...prev, antennas: [...prev.antennas, newAnt] } : null);
   };
@@ -134,21 +645,33 @@ export default function VehicleConfig() {
     updateVehicle(cfg);
     logger.info('VehicleConfig', 'POST /api/vehicle/config', { vehicle_id: cfg.vehicle_id });
     try {
+      const payload = {
+        vehicle_id: cfg.vehicle_id,
+        l_arm: cfg.l_arm_elec,
+        l_arm_elec: cfg.l_arm_elec,
+        l_arm_diesel: cfg.l_arm_diesel,
+        height: cfg.height,
+        w_span: cfg.span,
+        l_arm_calibration: cfg.l_arm_calibration,
+        antennas: Object.fromEntries(
+          cfg.antennas.map(a => [a.id, { label: a.label }])
+        ),
+      };
       const res = await fetch(`${baseUrl}/api/vehicle/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cfg),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         logger.info('VehicleConfig', `参数保存成功 vehicle_id=${cfg.vehicle_id}`);
-        showToast(`✅ ${cfg.label} 参数已保存至后端数据库`);
+        showToast(`${cfg.label} 参数已保存至后端数据库`);
       } else {
         logger.warn('VehicleConfig', `保存返回 HTTP ${res.status}`);
-        showToast('⚠️ 保存失败，请检查后端连接', 'error');
+        showToast('保存失败，请检查后端连接', 'error');
       }
     } catch (e) {
       logger.error('VehicleConfig', '保存请求失败', e);
-      showToast('⚠️ 离线模式：参数已保存至本地（模拟）', 'info');
+      showToast('离线模式：参数已保存至本地（模拟）', 'info');
     } finally {
       setSaving(false);
     }
@@ -156,16 +679,68 @@ export default function VehicleConfig() {
 
   return (
     <div className="animate-fade-in space-y-6">
+      {/* 初始化弹窗 */}
+      {initTarget && (
+        <InitDeviceModal
+          device={initTarget}
+          backendBase={baseUrl}
+          onClose={() => setInitTarget(null)}
+          onDone={handleInitDone}
+        />
+      )}
+
       <SectionHeader
-        title="RTG 参数配置"
-        subtitle="管理各车辆的物理几何参数（杆臂值、跨距、高度），用于 L-Point 刚体变换。车辆在场地中的角色（建图/校准）由场地是否已建图决定，与此处无关。"
+        title="车辆管理"
+        subtitle="管理设备初始化与物理几何参数（杆臂值、跨距、高度），用于 L-Point 刚体变换。新设备上线后在此完成初始化和参数配置。"
       />
+
+      {/* ── 待初始化设备 ── */}
+      {!useMock && pendingDevices.length > 0 && (
+        <div className="card p-5 border border-amber-500/30 bg-amber-900/10 space-y-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400" />
+            <h3 className="text-sm font-bold uppercase tracking-wide text-amber-300">待初始化设备</h3>
+            <span className="ml-auto text-[10px] text-amber-500">{pendingDevices.length} 台待分配</span>
+          </div>
+          <p className="text-[11px] text-amber-200/60">
+            以下设备已上线但尚未分配正式 ID。点击「初始化」填写参数后，后端将向设备下发 CMD_INIT_IDENTITY，中控机会自动切换 ID 并同步配置，无需重启。
+          </p>
+          <div className="space-y-2">
+            {pendingDevices.map(dev => (
+              <div key={dev.temp_id} className="flex items-center gap-3 p-3 bg-slate-900/60 rounded-xl border border-amber-500/20">
+                <div className="w-9 h-9 rounded-lg bg-amber-900/40 border border-amber-500/30 flex items-center justify-center shrink-0">
+                  <Car className="w-4 h-4 text-amber-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-amber-200 font-mono">{dev.temp_id}</p>
+                  <p className="text-[10px] text-slate-500 font-mono">SN: {dev.sn || '-'}</p>
+                </div>
+                <button
+                  onClick={() => setInitTarget(dev)}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" /> 初始化
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── 车辆选择器 ── */}
       <div className="card p-4">
         <div className="flex items-center gap-2 mb-3">
           <Car className="w-4 h-4 text-blue-400" />
           <span className="text-sm font-bold uppercase tracking-wide text-slate-300">选择要编辑的车辆</span>
+          <span className="text-[10px] text-slate-500">{vehicles.length} 台</span>
+          <button
+            onClick={handleRefresh}
+            disabled={useMock || refreshing}
+            title={useMock ? '模拟模式下不可刷新' : '从后端重新拉取车辆列表'}
+            className="ml-auto p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            <RefreshCw className={clsx('w-3.5 h-3.5', refreshing && 'animate-spin')} />
+          </button>
         </div>
         <div className="flex flex-wrap gap-2">
           {vehicles.map((v) => (
@@ -183,8 +758,33 @@ export default function VehicleConfig() {
               <span className="ml-2 text-[10px] font-mono opacity-60">{v.vehicle_id}</span>
             </button>
           ))}
+          {vehicles.length === 0 && !useMock && (
+            <p className="text-sm text-slate-500 py-2">
+              暂无已注册车辆，请先初始化上方的待分配设备，或在
+              <button type="button" className="text-blue-400 hover:underline mx-1" onClick={() => { window.location.hash = 'settings'; }}>
+                工作配置
+              </button>
+              刷新列表
+            </p>
+          )}
+          {editId && (
+            <p className="text-[10px] text-slate-500 mt-2">
+              当前编辑：<span className="text-blue-400 font-mono">{editId}</span>
+              {selectedVehicleId === editId && ' · 与工作配置所选车辆一致'}
+            </p>
+          )}
         </div>
       </div>
+
+      <LArmSmartCalibration
+        liveData={liveData}
+        connStatus={connStatus}
+        isMock={isMock}
+        useMock={useMock}
+        baseUrl={baseUrl}
+        cfg={cfg}
+        setCfg={setCfg}
+      />
 
       {loading ? (
         <div className="card p-10 flex items-center justify-center text-slate-400 gap-3">
@@ -232,6 +832,7 @@ export default function VehicleConfig() {
                 </div>
                 <div>
                   <label className="section-title block mb-1.5">门腿跨距 W_span (m)</label>
+                  <p className="text-[10px] text-slate-500 mb-1">参考尺寸，不再用于推算另一侧作业点</p>
                   <input
                     type="number"
                     step="0.001"
@@ -240,9 +841,11 @@ export default function VehicleConfig() {
                     onChange={(e) => setCfg((p) => p ? { ...p, span: parseFloat(e.target.value) || 0 } : null)}
                   />
                 </div>
+                <p className="text-[10px] text-slate-500 pt-1">
+                  杆臂由上方「智能杆臂标定」计算，此处不可手改。保存时将一并写入后端。
+                </p>
               </div>
 
-              {/* 公式说明 */}
               <div className="mt-4 p-4 bg-blue-900/10 border border-blue-500/20 rounded-xl">
                 <p className="section-title mb-2">L-Point 解算公式</p>
                 <p className="text-xs font-mono text-blue-300 leading-relaxed">
@@ -253,15 +856,15 @@ export default function VehicleConfig() {
               </div>
             </div>
 
-            {/* 天线杆臂 */}
+            {/* 天线标识 */}
             <div className="lg:col-span-2 card p-6">
               <div className="flex items-center justify-between pb-3 border-b border-slate-700/60 mb-5">
                 <div>
                   <h3 className="text-sm font-bold uppercase tracking-wide text-slate-300">
-                    天线阵列杆臂值（相对 L-Point）
+                    天线标识配置
                   </h3>
                   <p className="text-[10px] text-slate-500 mt-0.5">
-                    共 {cfg.antennas.length} 根天线 · 支持最多 6 根
+                    共 {cfg.antennas.length} 根天线 · 支持最多 6 根 · 标签用于标识每根天线对应的物理角色
                   </p>
                 </div>
                 <button
@@ -274,10 +877,38 @@ export default function VehicleConfig() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[480px] overflow-y-auto pr-1">
-                {cfg.antennas.map((ant) => (
-                  <ArmInput key={ant.id} ant={ant} onChange={handleAntChange} onDelete={handleDelete} />
+              <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
+                {cfg.antennas.map((ant, idx) => (
+                  <div key={ant.id} className="flex items-center gap-3 p-3 bg-slate-900/60 border border-slate-700/60 rounded-xl">
+                    <div className="w-8 h-8 rounded-lg bg-blue-900/40 border border-blue-500/30 flex items-center justify-center shrink-0">
+                      <Radio className="w-4 h-4 text-blue-400" />
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-mono shrink-0 w-5">#{idx + 1}</span>
+                    <input
+                      className="input-field text-sm py-1.5 flex-1 font-mono"
+                      value={ant.label}
+                      onChange={(e) => handleAntLabelChange(ant.id, e.target.value)}
+                      placeholder="如：大车左前 / 小车A端"
+                    />
+                    <button
+                      onClick={() => handleDelete(ant.id)}
+                      className="p-1.5 text-slate-500 hover:text-red-400 transition-colors shrink-0"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 ))}
+                {cfg.antennas.length === 0 && (
+                  <div className="text-center py-8 text-slate-500 text-sm">
+                    暂无天线标识，请点击右上角「添加天线」
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-5 p-3 bg-slate-900/60 border border-slate-700/40 rounded-lg">
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  标签用于标识 6 根天线各自对应的物理安装位置（大车端梁四角 + 小车两端），中控机据此区分各接收机数据来源，正确路由到解算模块。
+                </p>
               </div>
             </div>
           </div>
@@ -299,9 +930,15 @@ export default function VehicleConfig() {
           </div>
         </>
       ) : (
-        <div className="card p-12 text-center text-slate-500">
-          <Car className="w-12 h-12 mx-auto mb-3 opacity-30" />
-          <p>请先在上方选择一台车辆进行参数编辑</p>
+        <div className="card p-12 text-center text-slate-500 space-y-3">
+          <Car className="w-12 h-12 mx-auto opacity-30" />
+          <p className="text-sm">请先在上方选择一台车辆进行参数编辑</p>
+          {selectedVehicleId && !editId && (
+            <p className="text-xs text-amber-400">工作配置已选 {selectedVehicleId}，但车辆列表中未找到，请点击刷新</p>
+          )}
+          {!selectedVehicleId && vehicles.length > 0 && (
+            <p className="text-xs text-slate-400">也可在「工作配置」中选择车辆，将自动同步到本页</p>
+          )}
         </div>
       )}
     </div>

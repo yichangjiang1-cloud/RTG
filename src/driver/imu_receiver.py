@@ -17,13 +17,13 @@
 import socket
 import struct
 import threading
-import logging
 import time
 
 from src.core.event_bus import get_bus, EventBus
 from src.models.imu_data import ImuRaw
+from src.utils.enhanced_logger import EnhancedLogger
 
-logger = logging.getLogger(__name__)
+logger = EnhancedLogger.get_logger(__name__)
 
 _IMU_PACKET_SIZE = 32       # 期望的二进制包大小
 _IMU_PACKET_FMT = "<8f"     # 小端，8 个 float32
@@ -51,7 +51,7 @@ class ImuReceiver(threading.Thread):
         sock.settimeout(1.0)
         try:
             sock.bind((self.host, self.port))
-            logger.info("IMU 接收线程启动: %s:%d", self.host, self.port)
+            logger.info(f"IMU 接收线程启动: {self.host}:{self.port}")
 
             while not self._stop_event.is_set():
                 try:
@@ -59,7 +59,7 @@ class ImuReceiver(threading.Thread):
                 except socket.timeout:
                     continue
                 except OSError as e:
-                    logger.error("IMU Socket 错误: %s", e)
+                    logger.error(f"IMU Socket 错误: {e}")
                     break
 
                 imu = _parse_imu_packet(data)
@@ -78,7 +78,7 @@ def _parse_imu_packet(data: bytes) -> ImuRaw | None:
     :return: ImuRaw 实例，或 None（包不合法）
     """
     if len(data) < _IMU_PACKET_SIZE:
-        logger.debug("IMU 数据包长度不足: %d bytes", len(data))
+        logger.debug(f"IMU 数据包长度不足: {len(data)} bytes")
         return None
 
     try:
@@ -95,6 +95,6 @@ def _parse_imu_packet(data: bytes) -> ImuRaw | None:
             temperature=fields[7],
         )
     except struct.error as e:
-        logger.debug("IMU 包解析失败: %s", e)
+        logger.debug(f"IMU 包解析失败: {e}")
         return None
 

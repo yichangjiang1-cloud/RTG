@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { VehicleProfile, YardInfo, BackendConfig } from '../types';
 import { logger } from '../utils/logger';
@@ -11,7 +11,7 @@ export type ConnStatus = 'connecting' | 'connected' | 'disconnected';
 /** 尚未初始化的设备（is_initialized=false） */
 export interface PendingDevice {
   temp_id: string;
-  mac: string;
+  sn: string;
   last_seen?: string;
 }
 
@@ -62,6 +62,8 @@ interface AppState {
     new_vehicle_id: string;
     label: string;
     l_arm: [number, number, number];
+    l_arm_elec: [number, number, number];
+    l_arm_diesel: [number, number, number];
     h: number;
     w_span: number;
   }) => Promise<void>;
@@ -79,12 +81,12 @@ const AppContext = createContext<AppState | null>(null);
 // 默认数据（演示用，实际从后端加载）
 // ============================================================
 const DEFAULT_ANTENNAS = [
-  { id: 'ant1', label: 'Front-Left  (大车左前)',  dx:  0.800, dy:  11.738, dz: -29.800 },
-  { id: 'ant2', label: 'Front-Right (大车右前)', dx:  0.800, dy: -11.738, dz: -29.800 },
-  { id: 'ant3', label: 'Rear-Left   (大车左后)', dx: -0.800, dy:  11.738, dz: -29.800 },
-  { id: 'ant4', label: 'Rear-Right  (大车右后)', dx: -0.800, dy: -11.738, dz: -29.800 },
-  { id: 'ant5', label: 'Trolley-A   (小车A端)',  dx:  0.000, dy:   0.000, dz: -28.500 },
-  { id: 'ant6', label: 'Trolley-B   (小车B端)',  dx:  0.000, dy:   0.000, dz: -28.500 },
+  { id: 'ant1', label: 'Front-Left  (大车左前)' },
+  { id: 'ant2', label: 'Front-Right (大车右前)' },
+  { id: 'ant3', label: 'Rear-Left   (大车左后)' },
+  { id: 'ant4', label: 'Rear-Right  (大车右后)' },
+  { id: 'ant5', label: 'Trolley-A   (小车A端)' },
+  { id: 'ant6', label: 'Trolley-B   (小车B端)' },
 ];
 
 const DEFAULT_VEHICLES: VehicleProfile[] = [
@@ -93,6 +95,9 @@ const DEFAULT_VEHICLES: VehicleProfile[] = [
     label: 'RTG 01号机',
     height: 30.0,
     span: 23.475,
+    l_arm: [0.12, 0.08, -29.8],
+    l_arm_elec: [0.12, 0.08, -29.8],
+    l_arm_diesel: [0.12, 0.08, -29.8],
     antennas: DEFAULT_ANTENNAS.map(a => ({ ...a, id: `001_${a.id}` })),
   },
   {
@@ -100,6 +105,9 @@ const DEFAULT_VEHICLES: VehicleProfile[] = [
     label: 'RTG 02号机',
     height: 30.0,
     span: 23.475,
+    l_arm: [0.12, 0.08, -29.8],
+    l_arm_elec: [0.12, 0.08, -29.8],
+    l_arm_diesel: [0.12, 0.08, -29.8],
     antennas: DEFAULT_ANTENNAS.map(a => ({ ...a, id: `002_${a.id}` })),
   },
   {
@@ -107,6 +115,9 @@ const DEFAULT_VEHICLES: VehicleProfile[] = [
     label: 'RTG 03号机',
     height: 30.5,
     span: 23.475,
+    l_arm: [0.12, 0.08, -30.3],
+    l_arm_elec: [0.12, 0.08, -30.3],
+    l_arm_diesel: [0.12, 0.08, -30.3],
     antennas: DEFAULT_ANTENNAS.map(a => ({ ...a, id: `003_${a.id}` })),
   },
 ];
@@ -145,15 +156,15 @@ const DEFAULT_YARDS: YardInfo[] = [
 // Provider
 // ============================================================
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [vehicles, setVehicles] = useState<VehicleProfile[]>(DEFAULT_VEHICLES);
+  const [vehicles, setVehicles] = useState<VehicleProfile[]>([]);
   const [pendingDevices, setPendingDevices] = useState<PendingDevice[]>([]);
-  const [yards, setYards] = useState<YardInfo[]>(DEFAULT_YARDS);
+  const [yards, setYards] = useState<YardInfo[]>([]);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
   const [selectedYardId, setSelectedYardId] = useState<string | null>(null);
-  const [useMock, setUseMock] = useState<boolean>(true);
-  const [backendConfig, setBackendConfig] = useState<BackendConfig>({ host: '192.168.1.200', port: 8080 });
+  const [useMock, setUseMock] = useState<boolean>(false);
+  const [backendConfig, setBackendConfig] = useState<BackendConfig>({ host: 'localhost', port: 8000 });
   const [connStatus, setConnStatus] = useState<ConnStatus>('disconnected');
-  const [isMock, setIsMock] = useState<boolean>(true);
+  const [isMock, setIsMock] = useState<boolean>(false);
 
   const addVehicle = (v: VehicleProfile) =>
     setVehicles(prev => [...prev, v]);
@@ -166,8 +177,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (selectedVehicleId === vehicleId) setSelectedVehicleId(null);
   };
 
-  const markYardMapped = (yardId: string) =>
-    setYards(prev => prev.map(y => y.yard_id === yardId ? { ...y, mapped: true } : y));
+  const markYardMapped = useCallback((yardId: string) => {
+    setYards(prev => {
+      const target = prev.find(y => y.yard_id === yardId);
+      if (!target || target.mapped) return prev;
+      return prev.map(y => (y.yard_id === yardId ? { ...y, mapped: true } : y));
+    });
+  }, []);
 
   /** 从后端 GET /api/yard/all_origins 拉取场地列表 */
   const fetchYards = useCallback(async () => {
@@ -176,16 +192,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const json = await resp.json() as Array<{
+      // 后端返回 ApiResponse 包装格式 { code, message, data: [...] }
+      const json = await resp.json() as { code: number; data: Array<{
         yard_id: string;
         name: string;
         origin: [number, number];
         heading?: number;
         total_bays?: number;
         mapped?: boolean;
-      }>;
-      if (Array.isArray(json) && json.length > 0) {
-        const yards: YardInfo[] = json.map(y => ({
+      }> };
+      if (json.code === 200 && Array.isArray(json.data) && json.data.length > 0) {
+        const yards: YardInfo[] = json.data.map(y => ({
           yard_id: y.yard_id,
           name: y.name,
           origin_lat: y.origin[1],
@@ -213,14 +230,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const json = await resp.json() as { code: number; data: Array<{
         vehicle_id: string;
-        mac: string;
+        sn: string;
         status: string;
         is_initialized: boolean;
         label?: string;
         height?: number;
         span?: number;
+        last_seen?: string;
       }> };
       if (json.code === 200 && Array.isArray(json.data)) {
+        const zeroArm = [0, 0, 0] as [number, number, number];
         const profiles: VehicleProfile[] = json.data
           .filter(d => d.is_initialized)
           .map(d => ({
@@ -228,10 +247,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
             label: d.label ?? d.vehicle_id,
             height: d.height ?? 30.0,
             span: d.span ?? 23.475,
+            l_arm: zeroArm,
+            l_arm_elec: zeroArm,
+            l_arm_diesel: zeroArm,
             antennas: [],
           }));
         logger.info('AppContext', `fetchVehicles 成功，已初始化 ${profiles.length} 台，待初始化 ${json.data.length - profiles.length} 台`);
-        if (profiles.length > 0) setVehicles(profiles);
+        setVehicles(profiles);
+        const pending: PendingDevice[] = json.data
+          .filter(d => !d.is_initialized)
+          .map(d => ({ temp_id: d.vehicle_id, sn: d.sn ?? '', last_seen: d.last_seen }));
+        setPendingDevices(pending);
       } else {
         logger.warn('AppContext', 'fetchVehicles 返回非预期格式', json);
       }
@@ -251,58 +277,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setSelectedYardId(null);
       logger.debug('AppContext', '已还原 DEFAULT_VEHICLES / DEFAULT_YARDS');
     } else {
-      // 关闭模拟：先清空，再从后端拉取
+      // 关闭模拟：先清空，再从后端拉取（复用 fetchVehicles / fetchYards）
       setVehicles([]);
       setYards([]);
       setPendingDevices([]);
       setSelectedVehicleId(null);
       setSelectedYardId(null);
       logger.info('AppContext', '列表已清空，开始从后端拉取…');
-      // 异步拉取，不阻塞 UI
-      Promise.all([
-        fetch(`http://${backendConfig.host}:${backendConfig.port}/api/vehicle/list`,
-          { signal: AbortSignal.timeout(5000) })
-          .then(r => r.ok ? r.json() : null)
-          .then((json: { code: number; data: Array<{ vehicle_id: string; mac: string; status: string; is_initialized: boolean; label?: string; height?: number; span?: number; last_seen?: string }> } | null) => {
-            if (json?.code === 200 && Array.isArray(json.data)) {
-              const profiles: VehicleProfile[] = json.data
-                .filter(d => d.is_initialized)
-                .map(d => ({
-                  vehicle_id: d.vehicle_id,
-                  label: d.label ?? d.vehicle_id,
-                  height: d.height ?? 30.0,
-                  span: d.span ?? 23.475,
-                  antennas: [],
-                }));
-              if (profiles.length > 0) setVehicles(profiles);
-              // 待初始化设备（is_initialized=false）
-              const pending: PendingDevice[] = json.data
-                .filter(d => !d.is_initialized)
-                .map(d => ({ temp_id: d.vehicle_id, mac: d.mac, last_seen: d.last_seen }));
-              setPendingDevices(pending);
-            }
-          })
-          .catch(() => {}),
-        fetch(`http://${backendConfig.host}:${backendConfig.port}/api/yard/all_origins`,
-          { signal: AbortSignal.timeout(5000) })
-          .then(r => r.ok ? r.json() : null)
-          .then((json: Array<{ yard_id: string; name: string; origin: [number, number]; heading?: number; total_bays?: number; mapped?: boolean }> | null) => {
-            if (Array.isArray(json) && json.length > 0) {
-              setYards(json.map(y => ({
-                yard_id: y.yard_id,
-                name: y.name,
-                origin_lat: y.origin[1],
-                origin_lon: y.origin[0],
-                heading: y.heading ?? 0,
-                total_bays: y.total_bays ?? 0,
-                mapped: y.mapped ?? false,
-              })));
-            }
-          })
-          .catch(() => {}),
-      ]);
+      // fetchVehicles 内部同时处理 pendingDevices
+      fetchVehicles().catch(() => {});
+      fetchYards().catch(() => {});
     }
-  }, [backendConfig]);
+  }, [fetchVehicles, fetchYards]);
+
+  // 非 Mock 模式下，启动时自动从后端拉取车辆和场地列表
+  useEffect(() => {
+    if (!useMock) {
+      logger.info('AppContext', '非模拟模式启动，从后端拉取数据…');
+      fetchVehicles().catch(() => {});
+      fetchYards().catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** 为待初始化设备分配正式 ID，调用 POST /api/vehicle/init */
   const initDevice = useCallback(async (params: {
@@ -310,6 +306,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     new_vehicle_id: string;
     label: string;
     l_arm: [number, number, number];
+    l_arm_elec: [number, number, number];
+    l_arm_diesel: [number, number, number];
     h: number;
     w_span: number;
   }) => {
@@ -321,7 +319,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({
           temp_id: params.temp_id,
           new_vehicle_id: params.new_vehicle_id,
-          params: { l_arm: params.l_arm, h: params.h, w_span: params.w_span },
+          label: params.label,
+          params: {
+            vehicle_id: params.new_vehicle_id,
+            l_arm: params.l_arm,
+            l_arm_elec: params.l_arm_elec,
+            l_arm_diesel: params.l_arm_diesel,
+            height: params.h,
+            w_span: params.w_span,
+          },
         }),
         signal: AbortSignal.timeout(10000),
       },
@@ -335,6 +341,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       label: params.label,
       height: params.h,
       span: params.w_span,
+      l_arm: params.l_arm,
+      l_arm_elec: params.l_arm_elec,
+      l_arm_diesel: params.l_arm_diesel,
       antennas: [],
     });
   }, [backendConfig, addVehicle]);

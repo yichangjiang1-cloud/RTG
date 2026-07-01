@@ -5,64 +5,44 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="">
-      <change afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/RTG.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/PROJECT_SUMMARY.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/QUICKSTART.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/config/system.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/config/vehicle_params.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/config/yard_config.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/connect.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/fronted/README.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/fronted/public/icon.svg" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/fronted/start.ps1" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/run.ps1" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/run_controller.ps1" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/bridge/api_client.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/bridge/bridge_node.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/bridge/mqtt_client.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/bridge/plc_client.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/bridge/protocol.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/core/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/core/event_bus.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/driver/driver_node.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/driver/gnss_receiver.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/driver/imu_receiver.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/driver/nmea_parser.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fusion/ekf.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fusion/fusion_node.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fusion/imu_mechanization.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/main.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/models/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/models/gnss_data.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/models/imu_data.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/models/positioning.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/solver/attitude.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/solver/calibration.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/solver/coordinate_transform.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/solver/lpoint_solver.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/solver/solver_node.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/solver/yard_manager.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/utils/config_loader.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/utils/database.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/utils/logger.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/tests/test_coordinate_transform.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/tests/test_lpoint_solver.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/tests/test_protocol.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/tests/示例.html" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/tools/build_map.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/tools/diagnostic.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/tools/rtk_survey.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/tools/simulator.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/utils/enhanced_logger.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/20260407_gnss_mock/GNSS_SIMULATOR_README.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/20260407_gnss_mock/gnss_simulator.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/20260407_gnss_mock/run_gnss_simulator.ps1" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/20260407_gnss_mock/run_gnss_simulators.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/CONTROLLER_README.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/PROJECT_SUMMARY.md" beforeDir="false" afterPath="$PROJECT_DIR$/PROJECT_SUMMARY.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/QUICKSTART.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/system.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/system.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/connect.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Calibration.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Calibration.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Mapping.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Mapping.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Settings.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Settings.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/VehicleConfig.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/VehicleConfig.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/context/AppContext.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/context/AppContext.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/hooks/useWebSocket.ts" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/hooks/useWebSocket.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/types/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/types/index.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/run.ps1" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/run_controller.ps1" beforeDir="false" afterPath="$PROJECT_DIR$/run_controller.ps1" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/bridge/api_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/api_client.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/bridge/bridge_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/bridge_node.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/bridge/mqtt_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/mqtt_client.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/driver/driver_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/driver_node.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/driver/gnss_receiver.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/gnss_receiver.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/driver/imu_receiver.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/imu_receiver.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/fusion/fusion_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/fusion/fusion_node.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/solver/calibration.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/calibration.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/solver/lpoint_solver.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/lpoint_solver.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/solver/solver_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/solver_node.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/solver/yard_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/yard_manager.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/utils/config_loader.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/config_loader.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/utils/database.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/database.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/utils/device_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/device_manager.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/utils/logger.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/logger.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -79,8 +59,8 @@
   </component>
   <component name="CopilotUserSelectedModel">
     <selectedModels>
-      <entry key="agent-panel" value="Claude Sonnet 4.5" />
-      <entry key="chat-panel" value="Claude Sonnet 4.5" />
+      <entry key="agent-panel" value="Claude Sonnet 4.6" />
+      <entry key="chat-panel" value="Claude Sonnet 4.6" />
     </selectedModels>
   </component>
   <component name="Git.Settings">
@@ -97,21 +77,76 @@
   </component>
   <component name="PropertiesComponent">{
   &quot;keyToString&quot;: {
+    &quot;Python.gnss_listener.executor&quot;: &quot;Run&quot;,
+    &quot;Python.main.executor&quot;: &quot;Run&quot;,
     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
     &quot;SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
-    &quot;last_opened_file_path&quot;: &quot;D:/kpl/pycharmproject/RTG/tests&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;last_opened_file_path&quot;: &quot;D:/kpl/pycharmproject/RTG/tests/20260407&quot;,
     &quot;settings.editor.selected.configurable&quot;: &quot;preferences.pluginManager&quot;
   }
 }</component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
+      <recent name="D:\kpl\pycharmproject\RTG\tests\20260407" />
       <recent name="D:\kpl\pycharmproject\RTG\tests" />
       <recent name="D:\kpl\pycharmproject\RTG" />
     </key>
     <key name="MoveFile.RECENT_KEYS">
       <recent name="D:\kpl\pycharmproject\RTG" />
     </key>
+  </component>
+  <component name="RunManager" selected="Python.gnss_listener">
+    <configuration name="gnss_listener" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="RTG" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/tests/20260407_gnss_mock" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/tests/20260407_gnss_mock/gnss_listener.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="main" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="RTG" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/src" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/src/main.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Python.gnss_listener" />
+        <item itemvalue="Python.main" />
+      </list>
+    </recent_temporary>
   </component>
   <component name="SharedIndexes">
     <attachedChunks>
@@ -130,6 +165,17 @@
       <updated>1777343983294</updated>
     </task>
     <servers />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
   </component>
   <component name="github-copilot-workspace">
     <instructionFileLocations>

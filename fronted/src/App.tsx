@@ -67,7 +67,7 @@ function AppInner() {
       case 'settings':
         return <Settings />;
       case 'config':
-        return <VehicleConfig />;
+        return <VehicleConfig liveData={data} connStatus={connStatus} isMock={isMock} />;
       case 'mapping':
         return <Mapping liveData={data} />;
       case 'calibration':

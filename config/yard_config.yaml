@@ -1,35 +1,26 @@
-# ============================================================
-# 堆场坐标系配置
-# 每个堆场拥有独立的物理原点与朝向
-# ============================================================
-
+meta:
+  synced_at: '2026-07-01T15:30:45+08:00'
+  vehicle_id: RTG-001
+  source: api
 yards:
-  - id: "yard_01"
-    name: "一号堆场"
-    # WGS84 坐标原点（RTK 打点确定）
-    origin:
-      lat: 22.345678
-      lon: 113.987654
-      alt: 5.20
-    # 堆场 X 轴相对于正北方向的顺时针旋转角（°）
-    # 即大车行驶方向与正北的夹角
-    heading_deg: 87.5
-    # 贝位（Bay）间距（米）
-    bay_spacing: 6.058
-    # 总贝位数
-    bay_count: 20
-
-  - id: "yard_02"
-    name: "二号堆场"
-    origin:
-      lat: 22.346001
-      lon: 113.988200
-      alt: 5.18
-    heading_deg: 87.5
-    bay_spacing: 6.058
-    bay_count: 20
-
-# 大车跑道中心线偏移（相对于堆场坐标系 Y 轴，米）
-# 负值=偏向堆场内，正值=偏向堆场外
-track_center_offset: 0.0
-
+- yard_id: yard_01
+  name: 001堆场
+  origin_lat: 30.123456
+  origin_lon: 120.654321
+  origin_alt: 10.0
+  heading_deg: 0.0
+  bay_spacing: 0.0
+  bay_count: 10
+  mapped: false
+  rtk_point_count: 0
+yard_data:
+  yard_01:
+    has_rtk_map: false
+    rtk_point_count: 0
+    survey_points: []
+    calibration_status: none
+    calibration_mode: full
+    m_matrix: null
+    source_vehicle_id: null
+    transform_list: []
+    source_transform_list: []

@@ -38,7 +38,7 @@ class LPointSolver:
         :param l_arm: 杆臂向量 [dx, dy, dz]（米），从配置文件读取
         """
         self._l_arm = np.array(l_arm, dtype=float)
-        logger.info("LPointSolver 初始化，杆臂向量: %s", l_arm)
+        logger.info(f"LPointSolver 初始化，杆臂向量: {l_arm}")
 
     def solve(
         self,
@@ -71,7 +71,7 @@ class LPointSolver:
         """
         带 Z 轴高程残差补偿的 L-Point 变换。
 
-        :param delta_z: Z 轴偏差补丁（m），由 A 车建图阶段标定写入数据库
+        :param delta_z: Z 轴残差补偿（m），通常来自逐贝 delta 插值（vehicle_bay_transforms）
         :return:        修正后的 L-Point 坐标
         """
         p_final = self.solve(gps_pos, roll_deg, pitch_deg, heading_deg)
@@ -81,5 +81,5 @@ class LPointSolver:
     def update_l_arm(self, l_arm: list) -> None:
         """动态更新杆臂向量（用于安装补偿调整）。"""
         self._l_arm = np.array(l_arm, dtype=float)
-        logger.info("杆臂向量已更新: %s", l_arm)
+        logger.info(f"杆臂向量已更新: {l_arm}")
 

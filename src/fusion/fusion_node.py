@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 class ReceiverState:
     """
     单台接收机的 EKF 融合状态封装。
-    每台 GNSS 接收机（gantry_a1 / gantry_a2 / trolley）独立维护一套。
+    gantry_a1=左侧(A1+A2)、gantry_a2=右侧(B1+B2)、trolley 各独立一套。
     """
 
     def __init__(self, receiver_id: str, ekf_params: dict):
@@ -121,6 +121,66 @@ class FusionNode:
     # ------------------------------------------------------------------
     # 回调：GNSS 原始数据到来
     # ------------------------------------------------------------------
+    @staticmethod
+    def _derive_heading_pitch_from_dual_gga(gnss: GnssRaw) -> Optional[tuple[float, float]]:
+        """
+        用同机双 GGA 基线推算 heading/pitch。
+        说明：单基线无法唯一确定 roll（绕基线轴不可观测），因此这里只解两角。
+        """
+        if not gnss.has_antenna2:
+            return None
+        e2, n2, u2 = ecef_to_enu(
+            gnss.antenna2_ecef_x,
+            gnss.antenna2_ecef_y,
+            gnss.antenna2_ecef_z,
+            gnss.latitude,
+            gnss.longitude,
+            gnss.altitude,
+        )
+        horiz = math.hypot(e2, n2)
+        if horiz < 1e-6 and abs(u2) < 1e-6:
+            return None
+        heading = math.degrees(math.atan2(e2, n2)) % 360.0
+        pitch = math.degrees(math.atan2(u2, max(horiz, 1e-9)))
+        return heading, pitch
+
+    @staticmethod
+    def _format_optional_angle(val: Optional[float]) -> str:
+        return f"{val:.2f}°" if val is not None else "—"
+
+    def _log_fusion_attitude(
+        self,
+        rid: str,
+        source: str,
+        heading: float,
+        pitch: float,
+        roll: float,
+        gnss: GnssRaw,
+    ) -> None:
+        """打印融合后的航向/姿态及来源。"""
+        nmea_hdg = self._format_optional_angle(gnss.heading)
+        nmea_ptc = self._format_optional_angle(gnss.pitch)
+        nmea_rol = self._format_optional_angle(gnss.roll)
+        ant2 = ""
+        if gnss.has_antenna2:
+            ant2 = (
+                f" | 双GGA基线 A2=({gnss.antenna2_latitude:.8f},"
+                f"{gnss.antenna2_longitude:.8f},{gnss.antenna2_altitude:.3f}m)"
+            )
+        logger.info(
+            "[%s] 融合姿态 | 来源=%s | heading=%.2f° pitch=%.2f° roll=%.2f° | "
+            "NMEA解析 hdg=%s pitch=%s roll=%s%s",
+            rid,
+            source,
+            heading,
+            pitch,
+            roll,
+            nmea_hdg,
+            nmea_ptc,
+            nmea_rol,
+            ant2,
+        )
+
     def _on_gnss(self, gnss: GnssRaw) -> None:
         """
         处理单台接收机的 GNSS 数据。
@@ -181,10 +241,32 @@ class FusionNode:
 
             state.ekf.reset_state()
 
-            # 若接收机提供双天线姿态，直接覆盖（更精确）
-            if gnss.heading  is not None: state.heading_deg = gnss.heading
-            if gnss.pitch    is not None: state.pitch_deg   = gnss.pitch
-            if gnss.roll     is not None: state.roll_deg    = gnss.roll
+            # 双 GGA 优先：按现场模型单机解 heading + pitch，roll 不在此处求解
+            att_source = "ekf"
+            hp = self._derive_heading_pitch_from_dual_gga(gnss)
+            if hp is not None:
+                state.heading_deg, state.pitch_deg = hp
+                # 单接收机双天线场景：roll 不可观测，默认置零，避免误导性姿态输入
+                state.roll_deg = 0.0
+                att_source = "dual_gga"
+            else:
+                # 回退：接收机直接给的姿态句（如 PASHR/GPTRA）
+                if gnss.heading is not None:
+                    state.heading_deg = gnss.heading
+                    att_source = "nmea"
+                if gnss.pitch is not None:
+                    state.pitch_deg = gnss.pitch
+                if gnss.roll is not None:
+                    state.roll_deg = gnss.roll
+
+            self._log_fusion_attitude(
+                rid,
+                att_source,
+                state.heading_deg,
+                state.pitch_deg,
+                state.roll_deg,
+                gnss,
+            )
 
             # 更新 ECEF 输出
             state.ecef_x = gnss.ecef_x
@@ -318,12 +400,58 @@ class FusionNode:
         def _state_dict(s: ReceiverState) -> dict:
             with s._lock:
                 coasting_dur = s.mech.state.coasting_duration if s.is_coasting else 0.0
+                alt = 0.0
+                speed_mps = 0.0
+                course_deg = 0.0
+                num_sats = 0
+                hdop = 99.9
+                if s.last_gnss is not None:
+                    alt = float(s.last_gnss.altitude)
+                    speed_mps = float(s.last_gnss.speed_mps)
+                    course_deg = float(s.last_gnss.course_deg)
+                    num_sats = int(s.last_gnss.num_satellites)
+                    hdop = float(s.last_gnss.hdop)
+                elif s.ref_alt is not None:
+                    alt = float(s.ref_alt)
+                now_ts = time.time()
+                is_live = (
+                    s.last_gnss_time > 0
+                    and (now_ts - s.last_gnss_time) < 2.0
+                    and FixQuality.is_rtk(s.fix_quality)
+                )
+                has_antenna2 = False
+                a2_ecef = (0.0, 0.0, 0.0)
+                a2_lat = a2_lon = a2_alt = 0.0
+                if s.last_gnss is not None and s.last_gnss.has_antenna2:
+                    has_antenna2 = True
+                    a2_ecef = (
+                        float(s.last_gnss.antenna2_ecef_x),
+                        float(s.last_gnss.antenna2_ecef_y),
+                        float(s.last_gnss.antenna2_ecef_z),
+                    )
+                    a2_lat = float(s.last_gnss.antenna2_latitude or 0.0)
+                    a2_lon = float(s.last_gnss.antenna2_longitude or 0.0)
+                    a2_alt = float(s.last_gnss.antenna2_altitude or 0.0)
                 return {
                     "ecef_x":   s.ecef_x,
                     "ecef_y":   s.ecef_y,
                     "ecef_z":   s.ecef_z,
+                    "has_antenna2": has_antenna2,
+                    "antenna2_ecef_x": a2_ecef[0],
+                    "antenna2_ecef_y": a2_ecef[1],
+                    "antenna2_ecef_z": a2_ecef[2],
+                    "antenna2_lat": a2_lat,
+                    "antenna2_lon": a2_lon,
+                    "antenna2_alt": a2_alt,
                     "lat":      s.lat,
                     "lon":      s.lon,
+                    "alt":      alt,
+                    "speed_mps": speed_mps,
+                    "course_deg": course_deg,
+                    "last_gnss_time": s.last_gnss_time,
+                    "num_satellites": num_sats,
+                    "hdop": hdop,
+                    "is_live": is_live,
                     "roll":     s.roll_deg,
                     "pitch":    s.pitch_deg,
                     "heading":  s.heading_deg,
@@ -339,17 +467,36 @@ class FusionNode:
                 }
 
         with s_a1._lock:
-            if s_a1.ref_lat is None:
-                return  # 尚未初始化
+            a1_ready = s_a1.ref_lat is not None
+        with s_a2._lock:
+            a2_ready = s_a2.ref_lat is not None
+        if not a1_ready and not a2_ready:
+            return
+
+        d_a1 = _state_dict(s_a1)
+        d_a2 = _state_dict(s_a2)
+        d_tly = _state_dict(s_tly)
+        ref = d_a1 if d_a1.get("is_live") else (d_a2 if d_a2.get("is_live") else d_a1)
 
         fused = {
-            "gantry_a1": _state_dict(s_a1),
-            "gantry_a2": _state_dict(s_a2),
-            "trolley":   _state_dict(s_tly),
-            "fix_quality":          s_a1.fix_quality,
-            "imu_coasting":         s_a1.is_coasting,
-            "imu_coasting_duration": s_a1.mech.state.coasting_duration,
-            "source": _state_dict(s_a1)["source"],
+            "gantry_a1": d_a1,
+            "gantry_a2": d_a2,
+            "trolley":   d_tly,
+            "fix_quality":          ref.get("fix_quality", 0),
+            "imu_coasting":         ref.get("is_coasting", False),
+            "imu_coasting_duration": ref.get("coasting_duration", 0.0),
+            "source": ref.get("source", DataSource.INVALID),
         }
+        logger.info(
+            "发布融合状态 | a1 live=%s hdg=%.2f° pitch=%.2f° roll=%.2f° | "
+            "a2 live=%s hdg=%.2f° | ref_fix=%s coasting=%s",
+            d_a1.get("is_live"),
+            d_a1.get("heading", 0.0),
+            d_a1.get("pitch", 0.0),
+            d_a1.get("roll", 0.0),
+            d_a2.get("is_live"),
+            d_a2.get("heading", 0.0),
+            ref.get("fix_quality", 0),
+            fused.get("imu_coasting"),
+        )
         self._bus.publish(EventBus.TOPIC_FUSED_STATE, fused)
-

@@ -85,10 +85,10 @@ export default function Manual() {
                 subtitle: '物理底座',
                 color: 'blue',
                 items: [
-                  '测绘堆场原点、贝位中心线、磁钉',
-                  'RTK 固定解状态静止采集',
-                  '记录 10 帧取均值',
-                  '建立 ground_truth.db 数据库',
+                  'Web Mapping 页录入各贝位 RTK 真值',
+                  'POST /api/survey/confirm (RTK_HANDHELD, mapping)',
+                  '或 CSV 批量导入 batch_import',
+                  '写入服务端 survey_points 表',
                 ],
               },
               {
@@ -97,10 +97,10 @@ export default function Manual() {
                 subtitle: '动态残差修正',
                 color: 'emerald',
                 items: [
-                  '录入 A 车天线杆臂向量 L_arm',
-                  'A 车在贝位停靠采集数据',
-                  '对比手持打点值与大车解算值',
-                  '记录 Z 轴垂直偏差补丁',
+                  'VehicleConfig 录入各车 L_arm、跨距等静态参数',
+                  '首车 Calibration 全场逐贝采点',
+                  '对比 RTK 与车载解算，写入 vehicle_bay_transforms',
+                  'delta = measured − ref（含平面与高程）',
                 ],
               },
               {

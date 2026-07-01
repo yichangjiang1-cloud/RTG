@@ -8,7 +8,10 @@ from typing import List
 from src.utils.config_loader import get_config
 from src.driver.gnss_receiver import GnssReceiver
 from src.driver.imu_receiver import ImuReceiver
-logger = logging.getLogger(__name__)
+
+from src.utils.enhanced_logger import EnhancedLogger  
+logger = EnhancedLogger.get_logger(__name__)
+
 class DriverNode:
     """
     驱动节点：管理所有底层硬件通信线程。
@@ -33,14 +36,15 @@ class DriverNode:
         imu_host = cfg.get("imu.host", "0.0.0.0")
         imu_port = cfg.get("imu.port", 9002)
         self._imu_receiver = ImuReceiver(host=imu_host, port=imu_port)
+    
     def start(self) -> None:
         """启动所有接收机线程。"""
-        logger.info("DriverNode 启动，共 %d 台 GNSS 接收机 + 1 台 IMU",
-                    len(self._receivers))
+        logger.info(f"DriverNode 启动，共 {len(self._receivers)} 台 GNSS 接收机 + 1 台 IMU")
         for rcv in self._receivers:
             rcv.start()
         if self._imu_receiver:
             self._imu_receiver.start()
+    
     def stop(self) -> None:
         """停止所有接收机线程。"""
         logger.info("DriverNode 停止中...")

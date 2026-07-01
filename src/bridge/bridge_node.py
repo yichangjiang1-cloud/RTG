@@ -36,16 +36,21 @@ class BridgeNode:
         self._bus = bus or get_bus()
 
         # PLC 连接参数
+        self._plc_enabled = bool(cfg.get("plc.enabled", True))
         plc_host = cfg.get("plc.host", "192.168.1.200")
         plc_port = cfg.get("plc.port", 5000)
         reconnect_interval = cfg.get("plc.reconnect_interval_s", 3.0)
 
-        # PLC 客户端
-        self._plc_client = PlcClient(
-            host=plc_host,
-            port=plc_port,
-            reconnect_interval=reconnect_interval,
-        )
+        # PLC 客户端（联调可关闭）
+        self._plc_client: Optional[PlcClient] = None
+        if self._plc_enabled:
+            self._plc_client = PlcClient(
+                host=plc_host,
+                port=plc_port,
+                reconnect_interval=reconnect_interval,
+            )
+        else:
+            logger.info("PLC 已禁用（plc.enabled=false），跳过 TCP 连接")
 
         # 配置的目标帧率（Hz）
         self._target_rate_hz = cfg.get("plc.frame_rate_hz", 10)
@@ -65,14 +70,15 @@ class BridgeNode:
         # 订阅定位结果
         self._bus.subscribe(EventBus.TOPIC_POSITION_RESULT, self._on_position_result)
 
-        logger.info("BridgeNode 初始化完成，目标帧率 %d Hz", self._target_rate_hz)
+        logger.info(f"BridgeNode 初始化完成，目标帧率 {self._target_rate_hz} Hz")
 
     # ------------------------------------------------------------------
     # 生命周期管理
     # ------------------------------------------------------------------
     def start(self) -> None:
         """启动 bridge_node（PLC 客户端 + 周期发送线程）。"""
-        self._plc_client.start()
+        if self._plc_client:
+            self._plc_client.start()
         self._send_thread = threading.Thread(
             target=self._send_loop,
             name="BridgeSendLoop",
@@ -87,8 +93,9 @@ class BridgeNode:
         self._stop_event.set()
         if self._send_thread:
             self._send_thread.join(timeout=3.0)
-        self._plc_client.stop()
-        self._plc_client.join(timeout=3.0)
+        if self._plc_client:
+            self._plc_client.stop()
+            self._plc_client.join(timeout=3.0)
         logger.info("BridgeNode 已停止")
 
     # ------------------------------------------------------------------
@@ -123,8 +130,8 @@ class BridgeNode:
             with self._result_lock:
                 result = self._latest_result
 
-            if result is None:
-                # 尚未收到任何定位结果，跳过本周期
+            if result is None or not self._plc_client:
+                # 尚未收到任何定位结果，或 PLC 已禁用
                 next_send_time += self._send_interval
                 continue
 
@@ -132,9 +139,10 @@ class BridgeNode:
             try:
                 frame = encode_frame(result, self._seq)
                 self._plc_client.send(frame)
+                
                 self._seq += 1
             except Exception as exc:
-                logger.exception("编码/发送帧失败: %s", exc)
+                logger.exception(f"编码/发送帧失败: {exc}")
 
             # 计算下次发送时刻（严格按周期，避免累积漂移）
             next_send_time += self._send_interval
@@ -145,10 +153,14 @@ class BridgeNode:
     @property
     def is_plc_connected(self) -> bool:
         """PLC 是否已连接。"""
+        if not self._plc_client:
+            return False
         return self._plc_client.is_connected
 
     def get_stats(self) -> dict:
         """返回发送统计信息。"""
+        if not self._plc_client:
+            return {"sent": 0, "dropped": 0, "errors": 0, "target_rate_hz": self._target_rate_hz}
         stats = self._plc_client.stats
         stats["target_rate_hz"] = self._target_rate_hz
         return stats

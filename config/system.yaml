@@ -1,66 +1,48 @@
-# ============================================================
-# 系统级配置：网络地址、端口、帧率等
-# ============================================================
-
-# 设备身份（初始化后由后端下发并持久化到本地）
-# 未初始化设备会自动生成 RTG-NEW-xxxx 临时 ID
-vehicle_id: null  # 如 "RTG-001"，null 表示未初始化
-
-# 后端服务配置
 backend:
-  host: "192.168.1.100"
+  api_base_url: http://localhost:8000
+  host: localhost
   port: 8000
-  api_base_url: "http://192.168.1.100:8000"
   timeout_s: 10
-
-# MQTT Broker 配置
-mqtt:
-  broker_host: "192.168.1.100"
-  broker_port: 1883
-  username: null
-  password: null
-  keepalive: 60
-  qos_telemetry: 0      # 遥测数据 QoS（0=尽力而为，适合高频）
-  qos_control: 1        # 控制指令 QoS（1=至少一次）
-  qos_status: 1         # 状态上报 QoS
-
 gnss:
-  # 大车接收机 A1（端梁左前/右前）
   receiver_a1:
-    host: "192.168.1.101"
+    host: 0.0.0.0
     port: 9001
-    role: "gantry_a1"       # 用于大车解算
-  # 大车接收机 A2（端梁左后/��后）
+    role: gantry_a1
   receiver_a2:
-    host: "192.168.1.102"
-    port: 9001
-    role: "gantry_a2"
-  # 小车接收机 B
+    host: 0.0.0.0
+    port: 9002
+    role: gantry_a2
   receiver_b:
-    host: "192.168.1.103"
-    port: 9001
-    role: "trolley"
-
+    host: 0.0.0.0
+    port: 9003
+    role: trolley
 imu:
-  host: "192.168.1.104"
-  port: 9002
-  sample_rate_hz: 200        # IMU 采样率
-
-plc:
-  host: "192.168.1.200"
-  port: 5000
-  frame_rate_hz: 10          # 下发帧率（≥10Hz）
-  reconnect_interval_s: 3    # 断连重试间隔
-
+  host: 0.0.0.0
+  port: 9010
+  sample_rate_hz: 200
 logging:
-  level: "INFO"              # DEBUG / INFO / WARNING / ERROR
-  file: "logs/rtg.log"
-  max_bytes: 10485760        # 10 MB
   backup_count: 5
-
-database:
-  path: "data/ground_truth.db"
-
+  file: logs/rtg.log
+  level: INFO
+  max_bytes: 10485760
+mqtt:
+  broker_host: localhost
+  broker_port: 1883
+  keepalive: 60
+  password: null
+  qos_control: 1
+  qos_status: 1
+  qos_telemetry: 0
+  username: null
+plc:
+  # 联调 / GNSS 模拟时设为 false，避免无 PLC 时反复断连刷 ERROR
+  enabled: false
+  frame_rate_hz: 10
+  host: 192.168.1.200
+  port: 5000
+  reconnect_interval_s: 3
+vehicle_id: RTG-001
+yard_backup:
+  path: config/yard_config.yaml
 yard_map:
-  path: "data/yard_map.json"
-
+  path: data/yard_map.json
