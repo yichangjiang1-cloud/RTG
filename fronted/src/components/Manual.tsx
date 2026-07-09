@@ -206,8 +206,8 @@ export default function Manual() {
     "speed": 0.35
   },
   "trolley": {
-    "ant_a":  { "x": 8.850, "y":  0.300, "z": -28.500 },
-    "ant_b":  { "x": 8.150, "y": -0.300, "z": -28.500 },
+    "valid": true,
+    "position": { "x": 0.012, "y": 8.500, "z": 0.005 },
     "travel": 8.500,
     "speed":  0.25
   }

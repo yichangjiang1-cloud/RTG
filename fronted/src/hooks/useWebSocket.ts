@@ -27,8 +27,7 @@ const BLANK_DATA: RealtimeData = {
   },
   trolley: {
     valid: false,
-    ant_a: { x: 0, y: 0, z: 0 },
-    ant_b: { x: 0, y: 0, z: 0 },
+    position: { x: 0, y: 0, z: 0 },
     travel: 0,
     speed: 0,
   },
@@ -107,15 +106,10 @@ function generateMockData(): RealtimeData {
     },
     trolley: {
       valid: true,
-      ant_a: {
-        x: trolleyTravel + 0.35,
-        y:  0.30 + Math.sin(t * 0.8) * 0.005,
-        z: -28.50 + Math.cos(t * 0.2) * 0.015,
-      },
-      ant_b: {
-        x: trolleyTravel - 0.35,
-        y: -0.30 + Math.cos(t * 0.8) * 0.005,
-        z: -28.50 + Math.cos(t * 0.2) * 0.015,
+      position: {
+        x: Math.sin(t * 0.2) * 0.02,
+        y: trolleyTravel,
+        z: Math.cos(t * 0.2) * 0.01,
       },
       travel: trolleyTravel,
       speed: Math.cos(t * 0.3) * 0.5,
@@ -190,18 +184,36 @@ export function useWebSocket({ url, forceMock }: UseWebSocketOptions): UseWebSoc
     setConnStatus('connecting');
 
     let retryTimer: ReturnType<typeof setTimeout>;
-    let silenceTimer: ReturnType<typeof setTimeout>;   // 静默超时检测
+    let linkTimer: ReturnType<typeof setTimeout>;      // 链路保活（任意 WS 帧）
+    let telemetryTimer: ReturnType<typeof setTimeout>; // 遥测超时（仅 telemetry）
     let ws: WebSocket | null = null;
     let cancelled = false;
 
-    /** 重置静默超时（每收到一帧数据就重置一次，超过 5s 无数据则主动重连） */
-    const resetSilenceTimer = () => {
-      clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => {
+    const LINK_SILENCE_MS = 30_000;
+    const TELEMETRY_SILENCE_MS = 15_000;
+
+    /** 任意 WS 帧重置链路计时（connected / status 也算在线） */
+    const resetLinkTimer = () => {
+      clearTimeout(linkTimer);
+      linkTimer = setTimeout(() => {
         if (cancelled) return;
-        logger.warn('WebSocket', '5s 内无数据帧，主动重连（可能被代理静默断开）', { url });
-        ws?.close();   // 触发 onclose → 走正常重连流程
-      }, 5000);
+        logger.warn('WebSocket', '30s 内无任何 WS 帧，主动重连', { url });
+        ws?.close();
+      }, LINK_SILENCE_MS);
+    };
+
+    /** 收到 telemetry 后才开始遥测超时检测 */
+    const resetTelemetryTimer = () => {
+      clearTimeout(telemetryTimer);
+      telemetryTimer = setTimeout(() => {
+        if (cancelled) return;
+        logger.warn(
+          'WebSocket',
+          '15s 内无 telemetry，可能 MQTT 未连通或中控未推送，保持连接并重试',
+          { url },
+        );
+        // 不主动断线，仅告警；链路仍由 resetLinkTimer 保护
+      }, TELEMETRY_SILENCE_MS);
     };
 
     const connect = () => {
@@ -216,19 +228,23 @@ export function useWebSocket({ url, forceMock }: UseWebSocketOptions): UseWebSoc
           setConnected(true);
           setConnStatus('connected');
           stopMock();
-          resetSilenceTimer();   // 开始计时
+          resetLinkTimer();
         };
 
         ws.onmessage = (e) => {
-          resetSilenceTimer();
+          resetLinkTimer();
           try {
             const msg = JSON.parse(e.data);
-            // 后端 WebSocket 会推送多种消息类型：telemetry / status / discovery
-            // 只有 telemetry 包含完整的 RealtimeData，其他类型忽略（由 AppContext 处理）
+            // 后端 WebSocket 会推送多种消息类型：telemetry / status / discovery / connected
+            if (msg.type === 'connected') {
+              logger.info('WebSocket', '后端 WS 就绪', { vehicle_id: msg.vehicle_id });
+              return;
+            }
             if (msg.type && msg.type !== 'telemetry') {
               logger.debug('WebSocket', `非 telemetry 消息，跳过: type=${msg.type}`);
               return;
             }
+            resetTelemetryTimer();
             const raw = msg.type === 'telemetry' ? msg.data : msg;
             const lpointGeo = raw.lpoint_geo ?? raw.gps_coord;
             const refAntenna = raw.ref_antenna ?? raw.gps_coord;
@@ -237,12 +253,19 @@ export function useWebSocket({ url, forceMock }: UseWebSocketOptions): UseWebSoc
               return;
             }
             const gantryRaw = raw.gantry ?? {};
+            const trolleyRaw = raw.trolley ?? {};
+            const trolleyPos = trolleyRaw.position ?? {
+              x: typeof trolleyRaw.travel === 'number' ? 0 : 0,
+              y: trolleyRaw.travel ?? 0,
+              z: 0,
+            };
             const elecLp = gantryRaw.elec_lpoint ?? gantryRaw.receiver_left ?? gantryRaw.elec_center;
             const dieselLp = gantryRaw.diesel_lpoint ?? gantryRaw.receiver_right ?? gantryRaw.diesel_center;
             const ant2Raw = raw.antenna2;
             const payload: RealtimeData = {
               ...BLANK_DATA,
               ...raw,
+              gantry_antennas: raw.gantry_antennas ?? {},
               lpoint_geo: lpointGeo,
               ref_antenna: {
                 lat: refAntenna.lat,
@@ -279,6 +302,27 @@ export function useWebSocket({ url, forceMock }: UseWebSocketOptions): UseWebSoc
                 elec_center: gantryRaw.elec_center ?? elecLp ?? BLANK_DATA.gantry.elec_center,
                 diesel_center: gantryRaw.diesel_center ?? dieselLp ?? BLANK_DATA.gantry.diesel_center,
               },
+              trolley: {
+                valid: trolleyRaw.valid,
+                position: {
+                  x: Number(trolleyPos.x ?? 0),
+                  y: Number(trolleyPos.y ?? 0),
+                  z: Number(trolleyPos.z ?? 0),
+                },
+                body_position: trolleyRaw.body_position ? {
+                  x: Number(trolleyRaw.body_position.x ?? 0),
+                  y: Number(trolleyRaw.body_position.y ?? 0),
+                  z: Number(trolleyRaw.body_position.z ?? 0),
+                } : undefined,
+                origin_body: trolleyRaw.origin_body ? {
+                  x: Number(trolleyRaw.origin_body.x ?? 0),
+                  y: Number(trolleyRaw.origin_body.y ?? 0),
+                  z: Number(trolleyRaw.origin_body.z ?? 0),
+                } : undefined,
+                origin_mode: trolleyRaw.origin_mode,
+                travel: Number(trolleyRaw.travel ?? trolleyPos.y ?? 0),
+                speed: Number(trolleyRaw.speed ?? 0),
+              },
             };
             logger.debug('WebSocket', '收到数据帧', { ts: payload.timestamp, status: payload.status });
             setData(payload);
@@ -294,7 +338,8 @@ export function useWebSocket({ url, forceMock }: UseWebSocketOptions): UseWebSoc
 
         ws.onclose = (ev) => {
           if (cancelled) return;
-          clearTimeout(silenceTimer);
+          clearTimeout(linkTimer);
+          clearTimeout(telemetryTimer);
           logger.warn('WebSocket', `连接关闭 (code=${ev.code})，5s 后重连`, { url });
           setConnected(false);
           setConnStatus('connecting');
@@ -312,7 +357,8 @@ export function useWebSocket({ url, forceMock }: UseWebSocketOptions): UseWebSoc
     return () => {
       cancelled = true;
       clearTimeout(retryTimer);
-      clearTimeout(silenceTimer);
+      clearTimeout(linkTimer);
+      clearTimeout(telemetryTimer);
       stopMock();
       ws?.close();
     };

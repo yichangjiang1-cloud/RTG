@@ -80,14 +80,15 @@ const AppContext = createContext<AppState | null>(null);
 // ============================================================
 // 默认数据（演示用，实际从后端加载）
 // ============================================================
-const DEFAULT_ANTENNAS = [
-  { id: 'ant1', label: 'Front-Left  (大车左前)' },
-  { id: 'ant2', label: 'Front-Right (大车右前)' },
-  { id: 'ant3', label: 'Rear-Left   (大车左后)' },
-  { id: 'ant4', label: 'Rear-Right  (大车右后)' },
-  { id: 'ant5', label: 'Trolley-A   (小车A端)' },
-  { id: 'ant6', label: 'Trolley-B   (小车B端)' },
-];
+const DEFAULT_RECEIVER_LAYOUT = {
+  left: 'gantry_a1',
+  right: 'gantry_a2',
+  trolley: 'trolley',
+  left_port: 9001,
+  right_port: 9002,
+  trolley_port: 9003,
+  gga_order: ['elec', 'diesel'] as ['elec', 'diesel'],
+};
 
 const DEFAULT_VEHICLES: VehicleProfile[] = [
   {
@@ -98,7 +99,7 @@ const DEFAULT_VEHICLES: VehicleProfile[] = [
     l_arm: [0.12, 0.08, -29.8],
     l_arm_elec: [0.12, 0.08, -29.8],
     l_arm_diesel: [0.12, 0.08, -29.8],
-    antennas: DEFAULT_ANTENNAS.map(a => ({ ...a, id: `001_${a.id}` })),
+    receiver_layout: { ...DEFAULT_RECEIVER_LAYOUT },
   },
   {
     vehicle_id: 'RTG-002',
@@ -108,7 +109,7 @@ const DEFAULT_VEHICLES: VehicleProfile[] = [
     l_arm: [0.12, 0.08, -29.8],
     l_arm_elec: [0.12, 0.08, -29.8],
     l_arm_diesel: [0.12, 0.08, -29.8],
-    antennas: DEFAULT_ANTENNAS.map(a => ({ ...a, id: `002_${a.id}` })),
+    receiver_layout: { ...DEFAULT_RECEIVER_LAYOUT },
   },
   {
     vehicle_id: 'RTG-003',
@@ -118,7 +119,7 @@ const DEFAULT_VEHICLES: VehicleProfile[] = [
     l_arm: [0.12, 0.08, -30.3],
     l_arm_elec: [0.12, 0.08, -30.3],
     l_arm_diesel: [0.12, 0.08, -30.3],
-    antennas: DEFAULT_ANTENNAS.map(a => ({ ...a, id: `003_${a.id}` })),
+    receiver_layout: { ...DEFAULT_RECEIVER_LAYOUT },
   },
 ];
 
@@ -250,7 +251,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             l_arm: zeroArm,
             l_arm_elec: zeroArm,
             l_arm_diesel: zeroArm,
-            antennas: [],
+            receiver_layout: { ...DEFAULT_RECEIVER_LAYOUT },
           }));
         logger.info('AppContext', `fetchVehicles 成功，已初始化 ${profiles.length} 台，待初始化 ${json.data.length - profiles.length} 台`);
         setVehicles(profiles);
@@ -344,7 +345,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       l_arm: params.l_arm,
       l_arm_elec: params.l_arm_elec,
       l_arm_diesel: params.l_arm_diesel,
-      antennas: [],
+      receiver_layout: { ...DEFAULT_RECEIVER_LAYOUT },
     });
   }, [backendConfig, addVehicle]);
 

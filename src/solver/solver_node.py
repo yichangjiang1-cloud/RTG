@@ -20,7 +20,6 @@ from src.models.positioning import (
 )
 from src.models.gnss_data import FixQuality
 from src.solver.lpoint_solver import LPointSolver
-from src.solver.attitude import euler_to_rotation_matrix
 from src.solver.yard_manager import YardManager
 from src.solver.calibration import BVehicleCalibrator
 from src.solver.calibration_context import CalibrationContextManager
@@ -32,8 +31,20 @@ from src.solver.motion_speed import (
     hold_gnss_speed,
     update_motion_speed,
 )
+from src.solver.gantry_frame import lycs_to_gantry_body
 from src.utils.config_loader import get_config
+
 logger = logging.getLogger(__name__)
+
+
+def _trolley_origin_from_cfg(cfg) -> tuple[str, Optional[tuple[float, float, float]]]:
+    """读取小车零点配置：auto 或 manual + origin_body（大车车体系）。"""
+    block = cfg.get("trolley") if isinstance(cfg.get("trolley"), dict) else {}
+    mode = str(block.get("origin_mode", "auto"))
+    ob = block.get("origin_body")
+    if mode == "manual" and isinstance(ob, (list, tuple)) and len(ob) >= 3:
+        return "manual", (float(ob[0]), float(ob[1]), float(ob[2]))
+    return "auto", None
 
 
 def _gantry_l_arms_from_cfg(cfg) -> tuple[list, list]:
@@ -81,20 +92,17 @@ class SolverNode:
         self._solver_elec = LPointSolver(l_arm_elec)
         self._solver_diesel = LPointSolver(l_arm_diesel)
 
-        # 小车解算器（定位主天线 + 定向副天线杆臂）
-        c1_arm = cfg.get("trolley.antenna_c1.L_arm", [0, 0.5, -3.1])
-        c2_arm = cfg.get("trolley.antenna_c2.L_arm", [0, -0.5, -3.1])
-        self._solver_c1 = LPointSolver(c1_arm)
-        self._solver_c2 = LPointSolver(c2_arm)
-        self._trolley_baseline_body = np.array(c2_arm, dtype=float) - np.array(c1_arm, dtype=float)
+        # 小车零点（大车车体系，锚定 L-Point，随大车移动）
+        origin_mode, origin_body = _trolley_origin_from_cfg(cfg)
+        self._trolley_origin_mode = origin_mode
+        self._trolley_origin_body: Optional[tuple[float, float, float]] = origin_body
+        self._trolley_pending_capture = False
 
         # B 车校准器（每个堆场独立）
         self._calibrators: dict[str, BVehicleCalibrator] = {}
 
-        # 小车行程零点（初始化后记录）
-        self._trolley_origin_x: Optional[float] = None
-        self._last_trolley_x: Optional[float] = None
-        self._last_trolley_y: Optional[float] = None
+        # 小车速度（沿车体系 Y / 横梁方向）
+        self._last_trolley_body_y: Optional[float] = None
         self._last_trolley_time: float = 0.0
 
         # 大车速度
@@ -175,7 +183,7 @@ class SolverNode:
         # ---- 3. 小车解算 ----
         tly_live = _is_receiver_live(tly, now)
         trolley_result = (
-            self._solve_trolley(tly, transform, now)
+            self._solve_trolley(tly, gantry_result, transform, now)
             if tly_live
             else TrolleyResult(timestamp=now, is_valid=False)
         )
@@ -215,6 +223,7 @@ class SolverNode:
             gnss_fix_quality=int(state.get("fix_quality", 0)),
             imu_coasting_active=state.get("imu_coasting", False),
             imu_coasting_duration=state.get("imu_coasting_duration", 0.0),
+            gantry_antennas=state.get("gantry_antennas") or {},
         )
         result.gantry.heading = float(hdg_src.get("heading", 0.0))
         result.gantry.pitch = float(hdg_src.get("pitch", 0.0))
@@ -333,74 +342,92 @@ class SolverNode:
 
         gantry.speed = self._gantry_motion.speed
         gantry.data_source = ga1.get("source", DataSource.INVALID)
+        gantry.heading = heading
+        gantry.pitch = pitch
+        gantry.roll = roll
         return gantry
 
-    def _solve_trolley(self, tly: dict, transform, now: float) -> TrolleyResult:
+    def _solve_trolley(
+        self,
+        tly: dict,
+        gantry: GantryResult,
+        transform,
+        now: float,
+    ) -> TrolleyResult:
         """
-        小车定位解算：输出两端天线在 RTG 坐标系下的坐标及行程。
-
-        GGA 为定位主天线（c1）相位中心；定向副天线（c2）由主天线位置 +
-        姿态旋转矩阵与杆臂基线向量推算，再分别做 L-Point 刚体变换。
+        小车定位：双 GGA → LYCS → 大车车体系（锚定 L-Point，随大车移动）。
+        输出相对零点的 rel_x/rel_y 及沿横梁行程（rel_y）与速度。
         """
         trolley = TrolleyResult(timestamp=now)
+        trolley.origin_mode = self._trolley_origin_mode
 
-        gps_master = np.array([tly["ecef_x"], tly["ecef_y"], tly["ecef_z"]])
-        roll_c = tly.get("roll", 0.0)
-        pitch_c = tly.get("pitch", 0.0)
-        hdg_c = tly.get("heading", 0.0)
+        if not tly.get("has_antenna2"):
+            return trolley
 
-        R = euler_to_rotation_matrix(roll_c, pitch_c, hdg_c)
-        gps_slave = gps_master + R @ self._trolley_baseline_body
+        a2x = float(tly.get("antenna2_ecef_x", 0.0))
+        a2y = float(tly.get("antenna2_ecef_y", 0.0))
+        a2z = float(tly.get("antenna2_ecef_z", 0.0))
+        if a2x == 0.0 and a2y == 0.0 and a2z == 0.0:
+            return trolley
 
-        lp_c1 = self._solver_c1.solve(gps_master, roll_c, pitch_c, hdg_c)
-        lp_c2 = self._solver_c2.solve(gps_slave, roll_c, pitch_c, hdg_c)
+        if not gantry.a1_valid:
+            return trolley
 
-        x1, y1, z1 = transform.ecef_to_lycs(*lp_c1)
-        x2, y2, z2 = transform.ecef_to_lycs(*lp_c2)
+        c1 = (float(tly["ecef_x"]), float(tly["ecef_y"]), float(tly["ecef_z"]))
+        c2 = (a2x, a2y, a2z)
+
+        x1, y1, z1 = transform.ecef_to_lycs(*c1)
+        x2, y2, z2 = transform.ecef_to_lycs(*c2)
 
         trolley.antenna1_x, trolley.antenna1_y, trolley.antenna1_z = x1, y1, z1
         trolley.antenna2_x, trolley.antenna2_y, trolley.antenna2_z = x2, y2, z2
-        trolley.center_x = (x1 + x2) / 2.0
-        trolley.center_y = (y1 + y2) / 2.0
-        trolley.center_z = (z1 + z2) / 2.0
 
-        # 行程（相对初始零点）
-        if self._trolley_origin_x is None:
-            self._trolley_origin_x = trolley.center_x
-        trolley.travel_distance = trolley.center_x - self._trolley_origin_x
+        cx = (x1 + x2) / 2.0
+        cy = (y1 + y2) / 2.0
+        cz = (z1 + z2) / 2.0
+        trolley.center_x, trolley.center_y, trolley.center_z = cx, cy, cz
 
-        # 小车速度
+        bx, by, bz = lycs_to_gantry_body(
+            cx, cy, cz,
+            gantry.lpoint_x, gantry.lpoint_y, gantry.lpoint_z,
+            float(gantry.heading),
+        )
+        trolley.body_x, trolley.body_y, trolley.body_z = bx, by, bz
+
+        if self._trolley_pending_capture:
+            self._trolley_origin_body = (bx, by, bz)
+            self._trolley_origin_mode = "manual"
+            self._trolley_pending_capture = False
+            logger.info("小车零点已捕获 (车体系): x=%.3f y=%.3f z=%.3f", bx, by, bz)
+        elif self._trolley_origin_body is None and self._trolley_origin_mode == "auto":
+            self._trolley_origin_body = (bx, by, bz)
+            logger.info("小车自动零点锁定 (车体系): x=%.3f y=%.3f z=%.3f", bx, by, bz)
+
+        ox, oy, oz = self._trolley_origin_body or (bx, by, bz)
+        trolley.origin_body_x, trolley.origin_body_y, trolley.origin_body_z = ox, oy, oz
+
+        trolley.rel_x = bx - ox
+        trolley.rel_y = by - oy
+        trolley.rel_z = bz - oz
+        trolley.travel_distance = trolley.rel_y
+
         gnss_speed = float(tly.get("speed_mps", 0.0))
-        course_deg = float(tly.get("course_deg", 0.0))
-        dx = 0.0
-        dy = 0.0
+        dy_body = 0.0
         dt = 0.0
-        if (
-            self._last_trolley_x is not None
-            and self._last_trolley_y is not None
-            and self._last_trolley_time > 0
-        ):
-            dx = trolley.center_x - self._last_trolley_x
-            dy = trolley.center_y - self._last_trolley_y
+        if self._last_trolley_body_y is not None and self._last_trolley_time > 0:
+            dy_body = by - self._last_trolley_body_y
             dt = now - self._last_trolley_time
 
-        if math.hypot(dx, dy) >= MIN_DISPLACEMENT_M and dt > 0:
+        if abs(dy_body) >= MIN_DISPLACEMENT_M and dt > 0:
             update_motion_speed(
-                self._trolley_motion,
-                dx,
-                dy,
-                dt,
-                gnss_speed,
-                course_deg,
+                self._trolley_motion, 0.0, dy_body, dt, gnss_speed, None,
             )
-            self._last_trolley_x = trolley.center_x
-            self._last_trolley_y = trolley.center_y
+            self._last_trolley_body_y = by
             self._last_trolley_time = now
         elif gnss_speed >= DEADBAND_MPS:
-            hold_gnss_speed(self._trolley_motion, gnss_speed, course_deg)
-        elif self._last_trolley_x is None:
-            self._last_trolley_x = trolley.center_x
-            self._last_trolley_y = trolley.center_y
+            hold_gnss_speed(self._trolley_motion, gnss_speed)
+        elif self._last_trolley_body_y is None:
+            self._last_trolley_body_y = by
             self._last_trolley_time = now
 
         trolley.speed = self._trolley_motion.speed
@@ -435,10 +462,42 @@ class SolverNode:
             self._yard_manager.save_b_matrix(yard_id, M)
             logger.info(f"B 车校准完成，矩阵已保存（堆场 {yard_id}）")
 
+    def apply_trolley_origin_config(self, trolley_cfg: dict) -> None:
+        """应用小车零点配置（来自 vehicle_params / 云端）。"""
+        if not isinstance(trolley_cfg, dict):
+            return
+        mode = str(trolley_cfg.get("origin_mode", "auto"))
+        ob = trolley_cfg.get("origin_body")
+        if mode == "manual" and isinstance(ob, (list, tuple)) and len(ob) >= 3:
+            self._trolley_origin_mode = "manual"
+            self._trolley_origin_body = (float(ob[0]), float(ob[1]), float(ob[2]))
+            logger.info("小车零点已设为手动 (车体系): %s", self._trolley_origin_body)
+        elif mode == "auto":
+            self._trolley_origin_mode = "auto"
+            self._trolley_origin_body = None
+            logger.info("小车零点模式: auto（下次有效解自动锁定）")
+
+    def request_trolley_origin_capture(self) -> None:
+        """下一帧有效解时将当前位置设为车体系零点。"""
+        self._trolley_pending_capture = True
+        logger.info("已请求捕获小车零点（等待下一帧双 GGA）")
+
+    def set_trolley_origin_manual(self, ox: float, oy: float, oz: float) -> None:
+        """手动设定大车车体系零点坐标。"""
+        self._trolley_origin_mode = "manual"
+        self._trolley_origin_body = (float(ox), float(oy), float(oz))
+        self._trolley_pending_capture = False
+        logger.info("小车零点已手动设定 (车体系): (%.3f, %.3f, %.3f)", ox, oy, oz)
+
     def reset_trolley_origin(self) -> None:
-        """重置小车行程零点。"""
-        self._trolley_origin_x = None
-        logger.info("小车行程零点已重置")
+        """重置为 auto 模式，下一有效解重新锁定零点。"""
+        self._trolley_origin_mode = "auto"
+        self._trolley_origin_body = None
+        self._trolley_pending_capture = False
+        self._last_trolley_body_y = None
+        self._last_trolley_time = 0.0
+        self._trolley_motion = MotionSpeedState()
+        logger.info("小车零点已重置为 auto")
 
     def apply_vehicle_config(self, cloud_config: dict) -> None:
         """应用云端下发的车辆静态参数到 L-Point 解算器。"""
@@ -449,6 +508,9 @@ class SolverNode:
         self._solver_elec.update_l_arm(elec)
         self._solver_diesel.update_l_arm(diesel)
         logger.info("已应用大车双作业点杆臂 elec=%s diesel=%s", elec, diesel)
+        trolley_cfg = block.get("trolley")
+        if isinstance(trolley_cfg, dict):
+            self.apply_trolley_origin_config(trolley_cfg)
 
     def reload_calibration(
         self,
@@ -536,7 +598,7 @@ def _is_receiver_live(g: dict, now: float, stale_s: float = 2.0) -> bool:
     last = float(g.get("last_gnss_time", 0.0))
     if last <= 0 or (now - last) > stale_s:
         return False
-    return FixQuality.is_rtk(g.get("fix_quality", 0))
+    return int(g.get("fix_quality", 0)) > int(FixQuality.INVALID)
 
 
 def _pick_gnss_motion(

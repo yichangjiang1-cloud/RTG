@@ -22,7 +22,7 @@ export interface RefAntennaCoord extends GpsCoord {
   ecef_z?: number;
 }
 
-/** 副天线 A2 WGS84（接收机1 柴油机侧 GGA） */
+/** 副天线 A2 WGS84（左接收机 GGA[1] 柴油机侧） */
 export interface Antenna2Coord extends GpsCoord {
   valid?: boolean;
   ecef_x?: number;
@@ -61,11 +61,23 @@ export interface GantryData {
   speed: number;
 }
 
-/** 小车定位输出（6.2 节） */
+/** 小车零点（大车车体系，锚定 L-Point） */
+export interface TrolleyOriginConfig {
+  origin_mode: 'auto' | 'manual';
+  origin_body?: [number, number, number];
+}
+
+/** 小车定位输出（6.2 节）：相对起始点位置 + 行程 + 速度 */
 export interface TrolleyData {
   valid?: boolean;
-  ant_a: LocalCoord;
-  ant_b: LocalCoord;
+  /** 相对零点位置（大车车体系） */
+  position: LocalCoord;
+  /** 当前位置（大车车体系，相对 L-Point） */
+  body_position?: LocalCoord;
+  /** 已配置零点（大车车体系） */
+  origin_body?: LocalCoord;
+  origin_mode?: 'auto' | 'manual';
+  /** 沿横梁行程，等于 position.y */
   travel: number;
   speed: number;
 }
@@ -92,6 +104,8 @@ export interface RealtimeData {
   gantry: GantryData;
   /** 小车定位数据（两端天线坐标 + 行程 + 速度） */
   trolley: TrolleyData;
+  /** 四天线实时坐标（左列 a1/a2，右列 b1/b2） */
+  gantry_antennas?: Record<string, GantryAntennaPoint>;
 }
 
 export interface ReceiverStatus {
@@ -104,11 +118,29 @@ export interface ReceiverStatus {
   valid?: boolean;
 }
 
-// ===== 车辆参数类型 =====
-/** 天线标识：用于区分 6 根天线各自对应的物理角色（大车左前/右前/左后/右后、小车A端/B端） */
-export interface AntennaLabel {
-  id: string;
-  label: string;
+/** 单根大车天线实时点 */
+export interface GantryAntennaPoint {
+  lat: number;
+  lon: number;
+  alt: number;
+  ecef_x?: number;
+  ecef_y?: number;
+  ecef_z?: number;
+  valid?: boolean;
+  role?: 'elec' | 'diesel';
+  receiver?: 'left' | 'right';
+}
+
+/** 接收机布局（替代原 ant1–ant6 天线标识） */
+export interface ReceiverLayout {
+  left: string;
+  right: string;
+  trolley: string;
+  left_port: number;
+  right_port: number;
+  trolley_port: number;
+  /** 同包 GGA 顺序，固定 [电气房, 柴油机] */
+  gga_order: ['elec', 'diesel'];
 }
 
 /** 车辆物理几何参数（与场地角色无关，角色由场地是否建图决定） */
@@ -128,8 +160,41 @@ export interface VehicleProfile {
     elec?: LArmCalibrationRecord;
     diesel?: LArmCalibrationRecord;
   };
-  /** 天线标签列表，标识每根天线对应的物理角色 */
-  antennas: AntennaLabel[];
+  /** @deprecated 仅兼容旧 API，请使用 receiver_layout */
+  antennas?: AntennaLabel[];
+  receiver_layout?: ReceiverLayout;
+  /** 四天线 / 双接收机姿态解算配置 */
+  gantry_attitude?: GantryAttitudeConfig;
+  /** 小车零点（大车车体系） */
+  trolley?: TrolleyOriginConfig;
+}
+
+/** @deprecated */
+export interface AntennaLabel {
+  id: string;
+  label: string;
+}
+
+/** 四根天线在车体系下的安装坐标 [X前, Y左, Z上]（米） */
+export interface GantryAntennaBody {
+  a1: [number, number, number];
+  a2: [number, number, number];
+  b1: [number, number, number];
+  b2: [number, number, number];
+}
+
+export interface GantryAttitudeConfig {
+  /** dual_receiver: A/B 双基线平均 + 四点求 roll；four_antenna: 四点完整定姿 */
+  mode: 'dual_receiver' | 'four_antenna';
+  baseline_m: number;
+  antenna_body: GantryAntennaBody;
+  /** 最近一次四天线安装坐标标定 */
+  body_calibration?: {
+    measured_at: string;
+    baseline_m: number;
+    span_m: number;
+    source: 'live' | 'manual';
+  };
 }
 
 /** 杆臂智能标定记录 */

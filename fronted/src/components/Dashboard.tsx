@@ -332,33 +332,18 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
             <span className="text-sm font-semibold">小车定位</span>
           </div>
 
-          {/* 两端天线坐标 */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-slate-900/50 rounded-lg p-3">
-              <p className="section-title mb-2">A 端天线 (RTG 坐标系)</p>
-              <div className="space-y-1">
-                {(['x', 'y', 'z'] as const).map(axis => (
-                  <div key={axis} className="flex justify-between items-baseline">
-                    <span className="text-[10px] text-slate-500">{axis.toUpperCase()}</span>
-                    <span className="font-mono text-emerald-400 text-sm">{data.trolley.ant_a[axis].toFixed(4)} m</span>
-                  </div>
-                ))}
+          {/* 相对起始点位置 + 速度 */}
+          <div className="grid grid-cols-3 gap-2 text-center">
+            {(['x', 'y', 'z'] as const).map(axis => (
+              <div key={axis} className="bg-slate-900/50 rounded-lg p-2">
+                <p className="section-title mb-1">Δ{axis.toUpperCase()}</p>
+                <span className="font-mono text-emerald-400 text-sm">
+                  {data.trolley.position[axis].toFixed(3)} m
+                </span>
               </div>
-            </div>
-            <div className="bg-slate-900/50 rounded-lg p-3">
-              <p className="section-title mb-2">B 端天线 (RTG 坐标系)</p>
-              <div className="space-y-1">
-                {(['x', 'y', 'z'] as const).map(axis => (
-                  <div key={axis} className="flex justify-between items-baseline">
-                    <span className="text-[10px] text-slate-500">{axis.toUpperCase()}</span>
-                    <span className="font-mono text-teal-400 text-sm">{data.trolley.ant_b[axis].toFixed(4)} m</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+            ))}
           </div>
 
-          {/* 实际行程 + 速度 */}
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col items-center justify-center py-3 bg-slate-900/40 rounded-lg gap-1">
               <span className="section-title">实际行程</span>

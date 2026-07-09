@@ -34,6 +34,17 @@ class WebSocketManager:
 
         logger.info(f"WebSocket 连接: {vehicle_id} (总连接数: {len(self.active_connections[vehicle_id])})")
 
+        # 连接确认帧：避免前端 5s 无数据误判为断线
+        try:
+            await websocket.send_text(json.dumps({
+                "type": "connected",
+                "vehicle_id": vehicle_id,
+                "data": {"message": "websocket_ready"},
+                "timestamp": datetime.utcnow().isoformat(),
+            }))
+        except Exception as e:
+            logger.warning(f"WebSocket 欢迎帧发送失败: {e}")
+
     async def disconnect(self, websocket: WebSocket, vehicle_id: str):
         """
         断开客户端连接

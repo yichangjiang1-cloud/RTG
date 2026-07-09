@@ -64,10 +64,9 @@ class TrolleyResult:
     """
     小车定位解算结果。
 
-    坐标基准：RTG 局部坐标系（笛卡尔右手系）
-    X 轴：沿轨道数值增大方向为正
-    Z 轴：竖直向上为正
-    速度符号：沿轨道增大方向为正。
+    双 GGA 直接定位置，不求姿态句。
+    坐标基准：堆场 LYCS；相对起始点 (rel_x, rel_y)，Y 轴沿横梁行程方向。
+    速度符号：沿行程增大方向为正。
     """
     timestamp: float = 0.0
 
@@ -85,7 +84,23 @@ class TrolleyResult:
     center_y: float = 0.0
     center_z: float = 0.0
 
-    # ---- 距轨道起始点的实际行程（米）----
+    # ---- 当前位置（大车车体系，相对 L-Point）----
+    body_x: float = 0.0
+    body_y: float = 0.0
+    body_z: float = 0.0
+
+    # ---- 相对起始零点（大车车体系，米）----
+    rel_x: float = 0.0
+    rel_y: float = 0.0
+    rel_z: float = 0.0
+
+    # ---- 已配置零点（大车车体系，供前端展示）----
+    origin_body_x: float = 0.0
+    origin_body_y: float = 0.0
+    origin_body_z: float = 0.0
+    origin_mode: str = "auto"  # auto | manual
+
+    # ---- 距轨道起始点的实际行程（米，= rel_y）----
     travel_distance: float = 0.0
 
     # ---- 速度（m/s）----
@@ -137,4 +152,7 @@ class PositionResult:
     gnss_fix_quality: int = 0       # 当前 GNSS 定位质量
     imu_coasting_active: bool = False
     imu_coasting_duration: float = 0.0   # 当前惯导补位已持续秒数
+
+    # 四天线 WGS84/ECEF（a1/a2 左列，b1/b2 右列；GGA[0]=电气，GGA[1]=柴油）
+    gantry_antennas: dict = field(default_factory=dict)
 

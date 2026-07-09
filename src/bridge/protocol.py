@@ -17,8 +17,8 @@
   [40:44] gantry_speed  float32  大车速度（m/s）
   [44:48] gantry_hdg    float32  航向角（°）
   ---- 小车数据（28 字节）----
-  [48:52] trolley_x     float32  小车中心 X（m）
-  [52:56] trolley_y     float32  小车中心 Y（m）
+  [48:52] trolley_x     float32  小车相对起始点 X（m）
+  [52:56] trolley_y     float32  小车相对起始点 Y / 行程（m）
   [56:60] trolley_z     float32  小车中心 Z（m）
   [60:64] travel_dist   float32  小车行程（m）
   [64:68] trolley_speed float32  小车速度（m/s）
@@ -93,8 +93,8 @@ def encode_frame(result: PositionResult, seq: int) -> bytes:
         g.speed,
         g.heading,
         # ---- 小车 ----
-        t.center_x,
-        t.center_y,
+        t.rel_x,
+        t.rel_y,
         t.center_z,
         t.travel_distance,
         t.speed,

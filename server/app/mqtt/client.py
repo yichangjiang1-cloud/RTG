@@ -1,6 +1,7 @@
 import paho.mqtt.client as mqtt
 import json
 import threading
+import time
 from typing import Callable, Optional
 from app.config import settings
 from app.utils.logger import get_logger
@@ -21,35 +22,80 @@ class MqttClient:
         self.connected = False
         self.message_handler: Optional[Callable] = None
         self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._reconnect_thread: Optional[threading.Thread] = None
+        self._loop_started = False
 
     def set_message_handler(self, handler: Callable):
         """设置消息处理器回调"""
         self.message_handler = handler
 
     def connect(self):
-        """连接到 MQTT Broker"""
-        try:
-            if settings.MQTT_USERNAME and settings.MQTT_PASSWORD:
-                self.client.username_pw_set(
-                    settings.MQTT_USERNAME,
-                    settings.MQTT_PASSWORD
-                )
+        """连接到 MQTT Broker（失败时后台自动重试）"""
+        if settings.MQTT_USERNAME and settings.MQTT_PASSWORD:
+            self.client.username_pw_set(
+                settings.MQTT_USERNAME,
+                settings.MQTT_PASSWORD
+            )
 
+        self._ensure_loop()
+        self._try_connect_once()
+        self._start_reconnect_thread()
+        logger.info(
+            f"MQTT 连接任务已启动: {settings.MQTT_BROKER_HOST}:{settings.MQTT_BROKER_PORT}"
+        )
+
+    def _ensure_loop(self) -> None:
+        if not self._loop_started:
+            self.client.loop_start()
+            self._loop_started = True
+
+    def _try_connect_once(self) -> bool:
+        try:
             self.client.connect(
                 settings.MQTT_BROKER_HOST,
                 settings.MQTT_BROKER_PORT,
-                keepalive=60
+                keepalive=60,
             )
-            self.client.loop_start()
-            logger.info(f"连接中: {settings.MQTT_BROKER_HOST}:{settings.MQTT_BROKER_PORT}")
+            return True
         except Exception as e:
-            logger.error(f"MQTT 连接失败: {e}")
-            raise
+            logger.warning(
+                f"MQTT 连接失败，将在后台重试: {settings.MQTT_BROKER_HOST}:"
+                f"{settings.MQTT_BROKER_PORT} — {e}"
+            )
+            return False
+
+    def _start_reconnect_thread(self) -> None:
+        if self._reconnect_thread and self._reconnect_thread.is_alive():
+            return
+
+        def _reconnect_loop() -> None:
+            delay_s = 3
+            while not self._stop_event.is_set():
+                if not self.connected:
+                    if self._try_connect_once():
+                        delay_s = 3
+                    else:
+                        time.sleep(delay_s)
+                        delay_s = min(delay_s * 2, 30)
+                        continue
+                time.sleep(2)
+
+        self._reconnect_thread = threading.Thread(
+            target=_reconnect_loop,
+            name="mqtt-reconnect",
+            daemon=True,
+        )
+        self._reconnect_thread.start()
 
     def disconnect(self):
         """断开连接"""
-        self.client.loop_stop()
+        self._stop_event.set()
+        if self._loop_started:
+            self.client.loop_stop()
+            self._loop_started = False
         self.client.disconnect()
+        self.connected = False
         logger.info("MQTT 已断开连接")
 
     def subscribe(self, topic: str, qos: int = 0):

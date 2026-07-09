@@ -150,14 +150,16 @@ def build_pashr(heading_deg: float, roll: float = 0.0, pitch: float = 0.0) -> st
 
 
 def build_rmc(lat: float, lon: float, heading_deg: float, speed_mps: float = 0.0) -> str:
+    """RMC 航迹角始终为车体航向；速度符号表示前进/后退。"""
     lat_str, lat_dir, lon_str, lon_dir = latlon_to_nmea(lat, lon)
-    speed_kn = speed_mps / 0.514444
+    speed_kn = abs(speed_mps) / 0.514444
+    course = heading_deg % 360.0
     now = datetime.now(timezone.utc)
     tstr = now.strftime("%H%M%S.%f")[:9]
     dstr = now.strftime("%d%m%y")
     body = (
         f"$GNRMC,{tstr},A,{lat_str},{lat_dir},{lon_str},{lon_dir},"
-        f"{speed_kn:.2f},{heading_deg:.1f},{dstr},,,A"
+        f"{speed_kn:.2f},{course:.1f},{dstr},,,A"
     )
     return nmea_checksum(body)
 
@@ -196,7 +198,12 @@ class OscillateMotion:
         self.direction = 1
 
     def step(self, dt: float) -> tuple[float, float, float, float]:
-        """返回主天线 (lat, lon, heading_deg, speed_mps)。"""
+        """
+        返回主天线 (lat, lon, heading_deg, speed_mps)。
+
+        RTG 沿轨道来回时车体朝向不变（heading = track_az）；
+        仅速度带符号表示前进/后退。
+        """
         self.offset_m += self.direction * self.speed * dt
         if self.offset_m >= self.half_span:
             self.offset_m = self.half_span
@@ -208,8 +215,9 @@ class OscillateMotion:
         lat, lon = offset_wgs84_m(
             self.center_lat, self.center_lon, self.offset_m, self.track_az
         )
-        heading = self.track_az if self.direction > 0 else (self.track_az + 180.0) % 360.0
-        return lat, lon, heading, self.speed
+        heading = self.track_az % 360.0
+        speed_mps = self.direction * self.speed
+        return lat, lon, heading, speed_mps
 
 
 def load_yard_track_az(config_path: Path) -> float | None:

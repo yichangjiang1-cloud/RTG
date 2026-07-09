@@ -78,6 +78,9 @@ def rotation_matrix_to_euler(R: np.ndarray) -> tuple:
         pitch   = math.degrees(math.asin(-R[2, 0]))
         roll    = math.degrees(math.atan2(R[2, 1], R[2, 2]))
         heading = math.degrees(math.atan2(R[1, 0], R[0, 0]))
+        heading = heading % 360.0
+        if heading >= 359.95:
+            heading = 0.0
 
     return roll, pitch, heading
 

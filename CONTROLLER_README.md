@@ -40,19 +40,23 @@ RTG 中控机程序是高精度自动定位系统的核心计算单元，负责�
 
 ```
 ┌─────────────────┐
-│  GNSS 接收机 x3 │ ──UDP──┐
-└─────────────────┘        │
-                           │
-┌─────────────────┐        ↓
-│   IMU 传感器    │ ──UDP──→ DriverNode ──EventBus──→ FusionNode (EKF)
-└─────────────────┘                                         │
-                                                            ↓
-                                                    SolverNode (坐标转换)
-                                                            │
-                                                            ├──→ BridgeNode → PLC (TCP)
-                                                            │
-                                                            └──→ MqttClient → 后端 Broker
+│  GNSS 接收机 x3 │ ──UDP push──┐
+└─────────────────┘              │
+                                 ↓
+┌─────────────────┐        DriverNode（中控 bind 9001/9002/9003）
+│   IMU 传感器    │ ──UDP──→     │
+└─────────────────┘              ▼
+                          EventBus → FusionNode (EKF)
+                                        │
+                                        ↓
+                                SolverNode (坐标转换)
+                                        │
+                                        ├──→ BridgeNode → PLC (TCP)
+                                        │
+                                        └──→ MqttClient → 后端 Broker
 ```
+
+**GNSS 通信说明**：中控在本机绑定 UDP 端口并监听；三台接收机向中控 IP 的对应端口推送 NMEA。`receiver_id`（gantry_a1 / gantry_a2 / trolley）由**端口**决定，不是 NMEA 内容。配错会导致多路数据混入同一通道，详见 [docs/RECEIVER_UDP_ARCHITECTURE.md](docs/RECEIVER_UDP_ARCHITECTURE.md)。
 
 ---
 
@@ -76,17 +80,21 @@ mqtt:
   username: null
   password: null
 
-# GNSS 接收机配置
+# GNSS：中控在本机 bind 端口；host 为监听地址，不是接收机 IP
 gnss:
-  receiver_a1:  # 大车接收机1
-    host: "192.168.1.101"
+  receiver_a1:  # 左列 → gantry_a1
+    host: "0.0.0.0"
     port: 9001
-  receiver_a2:  # 大车接收机2
-    host: "192.168.1.102"
-    port: 9001
-  receiver_b:   # 小车接收机
-    host: "192.168.1.103"
-    port: 9001
+    role: gantry_a1
+  receiver_a2:  # 右列 → gantry_a2
+    host: "0.0.0.0"
+    port: 9002
+    role: gantry_a2
+  receiver_b:   # 小车 → trolley
+    host: "0.0.0.0"
+    port: 9003
+    role: trolley
+# 接收机侧配置：目标 IP = 中控机 IP，目标端口 = 9001 / 9002 / 9003（各不同）
 
 # PLC 通信
 plc:
@@ -285,12 +293,13 @@ python -m src.main
 3. 检查网络连通性：`ping 192.168.1.100`
 
 ### 问题 3：GNSS 数据无输出
-**现象**：日志无 GNSS 数据，或显示 `fix_quality=0`
+**现象**：日志无 GNSS 数据，或显示 `fix_quality=0`，或某路 `[gantry_a2/trolley] 超过 2.0 s 未收到数据`
 
 **解决**：
-1. 检查接收机网络连接：`telnet 192.168.1.101 9001`
-2. 确认接收机已输出 NMEA 数据
-3. 查看日志中的 `DriverNode` 相关信息
+1. 确认中控已监听：`DriverNode 启动` 日志中应有三路 `GNSS [...] UDP 0.0.0.0:900x`
+2. 确认每台接收机**目标 IP = 中控 IP**，且端口分别为 9001 / 9002 / 9003（不可相同）
+3. 查看 `[gantry_a1]` 等日志中的 `收到 UDP ... 来自 <IP>`，核对来源 IP 与物理接收机一致
+4. 若某路日志出现两个不同源 IP，说明多机共端口，见 [docs/RECEIVER_UDP_ARCHITECTURE.md](docs/RECEIVER_UDP_ARCHITECTURE.md)
 
 ### 问题 4：PLC 无法连接
 **现象**：`✗ PLC连接: ✗`

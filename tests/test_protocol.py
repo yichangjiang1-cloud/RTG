@@ -47,17 +47,13 @@ class TestProtocol(unittest.TestCase):
         )
         result.trolley = TrolleyResult(
             timestamp=result.timestamp,
-            antenna1_x=5.0,
-            antenna1_y=0.5,
-            antenna1_z=3.0,
-            antenna2_x=5.0,
-            antenna2_y=-0.5,
-            antenna2_z=3.0,
-            center_x=5.0,
-            center_y=0.0,
+            rel_x=1.2,
+            rel_y=12.5,
+            rel_z=0.0,
             center_z=3.0,
             travel_distance=12.5,
             speed=0.8,
+            is_valid=True,
             data_source=DataSource.GNSS_RTK_FIXED,
         )
 
@@ -76,7 +72,8 @@ class TestProtocol(unittest.TestCase):
         self.assertEqual(decoded["seq"], seq)
         self.assertAlmostEqual(decoded["timestamp"], result.timestamp, places=6)
         self.assertAlmostEqual(decoded["center_elec"], 120.5, places=3)
-        self.assertAlmostEqual(decoded["trolley_x"], 5.0, places=3)
+        self.assertAlmostEqual(decoded["trolley_x"], 1.2, places=3)
+        self.assertAlmostEqual(decoded["travel_dist"], 12.5, places=3)
         self.assertEqual(decoded["fix_quality"], 4)
 
     def test_decode_corrupted_crc(self):

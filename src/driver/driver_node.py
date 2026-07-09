@@ -41,6 +41,9 @@ class DriverNode:
         """启动所有接收机线程。"""
         logger.info(f"DriverNode 启动，共 {len(self._receivers)} 台 GNSS 接收机 + 1 台 IMU")
         for rcv in self._receivers:
+            logger.info(
+                f"  → GNSS [{rcv.receiver_id}] UDP {rcv.host}:{rcv.port}"
+            )
             rcv.start()
         if self._imu_receiver:
             self._imu_receiver.start()

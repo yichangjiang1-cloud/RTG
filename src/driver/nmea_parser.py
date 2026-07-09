@@ -1,7 +1,7 @@
 """
 驱动模块：NMEA 语句解析器
 支持标准 NMEA 0183 句型：GGA、RMC、HDT
-以及双天线接收机专有姿态语句：PTNL、GPTRA 等。
+以及双天线接收机专有语句：$PSAT,GGA2（副天线 GGA）、PASHR、GPTRA 等。
 """
 
 import logging
@@ -49,6 +49,44 @@ def _lat_lon_to_decimal(value: str, direction: str) -> float:
     if direction in ("S", "W"):
         decimal = -decimal
     return decimal
+
+
+def parse_psat_gga2(sentence: str) -> Optional[dict]:
+    """
+    解析 R61 等接收机副天线位置语句 $PSAT,GGA2。
+
+    格式：$PSAT,GGA2,time,lat,N/S,lon,E/W,fix,sats,hdop,alt,M,...
+    字段布局与 $GPGGA 相同，但 time 占第 3 字段（索引 2），lat 从索引 3 起。
+    """
+    if not verify_checksum(sentence):
+        logger.debug("PSAT GGA2 校验和错误: %s", sentence[:40])
+        return None
+
+    parts = sentence.split(",")
+    if len(parts) < 11 or parts[1].upper() != "GGA2":
+        return None
+
+    try:
+        lat = _lat_lon_to_decimal(parts[3], parts[4])
+        lon = _lat_lon_to_decimal(parts[5], parts[6])
+        fix_quality = int(parts[7]) if parts[7] else 0
+        num_sats = int(parts[8]) if parts[8] else 0
+        hdop = float(parts[9]) if parts[9] else 99.9
+        alt = float(parts[10]) if parts[10] else 0.0
+
+        return {
+            "type": "GGA2",
+            "timestamp": time.time(),
+            "lat": lat,
+            "lon": lon,
+            "alt": alt,
+            "fix_quality": fix_quality,
+            "num_sats": num_sats,
+            "hdop": hdop,
+        }
+    except (ValueError, IndexError) as e:
+        logger.debug("PSAT GGA2 解析失败: %s | 错误: %s", sentence[:60], e)
+        return None
 
 
 def parse_gga(sentence: str) -> Optional[dict]:
@@ -218,6 +256,8 @@ def parse_sentence(sentence: str) -> Optional[dict]:
         return None
 
     upper = sentence.upper()
+    if upper.startswith("$PSAT") and ",GGA2," in upper:
+        return parse_psat_gga2(sentence)
     if "GGA" in upper[:10]:
         return parse_gga(sentence)
     elif "RMC" in upper[:10]:

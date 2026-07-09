@@ -11,8 +11,13 @@ from app.schemas import (
     VehicleResponse, VehicleCreate, VehicleInitRequest,
     VehicleConfigResponse, VehicleConfigCreate, VehicleConfigCloneRequest,
     LArmComputeRequest, ApiResponse,
+    AntennaBodyComputeRequest, TrolleyOriginRequest,
 )
 from app.utils.l_arm_calibration import compute_l_arm_from_wgs84
+from app.utils.antenna_body_calibration import (
+    compute_antenna_body_from_ecef,
+    ecef_dict_from_antennas,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -42,11 +47,24 @@ def _publish_vehicle_config_update(vehicle_id: str, config: VehicleConfig) -> No
             "w_span": config.w_span,
             "antennas": config.antennas,
             "l_arm_calibration": config.l_arm_calibration,
+            "gantry_attitude": config.gantry_attitude,
+            "receiver_layout": config.receiver_layout,
+            "trolley": config.trolley,
         },
     }
     topic = f"rtg/{vehicle_id}/control"
     _mqtt_client.publish(topic, json.dumps(payload, ensure_ascii=False, default=str), qos=1)
     logger.info(f"已下发配置更新: {topic} (含 l_arm_calibration={config.l_arm_calibration is not None})")
+
+
+def _publish_trolley_origin(vehicle_id: str, payload: dict) -> None:
+    if not _mqtt_client or not _mqtt_client.is_connected():
+        logger.warning("MQTT 未连接，无法下发 SET_TROLLEY_ORIGIN")
+        return
+    topic = f"rtg/{vehicle_id}/control"
+    body = {"cmd": "SET_TROLLEY_ORIGIN", "data": payload}
+    _mqtt_client.publish(topic, json.dumps(body, ensure_ascii=False, default=str), qos=1)
+    logger.info(f"已下发小车零点: {topic} action={payload.get('action')}")
 
 @router.post("/init", response_model=ApiResponse)
 async def init_vehicle(
@@ -266,6 +284,80 @@ async def compute_l_arm(req: LArmComputeRequest):
         )
 
 
+@router.post("/compute_antenna_body", response_model=ApiResponse)
+async def compute_antenna_body(req: AntennaBodyComputeRequest):
+    """
+    由四天线实时 ECEF 反算车体系安装坐标。
+    约定：a1/a2=左接收机 GGA[0]/GGA[1]，b1/b2=右接收机 GGA[0]/GGA[1]。
+    """
+    try:
+        a1, a2, b1, b2 = ecef_dict_from_antennas(req.antennas)
+        body, baseline_m, span_m = compute_antenna_body_from_ecef(a1, a2, b1, b2)
+        return ApiResponse(
+            code=200,
+            message="四天线安装坐标标定成功",
+            data={
+                "antenna_body": body,
+                "baseline_m": baseline_m,
+                "span_m": span_m,
+            },
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"四天线标定失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+
+
+@router.post("/trolley_origin", response_model=ApiResponse)
+async def set_trolley_origin(req: TrolleyOriginRequest, db: Session = Depends(get_db)):
+    """
+    设置小车零点（大车车体系，锚定 L-Point，随大车移动）。
+    action: capture=当前位置设为零点 | manual=手动 origin_body | reset=恢复 auto
+    """
+    action = req.action
+    if action not in ("capture", "manual", "reset"):
+        raise HTTPException(status_code=400, detail="action 须为 capture | manual | reset")
+
+    config = db.query(VehicleConfig).filter(
+        VehicleConfig.vehicle_id == req.vehicle_id
+    ).first()
+    if not config:
+        raise HTTPException(status_code=404, detail=f"车辆 {req.vehicle_id} 无配置记录")
+
+    trolley = dict(config.trolley or {})
+    if action == "manual":
+        if not req.origin_body or len(req.origin_body) < 3:
+            raise HTTPException(status_code=400, detail="manual 模式须提供 origin_body [x,y,z]")
+        trolley = {
+            "origin_mode": "manual",
+            "origin_body": [float(x) for x in req.origin_body[:3]],
+        }
+        config.trolley = trolley
+        db.commit()
+        _publish_trolley_origin(req.vehicle_id, {
+            "action": "manual",
+            "origin_body": trolley["origin_body"],
+            "trolley": trolley,
+        })
+    elif action == "capture":
+        _publish_trolley_origin(req.vehicle_id, {"action": "capture"})
+    else:
+        trolley = {"origin_mode": "auto"}
+        config.trolley = trolley
+        db.commit()
+        _publish_trolley_origin(req.vehicle_id, {"action": "reset", "trolley": trolley})
+
+    return ApiResponse(
+        code=200,
+        message="小车零点指令已下发",
+        data={"vehicle_id": req.vehicle_id, "action": action, "trolley": config.trolley},
+    )
+
+
 @router.post("/config", response_model=ApiResponse)
 async def save_vehicle_config(
     req: VehicleConfigCreate,
@@ -296,6 +388,9 @@ async def save_vehicle_config(
             config.w_span = req.w_span
             config.antennas = req.antennas
             config.l_arm_calibration = req.l_arm_calibration
+            config.gantry_attitude = req.gantry_attitude
+            config.receiver_layout = req.receiver_layout
+            config.trolley = req.trolley
         else:
             config = VehicleConfig(**req.dict())
             db.add(config)
@@ -345,6 +440,9 @@ async def get_vehicle_config(vehicle_id: str, db: Session = Depends(get_db)):
                 "w_span": config.w_span,
                 "antennas": config.antennas,
                 "l_arm_calibration": config.l_arm_calibration,
+                "gantry_attitude": config.gantry_attitude,
+                "receiver_layout": config.receiver_layout,
+                "trolley": config.trolley,
                 "created_at": config.created_at.isoformat(),
                 "updated_at": config.updated_at.isoformat()
             }
@@ -401,6 +499,9 @@ async def clone_vehicle_config(
             target_config.height = source_config.height
             target_config.w_span = source_config.w_span
             target_config.antennas = source_config.antennas
+            target_config.gantry_attitude = source_config.gantry_attitude
+            target_config.receiver_layout = source_config.receiver_layout
+            target_config.trolley = source_config.trolley
         else:
             target_config = VehicleConfig(
                 vehicle_id=req.new_vehicle_id,

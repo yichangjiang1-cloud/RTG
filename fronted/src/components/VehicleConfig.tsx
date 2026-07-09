@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, type Dispatch, type SetStateAction } from 'react';
-import { Settings2, Plus, Trash2, Save, FolderOpen, Car, Radio, RefreshCw, X, Loader2, AlertTriangle, Copy, Sparkles, WifiOff } from 'lucide-react';
+import { Settings2, Plus, Save, FolderOpen, Car, Radio, RefreshCw, X, Loader2, AlertTriangle, Copy, Sparkles, WifiOff, ArrowLeftRight, MoveHorizontal } from 'lucide-react';
 import { SectionHeader, showToast } from './common';
 import { useAppContext } from '../context/AppContext';
 import type { ConnStatus, PendingDevice } from '../context/AppContext';
-import type { VehicleProfile, AntennaLabel, RealtimeData, LArmCalibrationRecord, GpsCoord } from '../types';
+import type { VehicleProfile, RealtimeData, LArmCalibrationRecord, GpsCoord, GantryAttitudeConfig, GantryAntennaBody, ReceiverLayout, GantryAntennaPoint, TrolleyOriginConfig } from '../types';
 import { clsx } from 'clsx';
 import { logger } from '../utils/logger';
 
@@ -183,7 +183,61 @@ function InitDeviceModal({ device, backendBase, onClose, onDone }: {
   );
 }
 
-const DEFAULT_ARM: [number, number, number] = [0, 0, 0];
+const DEFAULT_RECEIVER_LAYOUT: ReceiverLayout = {
+  left: 'gantry_a1',
+  right: 'gantry_a2',
+  trolley: 'trolley',
+  left_port: 9001,
+  right_port: 9002,
+  trolley_port: 9003,
+  gga_order: ['elec', 'diesel'],
+};
+
+function defaultGantryAttitude(span: number, baseline = 20): GantryAttitudeConfig {
+  return {
+    mode: 'dual_receiver',
+    baseline_m: baseline,
+    antenna_body: {
+      a1: [0, 0, 0],
+      a2: [baseline, 0, 0],
+      b1: [0, -span, 0],
+      b2: [baseline, -span, 0],
+    },
+  };
+}
+
+type ConfigTab = 'basic' | 'larm' | 'attitude' | 'trolley';
+type CalibSide = 'elec' | 'diesel';
+
+function SwipeTabs<T extends string>({
+  tabs,
+  active,
+  onChange,
+}: {
+  tabs: { id: T; label: string }[];
+  active: T;
+  onChange: (id: T) => void;
+}) {
+  return (
+    <div className="flex gap-1 p-1 bg-slate-900/80 rounded-xl border border-slate-700/60 overflow-x-auto">
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          onClick={() => onChange(t.id)}
+          className={clsx(
+            'flex-1 min-w-[7rem] px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap',
+            active === t.id
+              ? 'bg-violet-600 text-white shadow-md shadow-violet-900/40'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800',
+          )}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function mergeVehicleConfig(
   local: VehicleProfile,
@@ -194,27 +248,32 @@ function mergeVehicleConfig(
     height?: number;
     w_span?: number;
     l_arm_calibration?: VehicleProfile['l_arm_calibration'];
+    gantry_attitude?: GantryAttitudeConfig;
+    receiver_layout?: ReceiverLayout;
   } | null,
 ): VehicleProfile {
   const legacy = data?.l_arm ?? local.l_arm ?? DEFAULT_ARM;
+  const span = data?.w_span ?? local.span;
   return {
     ...local,
     height: data?.height ?? local.height,
-    span: data?.w_span ?? local.span,
+    span,
     l_arm: legacy,
     l_arm_elec: data?.l_arm_elec ?? local.l_arm_elec ?? legacy,
     l_arm_diesel: data?.l_arm_diesel ?? local.l_arm_diesel ?? legacy,
     l_arm_calibration: data?.l_arm_calibration ?? local.l_arm_calibration,
-    antennas: local.antennas ?? [],
+    gantry_attitude: data?.gantry_attitude ?? local.gantry_attitude ?? defaultGantryAttitude(span),
+    receiver_layout: data?.receiver_layout ?? local.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT,
+    trolley: data?.trolley ?? local.trolley ?? { origin_mode: 'auto' },
   };
 }
+
+const DEFAULT_ARM: [number, number, number] = [0, 0, 0];
 
 // ============================================================
 // 智能杆臂标定
 // ============================================================
 const MAX_CALIB_SPEED = 0.08;
-
-type CalibSide = 'elec' | 'diesel';
 
 type AntennaEcefSource = { ecef_x?: number; ecef_y?: number; ecef_z?: number };
 
@@ -292,6 +351,7 @@ function LArmSmartCalibration({
   const [lpElec, setLpElec] = useState({ lat: '', lon: '', alt: '' });
   const [lpDiesel, setLpDiesel] = useState({ lat: '', lon: '', alt: '' });
   const [computing, setComputing] = useState<CalibSide | null>(null);
+  const [calibSide, setCalibSide] = useState<CalibSide>('elec');
 
   const stationary = liveData.speed <= MAX_CALIB_SPEED;
   const gnssOk = liveData.status === 'fix';
@@ -452,49 +512,60 @@ function LArmSmartCalibration({
         <div>WS {connStatus}</div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <label className="section-title">电气房侧作业点（RTK 测量）</label>
-          {renderLpointInputs('elec', lpElec, setLpElec)}
-          <button
-            type="button"
-            disabled={!canCalib || computing !== null}
-            onClick={() => computeSide('elec')}
-            className="w-full btn-primary text-xs py-2 flex items-center justify-center gap-2 disabled:opacity-40"
-          >
-            {computing === 'elec' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            计算 l_arm_elec
-          </button>
-        </div>
-        <div className="space-y-2">
-          <label className="section-title">柴油机侧作业点（RTK 测量）</label>
-          {renderLpointInputs('diesel', lpDiesel, setLpDiesel)}
-          <button
-            type="button"
-            disabled={!canCalib || !a2Ok || computing !== null}
-            onClick={() => computeSide('diesel')}
-            className="w-full btn-primary text-xs py-2 flex items-center justify-center gap-2 disabled:opacity-40"
-          >
-            {computing === 'diesel' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            计算 l_arm_diesel
-          </button>
-        </div>
-      </div>
+      <SwipeTabs
+        tabs={[
+          { id: 'elec' as const, label: '电气房侧 (A1)' },
+          { id: 'diesel' as const, label: '柴油机侧 (A2)' },
+        ]}
+        active={calibSide}
+        onChange={setCalibSide}
+      />
 
-      {cfg && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <ReadOnlyLArmBlock
-            title="当前 l_arm_elec（只读，由智能标定写入）"
-            arm={cfg.l_arm_elec}
-            uncalibrated={!cfg.l_arm_calibration?.elec}
-          />
-          <ReadOnlyLArmBlock
-            title="当前 l_arm_diesel（只读，由智能标定写入）"
-            arm={cfg.l_arm_diesel}
-            uncalibrated={!cfg.l_arm_calibration?.diesel}
-          />
-        </div>
-      )}
+      <div className="space-y-3">
+        {calibSide === 'elec' ? (
+          <>
+            <label className="section-title">电气房侧作业点（RTK 测量）</label>
+            {renderLpointInputs('elec', lpElec, setLpElec)}
+            <button
+              type="button"
+              disabled={!canCalib || computing !== null}
+              onClick={() => computeSide('elec')}
+              className="w-full btn-primary text-xs py-2 flex items-center justify-center gap-2 disabled:opacity-40"
+            >
+              {computing === 'elec' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              计算 l_arm_elec
+            </button>
+            {cfg && (
+              <ReadOnlyLArmBlock
+                title="当前 l_arm_elec"
+                arm={cfg.l_arm_elec}
+                uncalibrated={!cfg.l_arm_calibration?.elec}
+              />
+            )}
+          </>
+        ) : (
+          <>
+            <label className="section-title">柴油机侧作业点（RTK 测量）</label>
+            {renderLpointInputs('diesel', lpDiesel, setLpDiesel)}
+            <button
+              type="button"
+              disabled={!canCalib || !a2Ok || computing !== null}
+              onClick={() => computeSide('diesel')}
+              className="w-full btn-primary text-xs py-2 flex items-center justify-center gap-2 disabled:opacity-40"
+            >
+              {computing === 'diesel' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              计算 l_arm_diesel
+            </button>
+            {cfg && (
+              <ReadOnlyLArmBlock
+                title="当前 l_arm_diesel"
+                arm={cfg.l_arm_diesel}
+                uncalibrated={!cfg.l_arm_calibration?.diesel}
+              />
+            )}
+          </>
+        )}
+      </div>
 
       {cfg?.l_arm_calibration && (
         <p className="text-[10px] text-slate-500">
@@ -503,6 +574,505 @@ function LArmSmartCalibration({
           {cfg.l_arm_calibration.diesel && ` · 柴油机 @ ${cfg.l_arm_calibration.diesel.measured_at.slice(0, 19)}`}
         </p>
       )}
+    </div>
+  );
+}
+
+function areGantryAntennasReady(ga?: Record<string, GantryAntennaPoint>): boolean {
+  if (!ga) return false;
+  for (const k of ['a1', 'a2', 'b1', 'b2'] as const) {
+    const p = ga[k];
+    if (!p || p.valid === false) return false;
+    const hasEcef = [p.ecef_x, p.ecef_y, p.ecef_z].every(v => typeof v === 'number' && Number.isFinite(v))
+      && !(p.ecef_x === 0 && p.ecef_y === 0 && p.ecef_z === 0);
+    const hasLla = Math.abs(p.lat) > 1e-6 && Math.abs(p.lon) > 1e-6;
+    if (!hasEcef && !hasLla) return false;
+  }
+  return true;
+}
+
+function bodyListsToTuples(body: Record<string, number[]>): GantryAntennaBody {
+  const row = (k: keyof GantryAntennaBody) => (body[k] ?? [0, 0, 0]).slice(0, 3) as [number, number, number];
+  return { a1: row('a1'), a2: row('a2'), b1: row('b1'), b2: row('b2') };
+}
+
+function ReceiverLayoutPanel({
+  layout,
+  onChange,
+}: {
+  layout: ReceiverLayout;
+  onChange: (layout: ReceiverLayout) => void;
+}) {
+  const swapSides = () => {
+    onChange({
+      ...layout,
+      left: layout.right,
+      right: layout.left,
+      left_port: layout.right_port,
+      right_port: layout.left_port,
+    });
+    showToast('已交换左右接收机映射（若现场接线相反请保存并下发）');
+  };
+
+  const rows = [
+    {
+      key: 'left',
+      side: '左列门腿',
+      id: layout.left,
+      port: layout.left_port,
+      gga0: '电气房 (a1)',
+      gga1: '柴油机 (a2)',
+    },
+    {
+      key: 'right',
+      side: '右列门腿',
+      id: layout.right,
+      port: layout.right_port,
+      gga0: '电气房 (b1)',
+      gga1: '柴油机 (b2)',
+    },
+    {
+      key: 'trolley',
+      side: '小车',
+      id: layout.trolley,
+      port: layout.trolley_port,
+      gga0: 'C1 (GGA[0])',
+      gga1: 'C2 (GGA[1])',
+    },
+  ];
+
+  return (
+    <div className="lg:col-span-2 card p-6 space-y-4">
+      <div className="flex items-center justify-between pb-3 border-b border-slate-700/60">
+        <div>
+          <h3 className="text-sm font-bold uppercase tracking-wide text-slate-300">接收机布局</h3>
+          <p className="text-[10px] text-slate-500 mt-0.5">
+            同包 GGA 顺序固定：GGA[0]=电气房，GGA[1]=柴油机；四天线 a1/a2=左列，b1/b2=右列
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={swapSides}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs font-bold"
+        >
+          <ArrowLeftRight className="w-3.5 h-3.5" />
+          交换左右
+        </button>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-slate-500 border-b border-slate-700">
+              <th className="text-left py-2 pr-3">物理位置</th>
+              <th className="text-left py-2 px-2">接收机 ID</th>
+              <th className="text-left py-2 px-2">UDP 端口</th>
+              <th className="text-left py-2 px-2">GGA[0]</th>
+              <th className="text-left py-2 pl-2">GGA[1]</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.key} className="border-b border-slate-800/60 font-mono">
+                <td className="py-2.5 pr-3 text-slate-300">{r.side}</td>
+                <td className="py-2.5 px-2 text-blue-300">{r.id}</td>
+                <td className="py-2.5 px-2 text-slate-400">{r.port}</td>
+                <td className="py-2.5 px-2 text-emerald-400/90">{r.gga0}</td>
+                <td className="py-2.5 pl-2 text-amber-400/90">{r.gga1}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="p-3 bg-slate-900/60 border border-slate-700/40 rounded-lg text-[10px] text-slate-500 leading-relaxed space-y-1">
+        <p>左接收机（{layout.left_port}）双 GGA 对应 a1/a2；右接收机（{layout.right_port}）对应 b1/b2。</p>
+        <p>姿态解算与杆臂标定均按此顺序，无需再维护 ant1–ant6 天线标识。若现场左右接线与默认相反，点「交换左右」后保存。</p>
+      </div>
+    </div>
+  );
+}
+
+function TrolleyOriginPanel({
+  cfg,
+  setCfg,
+  liveData,
+  connStatus,
+  useMock,
+  isMock,
+  baseUrl,
+}: {
+  cfg: VehicleProfile;
+  setCfg: Dispatch<SetStateAction<VehicleProfile | null>>;
+  liveData: RealtimeData;
+  connStatus: ConnStatus;
+  useMock: boolean;
+  isMock: boolean;
+  baseUrl: string;
+}) {
+  const trolley = cfg.trolley ?? { origin_mode: 'auto' as const };
+  const [ox, setOx] = useState(String(trolley.origin_body?.[0] ?? 0));
+  const [oy, setOy] = useState(String(trolley.origin_body?.[1] ?? 0));
+  const [oz, setOz] = useState(String(trolley.origin_body?.[2] ?? 0));
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const wsOk = connStatus === 'connected' && !useMock && !isMock;
+  const tlyOk = liveData.trolley.valid !== false && liveData.trolley.body_position;
+
+  async function callOrigin(action: 'capture' | 'manual' | 'reset', originBody?: [number, number, number]) {
+    setBusy(action);
+    try {
+      const res = await fetch(`${baseUrl}/api/vehicle/trolley_origin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vehicle_id: cfg.vehicle_id,
+          action,
+          ...(originBody ? { origin_body: originBody } : {}),
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json() as { code: number; data?: { trolley?: TrolleyOriginConfig } };
+      if (json.code !== 200) throw new Error('指令失败');
+      if (json.data?.trolley) {
+        setCfg(p => p ? { ...p, trolley: json.data!.trolley } : null);
+      } else if (action === 'reset') {
+        setCfg(p => p ? { ...p, trolley: { origin_mode: 'auto' } } : null);
+      }
+      showToast(
+        action === 'capture' ? '已下发：下一帧有效解将捕获为零点'
+          : action === 'reset' ? '已重置为 auto 模式'
+          : '手动零点已保存并下发',
+      );
+    } catch {
+      showToast('小车零点指令失败', 'error');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="card p-5 border border-emerald-500/30 bg-emerald-900/10 space-y-4">
+      <div className="flex items-center gap-2">
+        <MoveHorizontal className="w-4 h-4 text-emerald-400" />
+        <h3 className="text-sm font-bold uppercase tracking-wide text-emerald-200">小车零点（大车车体系）</h3>
+      </div>
+
+      <p className="text-[11px] text-slate-400 leading-relaxed">
+        零点锚定在大车 L-Point 车体系上，<strong className="text-slate-300">随大车移动/转向</strong>；
+        行程 = 相对零点的 Y 分量（沿横梁）。双 GGA 在线且中控运行时可用「捕获当前位置」。
+      </p>
+
+      <div className="p-3 bg-slate-900/50 rounded-lg text-xs font-mono space-y-1 text-slate-400">
+        <p>模式 {liveData.trolley.origin_mode ?? trolley.origin_mode}</p>
+        {liveData.trolley.body_position && (
+          <p>实时车体系 body: {liveData.trolley.body_position.x.toFixed(3)}, {liveData.trolley.body_position.y.toFixed(3)}, {liveData.trolley.body_position.z.toFixed(3)}</p>
+        )}
+        {liveData.trolley.origin_body && (
+          <p>零点 origin: {liveData.trolley.origin_body.x.toFixed(3)}, {liveData.trolley.origin_body.y.toFixed(3)}, {liveData.trolley.origin_body.z.toFixed(3)}</p>
+        )}
+        <p>相对 Δ: {liveData.trolley.position.x.toFixed(3)}, {liveData.trolley.position.y.toFixed(3)} m · 行程 {liveData.trolley.travel.toFixed(3)} m</p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={!wsOk || !tlyOk || busy !== null}
+          onClick={() => callOrigin('capture')}
+          className="btn-primary text-xs py-2 px-3 disabled:opacity-40"
+        >
+          {busy === 'capture' ? '下发中…' : '捕获当前位置为零点'}
+        </button>
+        <button
+          type="button"
+          disabled={busy !== null}
+          onClick={() => callOrigin('reset')}
+          className="btn-secondary text-xs py-2 px-3"
+        >
+          重置为 auto
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        <p className="section-title">手动零点 origin_body（大车车体系，米）</p>
+        <div className="grid grid-cols-3 gap-2">
+          {(['x', 'y', 'z'] as const).map((axis, i) => (
+            <div key={axis}>
+              <span className="text-[10px] text-slate-500 uppercase">{axis}</span>
+              <input
+                className="input-field font-mono text-xs py-1.5"
+                value={i === 0 ? ox : i === 1 ? oy : oz}
+                onChange={e => (i === 0 ? setOx : i === 1 ? setOy : setOz)(e.target.value)}
+              />
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          disabled={busy !== null}
+          onClick={() => {
+            const body: [number, number, number] = [parseFloat(ox), parseFloat(oy), parseFloat(oz)];
+            if (!body.every(Number.isFinite)) {
+              showToast('请填写有效坐标', 'error');
+              return;
+            }
+            setCfg(p => p ? { ...p, trolley: { origin_mode: 'manual', origin_body: body } } : null);
+            callOrigin('manual', body);
+          }}
+          className="w-full btn-secondary text-xs py-2"
+        >
+          保存手动零点并下发
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GantryAttitudePanel({
+  cfg,
+  setCfg,
+  liveData,
+  connStatus,
+  useMock,
+  isMock,
+  baseUrl,
+}: {
+  cfg: VehicleProfile;
+  setCfg: Dispatch<SetStateAction<VehicleProfile | null>>;
+  liveData: RealtimeData;
+  connStatus: ConnStatus;
+  useMock: boolean;
+  isMock: boolean;
+  baseUrl: string;
+}) {
+  const att = cfg.gantry_attitude ?? defaultGantryAttitude(cfg.span);
+  const [capturing, setCapturing] = useState(false);
+
+  const fourReady = areGantryAntennasReady(liveData.gantry_antennas);
+  const wsOk = connStatus === 'connected' && !useMock && !isMock;
+  const stationary = liveData.speed <= MAX_CALIB_SPEED;
+  const gnssOk = liveData.status === 'fix';
+  const canCapture = wsOk && fourReady && stationary && gnssOk;
+
+  const captureHint = useMemo(() => {
+    if (useMock || isMock) return '请关闭模拟模式并选择车辆以建立 WebSocket';
+    if (connStatus !== 'connected') return 'WebSocket 未连接';
+    if (!fourReady) return '四天线未齐：需左/右接收机均在线且各输出双 GGA（a1/a2/b1/b2）';
+    if (!gnssOk) return 'GNSS 非固定解，请等待 RTK FIX';
+    if (!stationary) return `车辆未静止（${liveData.speed.toFixed(3)} m/s），请停车后采集`;
+    return '条件满足：可一键从实时四天线坐标标定安装坐标';
+  }, [useMock, isMock, connStatus, fourReady, gnssOk, stationary, liveData.speed]);
+
+  const updateAtt = (patch: Partial<GantryAttitudeConfig>) => {
+    setCfg((p) => p ? {
+      ...p,
+      gantry_attitude: { ...att, ...patch, antenna_body: { ...att.antenna_body, ...(patch.antenna_body ?? {}) } },
+    } : null);
+  };
+
+  const updateBody = (key: keyof GantryAntennaBody, idx: number, val: string) => {
+    const n = parseFloat(val);
+    if (!Number.isFinite(n)) return;
+    const next = { ...att.antenna_body };
+    const row = [...next[key]] as [number, number, number];
+    row[idx] = n;
+    next[key] = row;
+    updateAtt({ antenna_body: next });
+  };
+
+  const applyDefaults = () => {
+    updateAtt(defaultGantryAttitude(cfg.span, att.baseline_m));
+    showToast('已按 W_span / baseline 生成参考安装坐标（建议上线后用一键采集覆盖）');
+  };
+
+  async function captureFromLive() {
+    if (!canCapture || !liveData.gantry_antennas) {
+      showToast(captureHint, 'error');
+      return;
+    }
+    setCapturing(true);
+    try {
+      const res = await fetch(`${baseUrl}/api/vehicle/compute_antenna_body`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ antennas: liveData.gantry_antennas }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { detail?: string };
+        throw new Error(err.detail ?? `HTTP ${res.status}`);
+      }
+      const json = await res.json() as {
+        code: number;
+        data?: { antenna_body: Record<string, number[]>; baseline_m: number; span_m: number };
+      };
+      if (json.code !== 200 || !json.data?.antenna_body) throw new Error('标定失败');
+
+      const { antenna_body, baseline_m, span_m } = json.data;
+      const body = bodyListsToTuples(antenna_body);
+      const measuredAt = new Date().toISOString();
+
+      setCfg((p) => {
+        if (!p) return null;
+        const prev = p.gantry_attitude ?? defaultGantryAttitude(p.span);
+        return {
+          ...p,
+          span: span_m > 1 ? span_m : p.span,
+          gantry_attitude: {
+            ...prev,
+            baseline_m,
+            antenna_body: body,
+            body_calibration: {
+              measured_at: measuredAt,
+              baseline_m,
+              span_m,
+              source: 'live',
+            },
+          },
+        };
+      });
+      showToast(`四天线安装坐标已标定：baseline ${baseline_m.toFixed(2)} m，跨距 ${span_m.toFixed(2)} m`);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : '四天线标定失败', 'error');
+    } finally {
+      setCapturing(false);
+    }
+  }
+
+  return (
+    <div className="card p-5 border border-cyan-500/30 bg-cyan-900/10 space-y-4">
+      <div className="flex items-center gap-2">
+        <Radio className="w-4 h-4 text-cyan-400" />
+        <h3 className="text-sm font-bold uppercase tracking-wide text-cyan-200">四天线姿态解算</h3>
+      </div>
+
+      <p className="text-[11px] text-slate-400 leading-relaxed">
+        双接收机同时在线时：A/B 各自双 GGA 求航向/俯仰并取平均；<strong className="text-slate-300">roll</strong> 由四天线刚体定姿解算。
+        安装坐标应通过<strong className="text-slate-300">一键采集</strong>从现场四天线 ECEF 标定，而非长期使用默认值。车体系：X 前、Y 左、Z 上。
+      </p>
+
+      <div className={clsx(
+        'p-3 rounded-lg text-xs flex items-start gap-2 border',
+        canCapture ? 'bg-slate-900/50 border-slate-700 text-slate-400' : 'bg-amber-900/20 border-amber-500/30 text-amber-200/80',
+      )}>
+        {!wsOk ? <WifiOff className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />}
+        <span>{captureHint}</span>
+      </div>
+
+      <button
+        type="button"
+        disabled={!canCapture || capturing}
+        onClick={captureFromLive}
+        className="w-full btn-primary text-xs py-2.5 flex items-center justify-center gap-2 disabled:opacity-40"
+      >
+        {capturing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+        一键采集四天线安装坐标
+      </button>
+
+      {att.body_calibration && (
+        <p className="text-[10px] text-slate-500">
+          最近标定：{att.body_calibration.measured_at.slice(0, 19)} · baseline {att.body_calibration.baseline_m.toFixed(2)} m · span {att.body_calibration.span_m.toFixed(2)} m · {att.body_calibration.source === 'live' ? '实时采集' : '手动'}
+        </p>
+      )}
+
+      {fourReady && liveData.gantry_antennas && (
+        <div className="overflow-x-auto">
+          <p className="section-title mb-2">实时四天线预览</p>
+          <table className="w-full text-[10px] font-mono">
+            <thead>
+              <tr className="text-slate-500 border-b border-slate-700">
+                <th className="text-left py-1 pr-2">点</th>
+                <th className="py-1 px-1">lat</th>
+                <th className="py-1 px-1">lon</th>
+                <th className="py-1 px-1">alt</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(['a1', 'a2', 'b1', 'b2'] as const).map((k) => {
+                const p = liveData.gantry_antennas![k];
+                return (
+                  <tr key={k} className="border-b border-slate-800/40 text-slate-400">
+                    <td className="py-1 pr-2 uppercase text-cyan-500/80">{k}</td>
+                    <td className="py-1 px-1">{p.lat.toFixed(8)}</td>
+                    <td className="py-1 px-1">{p.lon.toFixed(8)}</td>
+                    <td className="py-1 px-1">{p.alt.toFixed(3)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="section-title block mb-1.5">解算模式</label>
+          <select
+            className="input-field text-sm"
+            value={att.mode}
+            onChange={(e) => updateAtt({ mode: e.target.value as GantryAttitudeConfig['mode'] })}
+          >
+            <option value="dual_receiver">双接收机（平均 hdg/pitch + 四点 roll）</option>
+            <option value="four_antenna">四天线刚体定姿（完整 hdg/pitch/roll）</option>
+          </select>
+        </div>
+        <div>
+          <label className="section-title block mb-1.5">同机基线长度 (m)</label>
+          <input
+            type="number"
+            step="0.01"
+            className="input-field font-mono"
+            value={att.baseline_m}
+            onChange={(e) => updateAtt({ baseline_m: parseFloat(e.target.value) || 0 })}
+          />
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <p className="section-title">天线安装坐标（车体系，米）</p>
+        <button type="button" onClick={applyDefaults} className="text-[10px] text-cyan-400 hover:underline">
+          按 W_span 生成参考值
+        </button>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs font-mono">
+          <thead>
+            <tr className="text-slate-500 border-b border-slate-700">
+              <th className="text-left py-2 pr-2">天线</th>
+              <th className="py-2 px-1">X</th>
+              <th className="py-2 px-1">Y</th>
+              <th className="py-2 px-1">Z</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(['a1', 'a2', 'b1', 'b2'] as const).map((key) => (
+              <tr key={key} className="border-b border-slate-800/60">
+                <td className="py-2 pr-2 text-slate-400 uppercase">{key}</td>
+                {([0, 1, 2] as const).map((i) => (
+                  <td key={i} className="py-1 px-1">
+                    <input
+                      type="number"
+                      step="0.001"
+                      className="input-field py-1 text-xs w-full min-w-[4.5rem]"
+                      value={att.antenna_body[key][i]}
+                      onChange={(e) => updateBody(key, i, e.target.value)}
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="p-3 bg-slate-900/50 rounded-lg grid grid-cols-3 gap-2 text-xs font-mono text-slate-400">
+        <div>实时 heading {liveData.heading.toFixed(2)}°</div>
+        <div>pitch {liveData.pitch.toFixed(2)}°</div>
+        <div>roll {liveData.roll.toFixed(2)}°</div>
+      </div>
+      <p className="text-[10px] text-slate-500">保存后通过 MQTT 热更新至中控 fusion 节点。</p>
     </div>
   );
 }
@@ -527,6 +1097,7 @@ export default function VehicleConfig({
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [initTarget, setInitTarget] = useState<PendingDevice | null>(null);
+  const [configTab, setConfigTab] = useState<ConfigTab>('basic');
 
   const baseVehicle = vehicles.find(v => v.vehicle_id === editId) ?? null;
   const [cfg, setCfg] = useState<VehicleProfile | null>(baseVehicle);
@@ -577,7 +1148,18 @@ export default function VehicleConfig({
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
-      .then((resp: { code: number; data: { vehicle_id?: string; l_arm?: [number,number,number]; l_arm_elec?: [number,number,number]; l_arm_diesel?: [number,number, number]; height?: number; w_span?: number; antennas?: Record<string,unknown>; l_arm_calibration?: VehicleProfile['l_arm_calibration'] } | null }) => {
+      .then((resp: { code: number; data: {
+        vehicle_id?: string;
+        l_arm?: [number, number, number];
+        l_arm_elec?: [number, number, number];
+        l_arm_diesel?: [number, number, number];
+        height?: number;
+        w_span?: number;
+        l_arm_calibration?: VehicleProfile['l_arm_calibration'];
+        gantry_attitude?: GantryAttitudeConfig;
+        receiver_layout?: ReceiverLayout;
+        trolley?: TrolleyOriginConfig;
+      } | null }) => {
         if (resp.code === 200 && local) {
           if (resp.data) {
             logger.info('VehicleConfig', '参数加载成功', resp.data);
@@ -619,26 +1201,6 @@ export default function VehicleConfig({
     setEditId(newVehicleId);
   }, []);
 
-  const handleAntLabelChange = (id: string, newLabel: string) => {
-    setCfg((prev) => prev ? ({
-      ...prev,
-      antennas: prev.antennas.map((a) => (a.id === id ? { ...a, label: newLabel } : a)),
-    }) : null);
-  };
-
-  const handleAddAnt = () => {
-    if (!cfg) return;
-    const newAnt: AntennaLabel = {
-      id: `ant_${Date.now()}`,
-      label: `Antenna ${cfg.antennas.length + 1}`,
-    };
-    setCfg((prev) => prev ? { ...prev, antennas: [...prev.antennas, newAnt] } : null);
-  };
-
-  const handleDelete = (id: string) => {
-    setCfg((prev) => prev ? { ...prev, antennas: prev.antennas.filter((a) => a.id !== id) } : null);
-  };
-
   const handleSave = async () => {
     if (!cfg) return;
     setSaving(true);
@@ -653,9 +1215,9 @@ export default function VehicleConfig({
         height: cfg.height,
         w_span: cfg.span,
         l_arm_calibration: cfg.l_arm_calibration,
-        antennas: Object.fromEntries(
-          cfg.antennas.map(a => [a.id, { label: a.label }])
-        ),
+        gantry_attitude: cfg.gantry_attitude,
+        receiver_layout: cfg.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT,
+        trolley: cfg.trolley,
       };
       const res = await fetch(`${baseUrl}/api/vehicle/config`, {
         method: 'POST',
@@ -776,15 +1338,18 @@ export default function VehicleConfig({
         </div>
       </div>
 
-      <LArmSmartCalibration
-        liveData={liveData}
-        connStatus={connStatus}
-        isMock={isMock}
-        useMock={useMock}
-        baseUrl={baseUrl}
-        cfg={cfg}
-        setCfg={setCfg}
-      />
+      {cfg && !loading && (
+        <SwipeTabs
+          tabs={[
+            { id: 'basic' as const, label: '基本参数' },
+            { id: 'larm' as const, label: '智能杆臂标定' },
+            { id: 'attitude' as const, label: '四天线姿态' },
+            { id: 'trolley' as const, label: '小车零点' },
+          ]}
+          active={configTab}
+          onChange={setConfigTab}
+        />
+      )}
 
       {loading ? (
         <div className="card p-10 flex items-center justify-center text-slate-400 gap-3">
@@ -793,6 +1358,43 @@ export default function VehicleConfig({
         </div>
       ) : cfg ? (
         <>
+          {configTab === 'larm' && (
+            <LArmSmartCalibration
+              liveData={liveData}
+              connStatus={connStatus}
+              isMock={isMock}
+              useMock={useMock}
+              baseUrl={baseUrl}
+              cfg={cfg}
+              setCfg={setCfg}
+            />
+          )}
+
+          {configTab === 'attitude' && (
+            <GantryAttitudePanel
+              cfg={cfg}
+              setCfg={setCfg}
+              liveData={liveData}
+              connStatus={connStatus}
+              useMock={useMock}
+              isMock={isMock}
+              baseUrl={baseUrl}
+            />
+          )}
+
+          {configTab === 'trolley' && (
+            <TrolleyOriginPanel
+              cfg={cfg}
+              setCfg={setCfg}
+              liveData={liveData}
+              connStatus={connStatus}
+              useMock={useMock}
+              isMock={isMock}
+              baseUrl={baseUrl}
+            />
+          )}
+
+          {configTab === 'basic' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
             {/* 基本参数 */}
             <div className="card p-6 space-y-5">
@@ -842,7 +1444,7 @@ export default function VehicleConfig({
                   />
                 </div>
                 <p className="text-[10px] text-slate-500 pt-1">
-                  杆臂由上方「智能杆臂标定」计算，此处不可手改。保存时将一并写入后端。
+                  杆臂在「智能杆臂标定」页配置；四天线姿态在对应分页。保存时将一并写入后端。
                 </p>
               </div>
 
@@ -856,62 +1458,12 @@ export default function VehicleConfig({
               </div>
             </div>
 
-            {/* 天线标识 */}
-            <div className="lg:col-span-2 card p-6">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-700/60 mb-5">
-                <div>
-                  <h3 className="text-sm font-bold uppercase tracking-wide text-slate-300">
-                    天线标识配置
-                  </h3>
-                  <p className="text-[10px] text-slate-500 mt-0.5">
-                    共 {cfg.antennas.length} 根天线 · 支持最多 6 根 · 标签用于标识每根天线对应的物理角色
-                  </p>
-                </div>
-                <button
-                  onClick={handleAddAnt}
-                  disabled={cfg.antennas.length >= 6}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs font-bold disabled:opacity-40"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  添加天线
-                </button>
-              </div>
-
-              <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
-                {cfg.antennas.map((ant, idx) => (
-                  <div key={ant.id} className="flex items-center gap-3 p-3 bg-slate-900/60 border border-slate-700/60 rounded-xl">
-                    <div className="w-8 h-8 rounded-lg bg-blue-900/40 border border-blue-500/30 flex items-center justify-center shrink-0">
-                      <Radio className="w-4 h-4 text-blue-400" />
-                    </div>
-                    <span className="text-[10px] text-slate-500 font-mono shrink-0 w-5">#{idx + 1}</span>
-                    <input
-                      className="input-field text-sm py-1.5 flex-1 font-mono"
-                      value={ant.label}
-                      onChange={(e) => handleAntLabelChange(ant.id, e.target.value)}
-                      placeholder="如：大车左前 / 小车A端"
-                    />
-                    <button
-                      onClick={() => handleDelete(ant.id)}
-                      className="p-1.5 text-slate-500 hover:text-red-400 transition-colors shrink-0"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
-                {cfg.antennas.length === 0 && (
-                  <div className="text-center py-8 text-slate-500 text-sm">
-                    暂无天线标识，请点击右上角「添加天线」
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-5 p-3 bg-slate-900/60 border border-slate-700/40 rounded-lg">
-                <p className="text-[10px] text-slate-500 leading-relaxed">
-                  标签用于标识 6 根天线各自对应的物理安装位置（大车端梁四角 + 小车两端），中控机据此区分各接收机数据来源，正确路由到解算模块。
-                </p>
-              </div>
-            </div>
+            <ReceiverLayoutPanel
+              layout={cfg.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT}
+              onChange={(layout) => setCfg((p) => p ? { ...p, receiver_layout: layout } : null)}
+            />
           </div>
+          )}
 
           {/* 操作按钮 */}
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-700/60">

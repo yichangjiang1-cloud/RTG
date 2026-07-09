@@ -58,11 +58,8 @@ async def lifespan(app: FastAPI):
 
     mqtt_client.set_message_handler(sync_mqtt_handler)
 
-    try:
-        mqtt_client.connect()
-        logger.info("MQTT 客户端已连接")
-    except Exception as e:
-        logger.error(f"MQTT 连接失败，可能导致数据推送不可用: {e}")
+    mqtt_client.connect()
+    logger.info("MQTT 客户端已启动（后台自动重连）")
 
     # 暴露全局引用给各 router 模块
     health.set_mqtt_client(mqtt_client)

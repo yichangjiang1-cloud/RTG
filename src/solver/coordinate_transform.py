@@ -101,6 +101,27 @@ def ecef_to_enu(
     return float(enu[0]), float(enu[1]), float(enu[2])
 
 
+def enu_to_ecef(
+    east_m: float,
+    north_m: float,
+    up_m: float,
+    ref_lat_deg: float,
+    ref_lon_deg: float,
+    ref_alt_m: float,
+) -> Tuple[float, float, float]:
+    """ENU（相对参考点）→ ECEF。"""
+    ref_lat = math.radians(ref_lat_deg)
+    ref_lon = math.radians(ref_lon_deg)
+    X0, Y0, Z0 = wgs84_to_ecef(ref_lat_deg, ref_lon_deg, ref_alt_m)
+    R = np.array([
+        [-math.sin(ref_lon),                  math.cos(ref_lon),               0],
+        [-math.sin(ref_lat) * math.cos(ref_lon), -math.sin(ref_lat) * math.sin(ref_lon), math.cos(ref_lat)],
+        [ math.cos(ref_lat) * math.cos(ref_lon),  math.cos(ref_lat) * math.sin(ref_lon), math.sin(ref_lat)],
+    ])
+    d = R.T @ np.array([east_m, north_m, up_m])
+    return float(X0 + d[0]), float(Y0 + d[1]), float(Z0 + d[2])
+
+
 # ==============================================================
 # 3. ENU → 堆场局部坐标系（LYCS）
 # ==============================================================

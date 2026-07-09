@@ -83,8 +83,13 @@ class GnssRaw:
 
     @property
     def is_valid(self) -> bool:
-        """是否为有效定位（RTK 固定解或浮点解）"""
-        return self.fix_quality in (FixQuality.RTK_FIXED, FixQuality.RTK_FLOAT)
+        """是否有可用定位（GGA fix_quality > 0，含单点/差分/RTK）。"""
+        return self.fix_quality != FixQuality.INVALID
+
+    @property
+    def is_rtk(self) -> bool:
+        """是否为 RTK 固定解或浮点解。"""
+        return FixQuality.is_rtk(int(self.fix_quality))
 
     @property
     def is_rtk_fixed(self) -> bool:

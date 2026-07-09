@@ -245,6 +245,7 @@ class RTGSystem:
           - RECORD_POINT:       建图/校准打点
           - UPDATE_CONFIG:      更新车辆配置
           - START_SVD:          执行校准计算
+          - SET_TROLLEY_ORIGIN: 小车零点（捕获/手动/重置）
         """
         cmd_type = cmd.get("cmd")
         logger.info(f"← 收到 MQTT 控制指令: cmd={cmd_type}")
@@ -260,6 +261,8 @@ class RTGSystem:
                 self._handle_start_svd(cmd)
             elif cmd_type == "CALIBRATION_FINALIZED":
                 self._handle_calibration_finalized(cmd)
+            elif cmd_type == "SET_TROLLEY_ORIGIN":
+                self._handle_set_trolley_origin(cmd)
             else:
                 logger.warning(f"⚠ 未知控制指令: {cmd_type}")
         except Exception as e:
@@ -335,6 +338,7 @@ class RTGSystem:
     def _apply_vehicle_config(self, config: dict) -> None:
         """应用车辆参数到解算器，并回写 vehicle_params.yaml 本地备份。"""
         self._solver_node.apply_vehicle_config(config)
+        self._fusion_node.update_gantry_attitude_config(config)
         persist_vehicle_params(config, self._vehicle_params_path)
 
     def _handle_start_svd(self, cmd: dict) -> None:
@@ -348,6 +352,27 @@ class RTGSystem:
         yard_id = data.get("yard_id", "")
         logger.info(f"→ 收到校准完成通知: yard_id={yard_id}，同步堆场本地备份...")
         self._sync_yard_data_from_cloud()
+
+    def _handle_set_trolley_origin(self, cmd: dict) -> None:
+        """处理小车零点设置：capture / manual / reset。"""
+        data = cmd.get("data", {}) or {}
+        action = data.get("action", "capture")
+        logger.info(f"→ 小车零点指令: action={action}")
+
+        if action == "capture":
+            self._solver_node.request_trolley_origin_capture()
+        elif action == "reset":
+            self._solver_node.reset_trolley_origin()
+        elif action == "manual":
+            ob = data.get("origin_body")
+            if isinstance(ob, (list, tuple)) and len(ob) >= 3:
+                self._solver_node.set_trolley_origin_manual(
+                    float(ob[0]), float(ob[1]), float(ob[2]),
+                )
+        trolley_cfg = data.get("trolley")
+        if isinstance(trolley_cfg, dict):
+            self._solver_node.apply_trolley_origin_config(trolley_cfg)
+            persist_vehicle_params({"trolley": trolley_cfg}, self._vehicle_params_path)
 
     # ------------------------------------------------------------------
     # 堆场数据：API 真源 + yard_config.yaml 备份

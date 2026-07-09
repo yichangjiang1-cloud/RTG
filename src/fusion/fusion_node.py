@@ -28,6 +28,13 @@ from src.fusion.ekf import EKF
 from src.fusion.imu_mechanization import ImuMechanization
 from src.solver.coordinate_transform import wgs84_to_ecef, ecef_to_enu
 from src.solver.attitude import euler_to_rotation_matrix
+from src.fusion.gantry_attitude import (
+    GantryAttitudeConfig,
+    build_gantry_antennas_payload,
+    compute_gantry_attitude,
+    derive_heading_pitch_from_dual_gga,
+    normalize_heading_deg,
+)
 from src.utils.config_loader import get_config
 
 logger = logging.getLogger(__name__)
@@ -112,38 +119,36 @@ class FusionNode:
         self._last_imu: Optional[ImuRaw] = None
         self._last_imu_time: float = 0.0
 
+        w_span = float(cfg.get("w_span", 23.47))
+        att_block = cfg.get("gantry.attitude", {})
+        self._gantry_att_cfg = GantryAttitudeConfig.from_dict(att_block, w_span=w_span)
+        self._last_gantry_att_source: str = ""
+
         # 订阅事件
         self._bus.subscribe(EventBus.TOPIC_GNSS_RAW, self._on_gnss)
         self._bus.subscribe(EventBus.TOPIC_IMU_RAW, self._on_imu)
 
-        logger.info("FusionNode 初始化完成，管理 %d 台接收机", len(self._states))
+        logger.info(
+            "FusionNode 初始化完成，管理 %d 台接收机，大车姿态模式=%s",
+            len(self._states),
+            self._gantry_att_cfg.mode,
+        )
+
+    def update_gantry_attitude_config(self, cloud_config: dict) -> None:
+        """热更新四天线 / 双接收机姿态参数。"""
+        block = cloud_config.get("config") if isinstance(cloud_config.get("config"), dict) else cloud_config
+        if not isinstance(block, dict):
+            return
+        w_span = float(block.get("w_span", 23.47))
+        att = block.get("gantry_attitude")
+        if not isinstance(att, dict):
+            att = block.get("gantry", {}).get("attitude") if isinstance(block.get("gantry"), dict) else {}
+        self._gantry_att_cfg = GantryAttitudeConfig.from_dict(att, w_span=w_span)
+        logger.info("大车姿态配置已热更新: mode=%s", self._gantry_att_cfg.mode)
 
     # ------------------------------------------------------------------
     # 回调：GNSS 原始数据到来
     # ------------------------------------------------------------------
-    @staticmethod
-    def _derive_heading_pitch_from_dual_gga(gnss: GnssRaw) -> Optional[tuple[float, float]]:
-        """
-        用同机双 GGA 基线推算 heading/pitch。
-        说明：单基线无法唯一确定 roll（绕基线轴不可观测），因此这里只解两角。
-        """
-        if not gnss.has_antenna2:
-            return None
-        e2, n2, u2 = ecef_to_enu(
-            gnss.antenna2_ecef_x,
-            gnss.antenna2_ecef_y,
-            gnss.antenna2_ecef_z,
-            gnss.latitude,
-            gnss.longitude,
-            gnss.altitude,
-        )
-        horiz = math.hypot(e2, n2)
-        if horiz < 1e-6 and abs(u2) < 1e-6:
-            return None
-        heading = math.degrees(math.atan2(e2, n2)) % 360.0
-        pitch = math.degrees(math.atan2(u2, max(horiz, 1e-9)))
-        return heading, pitch
-
     @staticmethod
     def _format_optional_angle(val: Optional[float]) -> str:
         return f"{val:.2f}°" if val is not None else "—"
@@ -208,9 +213,14 @@ class FusionNode:
                 # 初始化 EKF 标称状态
                 state.pos_ned  = np.zeros(3)
                 state.vel_ned  = np.array([0.0, 0.0, 0.0])
-                state.roll_deg    = gnss.roll    or 0.0
-                state.pitch_deg   = gnss.pitch   or 0.0
-                state.heading_deg = gnss.heading or 0.0
+                if rid == "trolley":
+                    state.roll_deg = 0.0
+                    state.pitch_deg = 0.0
+                    state.heading_deg = 0.0
+                else:
+                    state.roll_deg    = gnss.roll    or 0.0
+                    state.pitch_deg   = gnss.pitch   or 0.0
+                    state.heading_deg = gnss.heading or 0.0
                 logger.info("[%s] GNSS 首次定位，建立 NED 参考点 (%.7f, %.7f, %.3f)",
                             rid, gnss.latitude, gnss.longitude, gnss.altitude)
 
@@ -237,36 +247,21 @@ class FusionNode:
             state.roll_deg    += math.degrees(att_corr[0])
             state.pitch_deg   += math.degrees(att_corr[1])
             state.heading_deg += math.degrees(att_corr[2])
-            state.heading_deg  = state.heading_deg % 360.0
+            state.heading_deg = normalize_heading_deg(state.heading_deg)
 
             state.ekf.reset_state()
 
-            # 双 GGA 优先：按现场模型单机解 heading + pitch，roll 不在此处求解
-            att_source = "ekf"
-            hp = self._derive_heading_pitch_from_dual_gga(gnss)
-            if hp is not None:
-                state.heading_deg, state.pitch_deg = hp
-                # 单接收机双天线场景：roll 不可观测，默认置零，避免误导性姿态输入
-                state.roll_deg = 0.0
-                att_source = "dual_gga"
-            else:
-                # 回退：接收机直接给的姿态句（如 PASHR/GPTRA）
-                if gnss.heading is not None:
-                    state.heading_deg = gnss.heading
-                    att_source = "nmea"
-                if gnss.pitch is not None:
-                    state.pitch_deg = gnss.pitch
-                if gnss.roll is not None:
-                    state.roll_deg = gnss.roll
-
-            self._log_fusion_attitude(
-                rid,
-                att_source,
-                state.heading_deg,
-                state.pitch_deg,
-                state.roll_deg,
-                gnss,
-            )
+            # 大车左右接收机：姿态在 _publish 中按双机/四天线联合解算；小车仅双 GGA 定位置
+            if rid in ("gantry_a1", "gantry_a2"):
+                hp = derive_heading_pitch_from_dual_gga(gnss)
+                if hp is not None:
+                    state.heading_deg = normalize_heading_deg(hp[0])
+                    state.pitch_deg = hp[1]
+                    state.roll_deg = float(gnss.roll or 0.0)
+                elif gnss.heading is not None:
+                    state.heading_deg = normalize_heading_deg(float(gnss.heading))
+                    state.pitch_deg = float(gnss.pitch or 0.0)
+                    state.roll_deg = float(gnss.roll or 0.0)
 
             # 更新 ECEF 输出
             state.ecef_x = gnss.ecef_x
@@ -417,7 +412,7 @@ class FusionNode:
                 is_live = (
                     s.last_gnss_time > 0
                     and (now_ts - s.last_gnss_time) < 2.0
-                    and FixQuality.is_rtk(s.fix_quality)
+                    and s.fix_quality > int(FixQuality.INVALID)
                 )
                 has_antenna2 = False
                 a2_ecef = (0.0, 0.0, 0.0)
@@ -476,27 +471,80 @@ class FusionNode:
         d_a1 = _state_dict(s_a1)
         d_a2 = _state_dict(s_a2)
         d_tly = _state_dict(s_tly)
+        self._apply_gantry_attitude(s_a1, s_a2, d_a1, d_a2)
         ref = d_a1 if d_a1.get("is_live") else (d_a2 if d_a2.get("is_live") else d_a1)
+        gantry_antennas = build_gantry_antennas_payload(d_a1, d_a2)
 
         fused = {
             "gantry_a1": d_a1,
             "gantry_a2": d_a2,
             "trolley":   d_tly,
+            "gantry_antennas": gantry_antennas,
             "fix_quality":          ref.get("fix_quality", 0),
             "imu_coasting":         ref.get("is_coasting", False),
             "imu_coasting_duration": ref.get("coasting_duration", 0.0),
             "source": ref.get("source", DataSource.INVALID),
         }
         logger.info(
-            "发布融合状态 | a1 live=%s hdg=%.2f° pitch=%.2f° roll=%.2f° | "
+            "发布融合状态 | a1 live=%s hdg=%.2f° pitch=%.2f° roll=%.2f° (%s) | "
             "a2 live=%s hdg=%.2f° | ref_fix=%s coasting=%s",
             d_a1.get("is_live"),
             d_a1.get("heading", 0.0),
             d_a1.get("pitch", 0.0),
             d_a1.get("roll", 0.0),
+            d_a1.get("attitude_source", "-"),
             d_a2.get("is_live"),
             d_a2.get("heading", 0.0),
             ref.get("fix_quality", 0),
             fused.get("imu_coasting"),
         )
         self._bus.publish(EventBus.TOPIC_FUSED_STATE, fused)
+
+    def _apply_gantry_attitude(
+        self,
+        s_a1: ReceiverState,
+        s_a2: ReceiverState,
+        d_a1: dict,
+        d_a2: dict,
+    ) -> None:
+        """双接收机联合姿态 → 写入 gantry_a1（solver 主通道）。"""
+        ga1 = s_a1.last_gnss
+        ga2 = s_a2.last_gnss
+        if ga1 is None or s_a1.ref_lat is None:
+            return
+
+        att = compute_gantry_attitude(
+            ga1,
+            ga2,
+            bool(d_a1.get("is_live")),
+            bool(d_a2.get("is_live")),
+            self._gantry_att_cfg,
+            s_a1.ref_lat,
+            s_a1.ref_lon,
+            s_a1.ref_alt,
+        )
+        if att is None:
+            return
+
+        d_a1["heading"] = att.heading_deg
+        d_a1["pitch"] = att.pitch_deg
+        d_a1["roll"] = att.roll_deg
+        d_a1["attitude_source"] = att.source
+
+        with s_a1._lock:
+            s_a1.heading_deg = att.heading_deg
+            s_a1.pitch_deg = att.pitch_deg
+            s_a1.roll_deg = att.roll_deg
+
+        if att.source != self._last_gantry_att_source:
+            self._last_gantry_att_source = att.source
+            logger.info(
+                "[gantry] 联合姿态 | 来源=%s | hdg=%.2f° pitch=%.2f° roll=%.2f° | "
+                "a1_live=%s a2_live=%s",
+                att.source,
+                att.heading_deg,
+                att.pitch_deg,
+                att.roll_deg,
+                d_a1.get("is_live"),
+                d_a2.get("is_live"),
+            )

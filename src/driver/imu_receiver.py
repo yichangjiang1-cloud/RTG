@@ -16,6 +16,7 @@
 
 import socket
 import struct
+import sys
 import threading
 import time
 
@@ -47,7 +48,10 @@ class ImuReceiver(threading.Thread):
 
     def run(self) -> None:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if sys.platform == "win32" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        elif sys.platform != "win32":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.settimeout(1.0)
         try:
             sock.bind((self.host, self.port))

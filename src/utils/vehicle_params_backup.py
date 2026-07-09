@@ -61,6 +61,19 @@ def persist_vehicle_params(
             data["height"] = float(height)
         if w_span is not None:
             data["w_span"] = float(w_span)
+        gantry_att = block.get("gantry_attitude")
+        if isinstance(gantry_att, dict) and gantry_att:
+            gantry = data.get("gantry") if isinstance(data.get("gantry"), dict) else {}
+            gantry["attitude"] = gantry_att
+            data["gantry"] = gantry
+
+        recv_layout = block.get("receiver_layout")
+        if isinstance(recv_layout, dict) and recv_layout:
+            data["receiver_layout"] = recv_layout
+
+        trolley_cfg = block.get("trolley")
+        if isinstance(trolley_cfg, dict) and trolley_cfg:
+            data["trolley"] = trolley_cfg
 
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:

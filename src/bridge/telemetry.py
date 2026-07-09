@@ -40,9 +40,9 @@ def _build_receivers(g, t, fix_quality: int, imu_coasting: bool) -> list:
         }
 
     return [
-        _entry("gantry_a1", "接收机1 A1+A2 (9001)", g.recv1_live),
-        _entry("gantry_a2", "接收机2 B1+B2 (9002)", g.recv2_live),
-        _entry("trolley", "小车 (9003)", t.is_valid),
+        _entry("gantry_a1", "左接收机 9001 (GGA0=电气 GGA1=柴油)", g.recv1_live),
+        _entry("gantry_a2", "右接收机 9002 (GGA0=电气 GGA1=柴油)", g.recv2_live),
+        _entry("trolley", "小车接收机 9003", t.is_valid),
     ]
 
 
@@ -117,6 +117,7 @@ def position_result_to_realtime(result: PositionResult) -> dict:
             "valid": _antenna2_live(result),
         },
         "status": _gnss_status(result.gnss_fix_quality, result.imu_coasting_active),
+        "gantry_antennas": result.gantry_antennas or {},
         "receivers": _build_receivers(
             g, t, result.gnss_fix_quality, result.imu_coasting_active
         ),
@@ -162,16 +163,22 @@ def position_result_to_realtime(result: PositionResult) -> dict:
         },
         "trolley": {
             "valid": t.is_valid,
-            "ant_a": {
-                "x": t.antenna1_x,
-                "y": t.antenna1_y,
-                "z": t.antenna1_z,
+            "position": {
+                "x": t.rel_x,
+                "y": t.rel_y,
+                "z": t.rel_z,
             },
-            "ant_b": {
-                "x": t.antenna2_x,
-                "y": t.antenna2_y,
-                "z": t.antenna2_z,
+            "body_position": {
+                "x": t.body_x,
+                "y": t.body_y,
+                "z": t.body_z,
             },
+            "origin_body": {
+                "x": t.origin_body_x,
+                "y": t.origin_body_y,
+                "z": t.origin_body_z,
+            },
+            "origin_mode": t.origin_mode,
             "travel": t.travel_distance,
             "speed": t.speed,
         },

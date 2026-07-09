@@ -4,6 +4,10 @@ backend:
   port: 8000
   timeout_s: 10
 gnss:
+  raw_log:
+    enabled: true
+    dir: logs/gnss_raw
+    session_gap_s: 2.0
   receiver_a1:
     host: 0.0.0.0
     port: 9001

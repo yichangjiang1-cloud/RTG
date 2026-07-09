@@ -6,6 +6,7 @@
 
 import math
 import socket
+import sys
 import threading
 import time
 from typing import Optional
@@ -13,6 +14,7 @@ from typing import Optional
 from src.core.event_bus import get_bus, EventBus
 from src.models.gnss_data import GnssRaw, FixQuality
 from src.driver.nmea_parser import parse_sentence
+from src.driver.gnss_raw_file_logger import create_gnss_raw_file_logger
 from src.solver.coordinate_transform import wgs84_to_ecef
 from src.utils.enhanced_logger import EnhancedLogger
 
@@ -22,9 +24,49 @@ logger = EnhancedLogger.get_logger(__name__)
 _UDP_BUFFER_SIZE = 4096
 # 接收机数据超时告警阈值（秒）
 _DATA_TIMEOUT_S = 2.0
+# 未接设备通道：超时提示最小间隔（秒，DEBUG）
+_IDLE_CHANNEL_WARN_INTERVAL_S = 60.0
+# 曾在线后断流：WARNING 最小间隔（秒）
+_ACTIVE_CHANNEL_WARN_INTERVAL_S = 10.0
 # 双天线基线水平距离合理范围（米），用于跨包识别副天线 GGA
 _SECONDARY_MIN_SEPARATION_M = 2.0
 _SECONDARY_MAX_SEPARATION_M = 80.0
+
+
+def _configure_udp_listen_socket(sock: socket.socket) -> None:
+    """
+    配置 UDP 监听 socket。
+    Windows 上禁止 SO_REUSEADDR：否则 9003 等端口可被多进程同时绑定，
+    发往本机的模拟包可能被其它 socket 抢走，trolley 线程一直收不到数据。
+    """
+    if sys.platform == "win32":
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    else:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+
+def _summarize_nmea_types(text: str) -> str:
+    """从原始文本提取语句类型摘要，如 GGA+GGA2+RMC+PASHR。"""
+    types = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("$"):
+            continue
+        head = line[1:].split(",", 1)[0].upper()
+        if head.startswith("PSAT") and "GGA2" in line.upper():
+            types.append("GGA2")
+        elif "GGA" in head:
+            types.append("GGA")
+        elif "RMC" in head:
+            types.append("RMC")
+        elif "HDT" in head:
+            types.append("HDT")
+        elif "PASHR" in head:
+            types.append("PASHR")
+        else:
+            types.append(head.split("*")[0][:8])
+    return "+".join(types) if types else "?"
 
 
 class GnssReceiver(threading.Thread):
@@ -59,19 +101,47 @@ class GnssReceiver(threading.Thread):
         # 当前帧缓存（在一个包的多条语句间累积状态）
         self._frame: GnssRaw = GnssRaw(receiver_id=receiver_id)
         self._last_data_time: float = 0.0
+        self._ever_received: bool = False
+        self._last_timeout_warn: float = 0.0
+        self._peer_addr: Optional[tuple] = None
         # 副天线最近一次有效 GGA（跨 UDP 包保留，供「一行一 GGA」类接收机/模拟器）
         self._cached_antenna2: Optional[dict] = None
         # 单 GGA 包交替：主 → 副 → 主 …
         self._expect_secondary_gga: bool = False
         self._publish_count: int = 0
+        self._raw_file_logger = create_gnss_raw_file_logger(receiver_id, port)
 
-    @staticmethod
-    def _preview_packet(text: str, limit: int = 240) -> str:
-        """单行预览 NMEA 包内容（便于日志）。"""
-        one_line = " | ".join(s.strip() for s in text.splitlines() if s.strip())
-        if len(one_line) <= limit:
-            return one_line
-        return one_line[: limit - 3] + "..."
+    def _log_raw_packet(self, data: bytes, addr: tuple, text: str) -> None:
+        """DEBUG：单行摘要；完整 NMEA 仅 DEBUG 逐条输出。"""
+        host, port = addr[0], addr[1]
+        if self._peer_addr != addr:
+            self._peer_addr = addr
+            logger.info(
+                f"[{self.receiver_id}] UDP 数据源 {host}:{port} → 本机 :{self.port}"
+            )
+        summary = _summarize_nmea_types(text)
+        logger.debug(
+            f"[{self.receiver_id}] UDP {len(data)}B from {host}:{port} | {summary}"
+        )
+
+    def _log_timeout_if_needed(self) -> None:
+        now = time.time()
+        interval = (
+            _ACTIVE_CHANNEL_WARN_INTERVAL_S
+            if self._ever_received
+            else _IDLE_CHANNEL_WARN_INTERVAL_S
+        )
+        if now - self._last_timeout_warn < interval:
+            return
+        self._last_timeout_warn = now
+        msg = (
+            f"[{self.receiver_id}] {_DATA_TIMEOUT_S:.0f}s 无 UDP 数据 "
+            f"(监听 :{self.port})"
+        )
+        if self._ever_received:
+            logger.warning(msg)
+        else:
+            logger.debug(msg + " — 未接接收机时可忽略")
 
     def _log_published_frame(self) -> None:
         """发布前打印本帧解析结果（主天线 + 副天线 + 姿态句）。"""
@@ -82,19 +152,16 @@ class GnssReceiver(threading.Thread):
         ant2 = ""
         if f.has_antenna2:
             ant2 = (
-                f", A2=({f.antenna2_latitude:.8f},{f.antenna2_longitude:.8f},"
-                f"{f.antenna2_altitude:.3f}m)"
+                f" | A2=({f.antenna2_latitude:.6f},{f.antenna2_longitude:.6f})"
             )
         self._publish_count += 1
-        hdg_s = f"{hdg:.2f}" if f.heading is not None else "—"
-        pitch_s = f"{pitch:.2f}" if f.pitch is not None else "—"
-        roll_s = f"{roll:.2f}" if f.roll is not None else "—"
+        hdg_s = f"{hdg:.1f}" if f.heading is not None else "—"
+        rtk_tag = "RTK" if f.is_rtk else f.fix_quality.name
         logger.info(
-            f"[{self.receiver_id}] 发布 GNSS #{self._publish_count} | "
-            f"fix={f.fix_quality.name} sats={f.num_satellites} | "
-            f"A1=({f.latitude:.8f},{f.longitude:.8f},{f.altitude:.3f}m) "
-            f"speed={f.speed_mps:.3f}m/s course={f.course_deg:.1f}° | "
-            f"NMEA姿态 hdg={hdg_s} pitch={pitch_s} roll={roll_s}{ant2}"
+            f"[{self.receiver_id}] #{self._publish_count} "
+            f"fix={rtk_tag}({int(f.fix_quality)}) sats={f.num_satellites} "
+            f"({f.latitude:.6f},{f.longitude:.6f}) "
+            f"spd={f.speed_mps:.2f} hdg={hdg_s}°{ant2}"
         )
 
     def stop(self) -> None:
@@ -104,40 +171,49 @@ class GnssReceiver(threading.Thread):
     def run(self) -> None:
         """线程主循环：持续监听 UDP 并解析数据。"""
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        _configure_udp_listen_socket(sock)
         sock.settimeout(1.0)    # 允许周期检查 stop_event
 
         try:
             sock.bind((self.host, self.port))
-            logger.info(f"[{self.receiver_id}] UDP 监听启动: {self.host}:{self.port}")
+            logger.info(
+                f"[{self.receiver_id}] UDP 监听 {self.host}:{self.port}"
+            )
 
             while not self._stop_event.is_set():
                 try:
                     data, addr = sock.recvfrom(_UDP_BUFFER_SIZE)
                 except socket.timeout:
-                    # 超时检查数据是否中断
+                    now = time.time()
                     if (self._last_data_time > 0
-                            and time.time() - self._last_data_time > _DATA_TIMEOUT_S):
-                        logger.warning(
-                            f"[{self.receiver_id}] 超过 {_DATA_TIMEOUT_S:.1f} s 未收到数据"
-                        )
+                            and now - self._last_data_time > _DATA_TIMEOUT_S):
+                        self._log_timeout_if_needed()
+                        if self._raw_file_logger:
+                            self._raw_file_logger.end_session_if_idle(now)
                     continue
                 except OSError as e:
                     logger.error(f"[{self.receiver_id}] Socket 错误: {e}")
                     break
 
+                self._ever_received = True
                 self._last_data_time = time.time()
                 try:
                     packet_text = data.decode("ascii", errors="ignore")
                 except UnicodeDecodeError:
+                    logger.warning(
+                        f"[{self.receiver_id}] UDP 非 ASCII，{len(data)}B hex={data.hex()}"
+                    )
+                    if self._raw_file_logger:
+                        self._raw_file_logger.write_packet(data, addr, time.time())
                     continue
-                logger.info(
-                    f"[{self.receiver_id}] 收到 UDP {len(data)}B: "
-                    f"{self._preview_packet(packet_text)}"
-                )
+                if self._raw_file_logger:
+                    self._raw_file_logger.write_packet(data, addr, time.time())
+                self._log_raw_packet(data, addr, packet_text)
                 self._process_packet(packet_text)
 
         finally:
+            if self._raw_file_logger:
+                self._raw_file_logger.close()
             sock.close()
             logger.info(f"[{self.receiver_id}] UDP 监听已关闭")
 
@@ -166,23 +242,18 @@ class GnssReceiver(threading.Thread):
         gga_index = 0
 
         for result in parsed:
-            if result.get("type") == "GGA":
+            msg_type = result.get("type")
+            if msg_type == "GGA":
                 self._merge_gga(result, gga_index, single_gga_in_packet=(gga_total == 1))
                 gga_index += 1
+            elif msg_type == "GGA2":
+                self._apply_secondary_gga(result)
             else:
                 self._merge_into_frame(result)
             frame_updated = True
 
-        # 包内所有语句解析完后，若包含位置信息则发布本帧
-        if frame_updated:
-            if self._frame.is_valid:
-                self._publish_frame()
-            else:
-                # 数据有效但精度不足，记录调试信息
-                if self._frame.fix_quality != FixQuality.INVALID:
-                    logger.debug(f"[{self.receiver_id}] 数据精度不足 (fix_quality={self._frame.fix_quality.name}), "
-                                 f"需要 RTK 固定解(4) 或 RTK 浮点解(5)")
-
+        if frame_updated and self._frame.is_valid:
+            self._publish_frame()
 
     @staticmethod
     def _horizontal_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -242,8 +313,9 @@ class GnssReceiver(threading.Thread):
 
     def _merge_gga(self, parsed: dict, index: int, *, single_gga_in_packet: bool) -> None:
         """
-        同包内第 1 条 GGA→主天线，第 2 条→副天线。
-        若每包仅 1 条 GGA（常见日志回放），则按基线距离或主/副交替识别。
+        同包 GGA 顺序固定：第 1 条=主天线，第 2 条=副天线。
+        大车：GGA[0]=电气房，GGA[1]=柴油机；小车：GGA[0]=C1，GGA[1]=C2。
+        单 GGA 包仅更新主天线，副天线沿用跨包缓存。
         """
         if not single_gga_in_packet:
             if index == 0:
@@ -256,10 +328,7 @@ class GnssReceiver(threading.Thread):
                 )
             return
 
-        if self._looks_like_secondary_gga(parsed):
-            self._apply_secondary_gga(parsed)
-        else:
-            self._apply_primary_gga(parsed)
+        self._apply_primary_gga(parsed)
 
     def _merge_into_frame(self, parsed: dict) -> None:
         """
@@ -275,10 +344,10 @@ class GnssReceiver(threading.Thread):
             self._frame.speed_mps = parsed["speed_mps"]
             self._frame.course_deg = parsed["course_deg"]
 
-        elif msg_type == "HDT":
+        elif self.receiver_id != "trolley" and msg_type == "HDT":
             self._frame.heading = parsed["heading_deg"]
 
-        elif msg_type == "ATTITUDE":
+        elif self.receiver_id != "trolley" and msg_type == "ATTITUDE":
             self._frame.heading = parsed["heading_deg"]
             self._frame.pitch = parsed.get("pitch_deg")
             self._frame.roll = parsed.get("roll_deg")
@@ -315,4 +384,3 @@ class GnssReceiver(threading.Thread):
 
         # 重置帧缓存
         self._frame = GnssRaw(receiver_id=self.receiver_id)
-
