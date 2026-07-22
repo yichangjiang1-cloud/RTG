@@ -204,6 +204,16 @@ export interface LArmCalibrationRecord {
   antenna: GpsCoord;
   attitude: { roll: number; pitch: number; heading: number };
   l_arm: [number, number, number];
+  /** 防呆溯源：本次杆臂标定所用天线的物理来源接收机（如 gantry_a1） */
+  receiver_id?: string;
+  /** 防呆溯源：同包 GGA 下标，0=电气房(GGA[0])，1=柴油机(GGA[1]) */
+  gga_index?: number;
+  /** 防呆溯源：标定当时的接收机布局快照，用于事后核对接线是否变化 */
+  layout_snapshot?: {
+    left: string;
+    right: string;
+    gga_order: [string, string];
+  };
 }
 
 /**

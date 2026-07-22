@@ -172,7 +172,7 @@ class FusionNode:
                 f" | 双GGA基线 A2=({gnss.antenna2_latitude:.8f},"
                 f"{gnss.antenna2_longitude:.8f},{gnss.antenna2_altitude:.3f}m)"
             )
-        logger.info(
+        logger.debug(
             "[%s] 融合姿态 | 来源=%s | heading=%.2f° pitch=%.2f° roll=%.2f° | "
             "NMEA解析 hdg=%s pitch=%s roll=%s%s",
             rid,
@@ -451,6 +451,11 @@ class FusionNode:
                     "pitch":    s.pitch_deg,
                     "heading":  s.heading_deg,
                     "fix_quality": s.fix_quality,
+                    "antenna2_fix_quality": (
+                        int(s.last_gnss.antenna2_fix_quality)
+                        if s.last_gnss is not None and has_antenna2
+                        else 0
+                    ),
                     "is_coasting": s.is_coasting,
                     "coasting_duration": coasting_dur,
                     "source": (
@@ -485,7 +490,7 @@ class FusionNode:
             "imu_coasting_duration": ref.get("coasting_duration", 0.0),
             "source": ref.get("source", DataSource.INVALID),
         }
-        logger.info(
+        logger.debug(
             "发布融合状态 | a1 live=%s hdg=%.2f° pitch=%.2f° roll=%.2f° (%s) | "
             "a2 live=%s hdg=%.2f° | ref_fix=%s coasting=%s",
             d_a1.get("is_live"),

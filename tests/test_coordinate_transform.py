@@ -70,26 +70,28 @@ class TestCoordinateTransform(unittest.TestCase):
         self.assertAlmostEqual(U, 50.0, delta=0.1)
 
     def test_yard_transform_wgs84_to_lycs(self):
-        """测试：YardTransform WGS84 → LYCS 变换。"""
-        # 堆场原点
+        """测试：YardTransform WGS84 → LYCS（相对原点，X=北 Y=东；heading 忽略）。"""
         origin_lat, origin_lon, origin_alt = 22.5, 113.9, 5.0
-        # 堆场 X 轴相对正北顺时针 90° == 正东方向
-        heading_deg = 90.0
+        # heading_deg 配置存在但不参与变换
+        transform = YardTransform(origin_lat, origin_lon, origin_alt, heading_deg=90.0)
 
-        transform = YardTransform(origin_lat, origin_lon, origin_alt, heading_deg)
-
-        # 测试原点自身
         lx, ly, lz = transform.wgs84_to_lycs(origin_lat, origin_lon, origin_alt)
         self.assertAlmostEqual(lx, 0.0, places=3)
         self.assertAlmostEqual(ly, 0.0, places=3)
         self.assertAlmostEqual(lz, 0.0, places=3)
 
-        # 测试向正东 100m（LYCS X 轴）
+        # 正东约 100m → Y≈100，X≈0
         target_lon = origin_lon + 100 / (111000.0 * math.cos(math.radians(origin_lat)))
         lx, ly, lz = transform.wgs84_to_lycs(origin_lat, target_lon, origin_alt)
+        self.assertAlmostEqual(lx, 0.0, delta=1.0)
+        self.assertAlmostEqual(ly, 100.0, delta=1.0)
+        self.assertAlmostEqual(lz, 0.0, delta=0.1)
+
+        # 正北约 100m → X≈100，Y≈0
+        target_lat = origin_lat + 100 / 111000.0
+        lx, ly, lz = transform.wgs84_to_lycs(target_lat, origin_lon, origin_alt)
         self.assertAlmostEqual(lx, 100.0, delta=1.0)
         self.assertAlmostEqual(ly, 0.0, delta=1.0)
-        self.assertAlmostEqual(lz, 0.0, delta=0.1)
 
     def test_yard_transform_roundtrip(self):
         """测试：LYCS → WGS84 → LYCS 往返。"""

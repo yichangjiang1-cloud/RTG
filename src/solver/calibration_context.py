@@ -29,6 +29,7 @@ class YardCalibrationState:
     calibration_residual: Optional[float] = None
     own_anchors: List[BayAnchor] = field(default_factory=list)
     source_anchors: List[BayAnchor] = field(default_factory=list)
+    survey_points: List[dict] = field(default_factory=list)
     bay_spacing: float = 6.0
     ref_lat_deg: float = 0.0
 
@@ -129,6 +130,10 @@ class CalibrationContextManager:
             calibration_residual=residual,
             own_anchors=own_anchors,
             source_anchors=source_anchors,
+            survey_points=[
+                p for p in (raw.get("survey_points") or [])
+                if p.get("bay_no") is not None
+            ],
             bay_spacing=spacing,
             ref_lat_deg=ref_lat_deg,
         )

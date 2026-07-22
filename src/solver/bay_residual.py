@@ -18,6 +18,67 @@ class BayAnchor:
     delta_z: float
 
 
+@dataclass
+class BayPosition:
+    """RTK 建图贝位在堆场 LYCS X 上的位置（当前 X=北向，仅作索引参考）。"""
+
+    bay_no: int
+    x: float
+
+
+def build_bay_positions_from_survey_points(
+    survey_points: Sequence[dict],
+    transform=None,
+    bay_spacing: float = 6.0,
+) -> List[BayPosition]:
+    """
+    从前端建图 survey_points 构建贝位表（与 Mapping 页 bay_no 一致）。
+    X 优先用 local_x，否则由 WGS84 投影到 LYCS，再退回间距估算。
+    """
+    positions: List[BayPosition] = []
+    spacing = max(float(bay_spacing), 0.1)
+    for pt in survey_points:
+        bay_no = pt.get("bay_no")
+        if bay_no is None:
+            continue
+        x = pt.get("local_x")
+        if x is None and transform is not None:
+            lat = float(pt.get("lat", 0.0))
+            lon = float(pt.get("lon", 0.0))
+            alt = float(pt.get("alt") or 0.0)
+            if abs(lat) > 1e-9 or abs(lon) > 1e-9:
+                x, _, _ = transform.wgs84_to_lycs(lat, lon, alt)
+        if x is None:
+            x = float(int(bay_no) - 1) * spacing
+        positions.append(BayPosition(int(bay_no), float(x)))
+    positions.sort(key=lambda p: p.x)
+    return positions
+
+
+def resolve_bay_no_next(
+    lpoint_x: float,
+    positions: Sequence[BayPosition],
+) -> int:
+    """
+    PLC 当前贝位：与前端 RTK 贝位编号一致，区间内向「下一贝」取整。
+
+    例：在 8 号与 9 号贝位 X 之间 → 返回 9；正好在 8 号贝位 X → 返回 8。
+    无 RTK 表时返回 0。
+    """
+    if not positions:
+        return 0
+    sorted_pos = sorted(positions, key=lambda p: p.x)
+    if lpoint_x <= sorted_pos[0].x:
+        return sorted_pos[0].bay_no
+    for i in range(len(sorted_pos) - 1):
+        left, right = sorted_pos[i], sorted_pos[i + 1]
+        if lpoint_x <= left.x:
+            return left.bay_no
+        if left.x < lpoint_x < right.x:
+            return right.bay_no
+    return sorted_pos[-1].bay_no
+
+
 def geodetic_delta_to_local(
     delta_lon: float,
     delta_lat: float,

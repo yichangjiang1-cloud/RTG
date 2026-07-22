@@ -54,20 +54,123 @@
   }
 
   .btn-primary {
-    @apply px-6 py-2.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700
-           text-white font-semibold rounded-lg transition-all duration-150
+    @apply px-6 py-2.5 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400
+           active:from-blue-700 active:to-blue-600
+           text-white font-semibold rounded-xl transition-all duration-150
            shadow-lg shadow-blue-900/30 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   .btn-secondary {
-    @apply px-6 py-2.5 bg-slate-700 hover:bg-slate-600 active:bg-slate-800
-           text-slate-200 font-semibold rounded-lg transition-all duration-150;
+    @apply px-6 py-2.5 bg-slate-800/90 hover:bg-slate-700 active:bg-slate-900
+           text-slate-200 font-semibold rounded-xl transition-all duration-150
+           border border-slate-600/70 hover:border-slate-500;
   }
 
   .btn-success {
-    @apply px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700
-           text-white font-semibold rounded-lg transition-all duration-150
+    @apply px-6 py-2.5 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400
+           active:from-emerald-700 active:to-emerald-600
+           text-white font-semibold rounded-xl transition-all duration-150
            shadow-lg shadow-emerald-900/30 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-sm {
+    @apply px-4 py-2.5 text-sm font-semibold rounded-xl transition-all duration-150;
+  }
+
+  .btn-icon {
+    @apply p-2.5 rounded-xl text-slate-400 hover:text-blue-400 hover:bg-slate-800/80
+           border border-transparent hover:border-slate-600/50 transition-all duration-150
+           disabled:opacity-30 disabled:cursor-not-allowed;
+  }
+
+  .chip-btn {
+    @apply px-5 py-2.5 rounded-xl text-sm font-semibold border transition-all duration-200;
+  }
+
+  .chip-btn-active {
+    @apply chip-btn bg-gradient-to-r from-blue-600 to-blue-500 border-blue-400/50 text-white
+           shadow-lg shadow-blue-900/40 ring-1 ring-blue-400/25;
+  }
+
+  .chip-btn-inactive {
+    @apply chip-btn bg-slate-800/80 border-slate-600/60 text-slate-300
+           hover:border-slate-500 hover:bg-slate-700/80 hover:text-slate-100;
+  }
+
+  .config-tabs {
+    @apply flex gap-1.5 p-1.5 bg-slate-900/90 rounded-2xl border border-slate-700/70 overflow-x-auto;
+  }
+
+  .config-tab {
+    @apply flex-1 min-w-[8rem] px-4 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 whitespace-nowrap;
+  }
+
+  .config-tab-active {
+    @apply config-tab text-white shadow-md;
+  }
+
+  .config-tab-inactive {
+    @apply config-tab text-slate-400 hover:text-slate-200 hover:bg-slate-800/80;
+  }
+
+  .btn-amber {
+    @apply btn-sm bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500
+           text-white shadow-md shadow-amber-900/30 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-violet {
+    @apply btn-sm bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400
+           text-white shadow-md shadow-violet-900/30 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-emerald {
+    @apply btn-sm bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400
+           text-white shadow-md shadow-emerald-900/30 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-cyan {
+    @apply btn-sm bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400
+           text-white shadow-md shadow-cyan-900/30 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-outline {
+    @apply btn-sm bg-transparent border border-slate-600 text-slate-300
+           hover:bg-slate-800/80 hover:border-slate-500 hover:text-white
+           disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .action-bar {
+    @apply flex flex-wrap items-center justify-end gap-3 p-4 rounded-2xl
+           bg-slate-900/70 border border-slate-700/60 backdrop-blur-sm;
+  }
+
+  .config-panel {
+    @apply card p-6 space-y-5;
+  }
+
+  .config-panel-header {
+    @apply flex items-center gap-3 pb-4 border-b border-slate-700/60;
+  }
+
+  .config-panel-title {
+    @apply text-sm font-bold text-slate-200 flex-1;
+  }
+
+  .config-hint {
+    @apply p-3 rounded-xl text-xs flex items-start gap-2 border
+           bg-slate-900/50 border-slate-700/60 text-slate-400;
+  }
+
+  .config-hint-warn {
+    @apply config-hint bg-amber-950/30 border-amber-500/30 text-amber-200/90;
+  }
+
+  .config-data-block {
+    @apply p-3 bg-slate-900/60 rounded-xl border border-slate-700/50;
+  }
+
+  .config-formula-box {
+    @apply p-4 bg-slate-900/50 border border-slate-700/50 rounded-xl;
   }
 
   .badge {

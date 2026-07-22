@@ -130,13 +130,14 @@ class YardTransform:
     """
     ENU → 堆场局部坐标系（LYCS）变换器。
 
-    以堆场原点为坐标系原点，堆场 X 轴（大车行驶方向）相对于
-    正北方向顺时针旋转 heading_deg 角。
+    以堆场原点为参考，先算常规 ENU（东/北/天），再投影到平面 XY。
 
-    LYCS 定义：
-      X 轴：沿大车行驶方向（贝位增大方向）
-      Y 轴：垂直于大车方向（横向，向右为正）
-      Z 轴：正上方
+    当前约定（需求说明书未要求对齐贝位，也不假定沿跑道开时 Y 不变）：
+      X：相对原点偏北分量（North，m）
+      Y：相对原点偏东分量（East，m）
+      Z：相对原点天向分量（Up，m）
+
+    配置中的 heading_deg 仅保留兼容，暂不参与旋转。
     """
 
     def __init__(
@@ -148,21 +149,25 @@ class YardTransform:
     ):
         """
         :param origin_lat/lon/alt: 堆场原点 WGS84 坐标
-        :param heading_deg:        堆场 X 轴相对正北的顺时针角度（°）
+        :param heading_deg:        兼容字段，当前忽略（不做跑道对齐旋转）
         """
         self.origin_lat = origin_lat
         self.origin_lon = origin_lon
         self.origin_alt = origin_alt
-        self.heading_deg = heading_deg
+        self.heading_deg = float(heading_deg)
 
-        # 预计算 ENU→LYCS 的 2D 旋转矩阵
-        # ENU 中：East=X_enu, North=Y_enu
-        # LYCS X 轴与 ENU North 轴的夹角 = heading_deg（顺时针）
-        theta = math.radians(heading_deg)
+        # 固定为 heading=0：X=North，Y=East（常规局部平面，不旋到贝位）
+        # 需求未要求沿跑道开时 Y 不变；配置里的 heading_deg 暂不参与
+        if abs(self.heading_deg) > 1e-9:
+            logger.warning(
+                "yard heading_deg=%.3f 已忽略：当前堆场坐标固定为相对原点 ENU "
+                "(X=北, Y=东)，不对齐贝位",
+                self.heading_deg,
+            )
         self._R2d = np.array([
-            [ math.sin(theta),  math.cos(theta)],   # LYCS_X = E·sin + N·cos
-            [ math.cos(theta), -math.sin(theta)],   # LYCS_Y = E·cos - N·sin
-        ])
+            [0.0, 1.0],   # LYCS_X = North
+            [1.0, 0.0],   # LYCS_Y = East
+        ], dtype=float)
 
     def wgs84_to_lycs(
         self, lat_deg: float, lon_deg: float, alt_m: float

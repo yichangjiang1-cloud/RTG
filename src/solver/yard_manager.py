@@ -10,6 +10,8 @@ from typing import Optional, Dict, Any
 from src.solver.coordinate_transform import YardTransform
 logger = logging.getLogger(__name__)
 
+PLC_YARD_ID_MAX_LEN = 8
+
 
 def parse_yard_config_entry(entry: dict) -> Optional[Dict[str, Any]]:
     """
@@ -54,6 +56,7 @@ class YardManager:
     def __init__(self, yard_map_path: str, yard_configs: list):
         self._map_path = yard_map_path
         self._transforms: Dict[str, YardTransform] = {}
+        self._yard_meta: Dict[str, Dict[str, Any]] = {}
         self._b_matrices: Dict[str, Any] = {}
         self._current_yard_id: Optional[str] = None
         for yard_cfg in yard_configs:
@@ -62,30 +65,45 @@ class YardManager:
                 logger.warning("跳过无效堆场配置项: %s", yard_cfg)
                 continue
             yid = parsed["yard_id"]
+            if len(yid.encode("ascii", errors="replace")) > PLC_YARD_ID_MAX_LEN:
+                logger.warning(
+                    "堆场 %s 的 yard_id 超过 %d 字符，PLC 场号将被截断",
+                    yid,
+                    PLC_YARD_ID_MAX_LEN,
+                )
             self._transforms[yid] = YardTransform(
                 origin_lat=parsed["origin_lat"],
                 origin_lon=parsed["origin_lon"],
                 origin_alt=parsed["origin_alt"],
                 heading_deg=parsed["heading_deg"],
             )
+            self._yard_meta[yid] = parsed
             logger.info("已加载堆场配置: %s (%s)", yid, parsed.get("name", ""))
         self._load_map()
 
     def reload_yards(self, yard_configs: list) -> None:
         """从 API 或备份 YAML 刷新堆场投影定义。"""
         self._transforms.clear()
+        self._yard_meta.clear()
         self._current_yard_id = None
         for yard_cfg in yard_configs:
             parsed = parse_yard_config_entry(yard_cfg)
             if not parsed:
                 continue
             yid = parsed["yard_id"]
+            if len(yid.encode("ascii", errors="replace")) > PLC_YARD_ID_MAX_LEN:
+                logger.warning(
+                    "堆场 %s 的 yard_id 超过 %d 字符，PLC 场号将被截断",
+                    yid,
+                    PLC_YARD_ID_MAX_LEN,
+                )
             self._transforms[yid] = YardTransform(
                 origin_lat=parsed["origin_lat"],
                 origin_lon=parsed["origin_lon"],
                 origin_alt=parsed["origin_alt"],
                 heading_deg=parsed["heading_deg"],
             )
+            self._yard_meta[yid] = parsed
         logger.info("堆场投影已刷新，共 %d 个堆场", len(self._transforms))
     def detect_yard(self, lat: float, lon: float) -> Optional[str]:
         """根据 WGS84 坐标判断所在堆场（取距离最近的堆场原点）。"""
@@ -106,6 +124,10 @@ class YardManager:
         """获取指定堆场（或当前堆场）的 YardTransform。"""
         yid = yard_id or self._current_yard_id
         return self._transforms.get(yid)
+
+    def get_yard_meta(self, yard_id: str) -> Optional[Dict[str, Any]]:
+        """堆场元数据（名称、贝位间距等）。"""
+        return self._yard_meta.get(yard_id)
     def save_b_matrix(self, yard_id: str, M: np.ndarray) -> None:
         """保存 B 车校准矩阵并持久化到 yard_map.json。"""
         self._b_matrices[yard_id] = M

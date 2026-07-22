@@ -1,9 +1,9 @@
 meta:
-  synced_at: '2026-07-09T11:18:08+08:00'
+  synced_at: '2026-07-16T15:17:19+08:00'
   vehicle_id: RTG-001
   source: api
 yards:
-- yard_id: yard_01
+- yard_id: A01
   name: 001堆场
   origin_lat: 30.123456
   origin_lon: 120.654321
@@ -14,7 +14,7 @@ yards:
   mapped: false
   rtk_point_count: 0
 yard_data:
-  yard_01:
+  A01:
     has_rtk_map: false
     rtk_point_count: 0
     survey_points: []

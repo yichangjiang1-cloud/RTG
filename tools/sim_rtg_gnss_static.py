@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """
-RTG 大车双接收机 · 四天线 · 静止 GNSS 模拟（UDP → 中控 GnssReceiver）
+RTG 大车双接收机 · 四天线 + 小车 · 静止 GNSS 模拟（UDP → 中控 GnssReceiver）
 
 物理模型（与现场一致）：
   接收机1  gantry_a1 :9001  同包双 GGA → A1(主/电气房侧) + A2(副/柴油机侧)
   接收机2  gantry_a2 :9002  同包双 GGA → B1(主) + B2(副)
+  接收机3  trolley   :9003  同包双 GGA → C1(主) + C2(副)（可用 --no-trolley 关闭）
   同机两天线为刚体基线（--baseline-m，沿车头方向）；
-  左右接收机横向相距 --span-m（垂直于航向）。
+  左右接收机横向相距 --span-m（垂直于航向）；
+  小车固定在大车车体系 (--trolley-x-m, --trolley-y-m) 处，随大车静止。
 
-默认静止、持续发送，便于联调融合 / 解算 / 智能杆臂标定。
+默认静止、持续发送，便于联调融合 / 解算 / 智能杆臂标定 / 四天线安装标定 / 小车零点采集。
 
 用法（项目根目录）：
   python tools/sim_rtg_gnss_static.py
   python tools/sim_rtg_gnss_static.py --use-yard-origin
   python tools/sim_rtg_gnss_static.py --lat 30.123456 --lon 120.654321 --heading 0 --rate 5
+  python tools/sim_rtg_gnss_static.py --no-trolley           # 仅大车四天线
+  python tools/sim_rtg_gnss_static.py --trolley-x-m 20 --trolley-y-m 15  # 小车车体系位置
 """
 
 from __future__ import annotations
@@ -37,6 +41,12 @@ if str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
 import sim_gantry_gnss as sg  # noqa: E402
+from sim_trolley_gnss_static import (  # noqa: E402
+    DEFAULT_BASELINE_BODY_DEG as TROLLEY_BASELINE_BODY_DEG,
+    DEFAULT_BASELINE_M as TROLLEY_BASELINE_M,
+    build_trolley_layout_from_gantry_a1,
+    build_trolley_packet,
+)
 
 DEFAULT_RATE_HZ = 2.0
 
@@ -136,6 +146,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--host", default="127.0.0.1", help="中控监听地址（发往本机）")
     p.add_argument("--port-a1", type=int, default=9001, help="接收机1 UDP 端口")
     p.add_argument("--port-a2", type=int, default=9002, help="接收机2 UDP 端口")
+    p.add_argument("--port-trolley", type=int, default=9003, help="小车 UDP 端口")
     p.add_argument("--lat", type=float, default=None, help="A1 主天线纬度")
     p.add_argument("--lon", type=float, default=None, help="A1 主天线经度")
     p.add_argument("--alt", type=float, default=sg.DEFAULT_ALT, help="天线海拔 (m)")
@@ -151,6 +162,25 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--rate", type=float, default=DEFAULT_RATE_HZ, help="每路发送频率 Hz")
     p.add_argument("--count", type=int, default=0, help="每路发送包数，0=一直发送")
     p.add_argument("--no-attitude", action="store_true", help="不附带 PASHR")
+    p.add_argument("--no-trolley", action="store_true", help="不发送小车数据（仅大车四天线）")
+    p.add_argument(
+        "--trolley-x-m",
+        type=float,
+        default=None,
+        help="小车相对 A1 的车体系 X 偏移 (m)，默认 span_m/2（左右跨距中点）",
+    )
+    p.add_argument(
+        "--trolley-y-m",
+        type=float,
+        default=15.0,
+        help="小车相对 A1 的车体系 Y 偏移 (m)，沿横梁方向（即小车行程零点位置）",
+    )
+    p.add_argument(
+        "--trolley-baseline-m",
+        type=float,
+        default=TROLLEY_BASELINE_M,
+        help="小车 C1-C2 基线 (m)",
+    )
     p.add_argument(
         "--use-yard-origin",
         action="store_true",
@@ -185,17 +215,38 @@ def main() -> int:
         lat, lon, alt, heading, args.baseline_m, args.span_m, args.cross_side_deg
     )
 
+    with_trolley = not args.no_trolley
+    trolley = None
+    trolley_x = args.trolley_x_m if args.trolley_x_m is not None else args.span_m / 2.0
+    if with_trolley:
+        trolley = build_trolley_layout_from_gantry_a1(
+            layout.recv1.primary[0],
+            layout.recv1.primary[1],
+            alt,
+            heading,
+            trolley_x,
+            args.trolley_y_m,
+            args.trolley_baseline_m,
+            TROLLEY_BASELINE_BODY_DEG,
+        )
+
     print("=" * 68)
-    print("  RTG 双接收机 · 四天线 · 静止 GNSS 模拟")
+    print("  RTG 双接收机 · 四天线 + 小车 · 静止 GNSS 模拟")
     print("=" * 68)
-    print(f"  目标       : {args.host}:{args.port_a1} (gantry_a1)  +  :{args.port_a2} (gantry_a2)")
+    trolley_target = f"  +  :{args.port_trolley} (trolley)" if with_trolley else ""
+    print(f"  目标       : {args.host}:{args.port_a1} (gantry_a1)  +  :{args.port_a2} (gantry_a2){trolley_target}")
     print(f"  模式       : 静止  航向 {layout.heading_deg:.1f}°  频率 {args.rate} Hz/路")
     print(f"  A1 (9001主): {layout.recv1.primary[0]:.8f}, {layout.recv1.primary[1]:.8f}")
     print(f"  A2 (9001副): {layout.recv1.secondary[0]:.8f}, {layout.recv1.secondary[1]:.8f}")
     print(f"  B1 (9002主): {layout.recv2.primary[0]:.8f}, {layout.recv2.primary[1]:.8f}")
     print(f"  B2 (9002副): {layout.recv2.secondary[0]:.8f}, {layout.recv2.secondary[1]:.8f}")
+    if with_trolley and trolley is not None:
+        print(f"  C1 (9003主): {trolley.pair.primary[0]:.8f}, {trolley.pair.primary[1]:.8f}")
+        print(f"  C2 (9003副): {trolley.pair.secondary[0]:.8f}, {trolley.pair.secondary[1]:.8f}")
+        print(f"  小车车体系 : X={trolley.body_x_m:.1f} m  Y={trolley.body_y_m:.1f} m（相对 A1，静止）")
     print(f"  同机基线   : {args.baseline_m:.1f} m  左右跨距 {layout.span_m:.1f} m")
-    print(f"  每包       : GGA×2 + RMC + {'PASHR' if not args.no_attitude else '(无PASHR)'}")
+    print(f"  每包       : 大车 GGA×2 + RMC + {'PASHR' if not args.no_attitude else '(无PASHR)'}"
+          + ("  |  小车 GGA×2 + RMC" if with_trolley else ""))
     print("  按 Ctrl+C 停止")
     print("=" * 68)
 
@@ -237,6 +288,25 @@ def main() -> int:
             daemon=True,
         ),
     ]
+    if with_trolley and trolley is not None:
+        threads.append(
+            threading.Thread(
+                target=_sender_loop,
+                name="trolley",
+                kwargs=dict(
+                    host=args.host,
+                    port=args.port_trolley,
+                    role="trolley",
+                    pair=trolley.pair,
+                    rate_hz=args.rate,
+                    with_attitude=False,  # 小车不发姿态
+                    max_packets=args.count,
+                    stop=stop,
+                    stats=stats,
+                ),
+                daemon=True,
+            )
+        )
     for t in threads:
         t.start()
 
@@ -247,8 +317,13 @@ def main() -> int:
             tick += 1
             a1 = stats.get("gantry_a1", 0)
             a2 = stats.get("gantry_a2", 0)
-            print(f"[{tick:4d}s] 已发送  gantry_a1={a1}  gantry_a2={a2}  (静止)")
-            if args.count > 0 and stats.get("gantry_a1", 0) >= args.count and stats.get("gantry_a2", 0) >= args.count:
+            line = f"[{tick:4d}s] 已发送  gantry_a1={a1}  gantry_a2={a2}"
+            if with_trolley:
+                line += f"  trolley={stats.get('trolley', 0)}"
+            print(line + "  (静止)")
+            if args.count > 0 and a1 >= args.count and a2 >= args.count and (
+                not with_trolley or stats.get("trolley", 0) >= args.count
+            ):
                 print("已达发送包数上限，退出")
                 break
     except KeyboardInterrupt:

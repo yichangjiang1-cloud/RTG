@@ -3,6 +3,7 @@ import { Car, Map, CheckCircle2, AlertTriangle, Wifi, WifiOff, Loader2, ToggleLe
 import { SectionHeader, showToast } from './common';
 import { useAppContext } from '../context/AppContext';
 import { clsx } from 'clsx';
+import { normalizeYardIdInput, validateYardId, PLC_YARD_ID_MAX_LEN } from '../utils/yardId';
 
 // ── 新建场地弹窗 ──────────────────────────────────────
 function CreateYardModal({ backendBase, onClose, onDone }: {
@@ -10,7 +11,7 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
   onClose: () => void;
   onDone: () => void;
 }) {
-  const [yardId, setYardId] = useState('yard_');
+  const [yardId, setYardId] = useState('');
   const [name, setName] = useState('');
   const [originLat, setOriginLat] = useState('');
   const [originLon, setOriginLon] = useState('');
@@ -19,7 +20,9 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit() {
-    if (!yardId.trim() || !name.trim()) { showToast('请填写场地 ID 和名称'); return; }
+    const idErr = validateYardId(yardId);
+    if (idErr) { showToast(idErr, 'error'); return; }
+    if (!name.trim()) { showToast('请填写场地名称'); return; }
     if (!originLat.trim() || !originLon.trim()) { showToast('请填写原点经纬度'); return; }
     setSaving(true);
     try {
@@ -39,10 +42,15 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
         signal: AbortSignal.timeout(10000),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json().catch(() => null);
+      if (json?.code && json.code !== 200) {
+        throw new Error(json.message || '创建失败');
+      }
       showToast(`场地 ${name.trim()} 创建成功`);
       onDone();
-    } catch {
-      showToast('创建失败，请检查后端连接', 'error');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '创建失败，请检查后端连接';
+      showToast(msg, 'error');
     } finally {
       setSaving(false);
     }
@@ -59,8 +67,17 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="section-title block mb-1">场地 ID</label>
-              <input className="input-field font-mono" value={yardId} onChange={e => setYardId(e.target.value)} placeholder="yard_01" />
+              <label className="section-title block mb-1">场号 (yard_id)</label>
+              <input
+                className="input-field font-mono"
+                value={yardId}
+                maxLength={PLC_YARD_ID_MAX_LEN}
+                onChange={e => setYardId(normalizeYardIdInput(e.target.value))}
+                placeholder="A01 / 25A"
+              />
+              <p className="text-[10px] text-slate-500 mt-1">
+                最多 {PLC_YARD_ID_MAX_LEN} 字符 ASCII，下发 PLC 场号字段
+              </p>
             </div>
             <div>
               <label className="section-title block mb-1">场地名称</label>

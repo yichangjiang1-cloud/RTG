@@ -11,6 +11,7 @@ from sqlalchemy import func
 from app.schemas import ApiResponse
 from app.utils.logger import get_logger
 from app.utils.calibration_mode import resolve_calibration_mode
+from app.utils.yard_id import validate_yard_id
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/yard", tags=["yard"])
@@ -77,7 +78,8 @@ async def get_all_yards(db: Session = Depends(get_db)):
 async def create_yard(req: YardCreateRequest, db: Session = Depends(get_db)):
     """新建或更新堆场信息"""
     try:
-        yard = db.query(Yard).filter(Yard.yard_id == req.yard_id).first()
+        yard_id = validate_yard_id(req.yard_id)
+        yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
         if yard:
             yard.name = req.name
             yard.origin_lat = req.origin_lat
@@ -88,7 +90,7 @@ async def create_yard(req: YardCreateRequest, db: Session = Depends(get_db)):
             yard.bay_count = req.bay_count
         else:
             yard = Yard(
-                yard_id=req.yard_id,
+                yard_id=yard_id,
                 name=req.name,
                 origin_lat=req.origin_lat,
                 origin_lon=req.origin_lon,
@@ -100,8 +102,11 @@ async def create_yard(req: YardCreateRequest, db: Session = Depends(get_db)):
             )
             db.add(yard)
         db.commit()
-        logger.info(f"堆场保存: {req.yard_id}")
-        return ApiResponse(code=200, message="保存成功", data={"yard_id": req.yard_id})
+        logger.info(f"堆场保存: {yard_id}")
+        return ApiResponse(code=200, message="保存成功", data={"yard_id": yard_id})
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         db.rollback()
         logger.error(f"保存堆场失败: {e}")

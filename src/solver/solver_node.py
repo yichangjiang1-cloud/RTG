@@ -23,7 +23,11 @@ from src.solver.lpoint_solver import LPointSolver
 from src.solver.yard_manager import YardManager
 from src.solver.calibration import BVehicleCalibrator
 from src.solver.calibration_context import CalibrationContextManager
-from src.solver.bay_residual import interpolate_residual
+from src.solver.bay_residual import (
+    interpolate_residual,
+    build_bay_positions_from_survey_points,
+    resolve_bay_no_next,
+)
 from src.solver.motion_speed import (
     DEADBAND_MPS,
     MIN_DISPLACEMENT_M,
@@ -198,6 +202,49 @@ class SolverNode:
             gantry_result.lpoint_z,
         )
 
+        yard_meta = self._yard_manager.get_yard_meta(yard_id or "") or {}
+        bay_spacing = float(yard_meta.get("bay_spacing") or 6.0)
+        if bay_spacing <= 0:
+            bay_spacing = 6.0
+
+        def _ant_dict(g: dict, primary: bool) -> dict:
+            if primary:
+                return {
+                    "lat": float(g.get("lat", 0.0)),
+                    "lon": float(g.get("lon", 0.0)),
+                    "alt": float(g.get("alt", 0.0)),
+                    "ecef_x": float(g.get("ecef_x", 0.0)),
+                    "ecef_y": float(g.get("ecef_y", 0.0)),
+                    "ecef_z": float(g.get("ecef_z", 0.0)),
+                }
+            return {
+                "lat": float(g.get("antenna2_lat", 0.0)),
+                "lon": float(g.get("antenna2_lon", 0.0)),
+                "alt": float(g.get("antenna2_alt", 0.0)),
+                "ecef_x": float(g.get("antenna2_ecef_x", 0.0)),
+                "ecef_y": float(g.get("antenna2_ecef_y", 0.0)),
+                "ecef_z": float(g.get("antenna2_ecef_z", 0.0)),
+            }
+
+        fq_left = int(ga1.get("fix_quality", 0)) if recv1_live else 0
+        fq_left_a2 = int(ga1.get("antenna2_fix_quality", fq_left)) if recv1_live else 0
+        fq_right = int(ga2.get("fix_quality", 0)) if recv2_live else 0
+        fq_right_a2 = int(ga2.get("antenna2_fix_quality", fq_right)) if recv2_live else 0
+        fq_tly = int(tly.get("fix_quality", 0)) if tly_live else 0
+        fq_tly_a2 = int(tly.get("antenna2_fix_quality", fq_tly)) if tly_live else 0
+
+        cal = self._calibration_ctx.get(yard_id or "")
+        survey_pts = cal.survey_points if cal else []
+        bay_positions = build_bay_positions_from_survey_points(
+            survey_pts,
+            transform=transform,
+            bay_spacing=bay_spacing,
+        )
+        current_bay_no = resolve_bay_no_next(
+            float(gantry_result.lpoint_x),
+            bay_positions,
+        )
+
         result = PositionResult(
             timestamp=now,
             yard_id=yard_id or "",
@@ -224,6 +271,19 @@ class SolverNode:
             imu_coasting_active=state.get("imu_coasting", False),
             imu_coasting_duration=state.get("imu_coasting_duration", 0.0),
             gantry_antennas=state.get("gantry_antennas") or {},
+            yard_origin_lat=float(transform.origin_lat),
+            yard_origin_lon=float(transform.origin_lon),
+            yard_origin_alt=float(transform.origin_alt),
+            bay_spacing_m=bay_spacing,
+            current_bay_no=current_bay_no,
+            fix_quality_left=fq_left,
+            fix_quality_left_ant2=fq_left_a2,
+            fix_quality_right=fq_right,
+            fix_quality_right_ant2=fq_right_a2,
+            fix_quality_trolley=fq_tly,
+            fix_quality_trolley_ant2=fq_tly_a2,
+            trolley_antenna_primary=_ant_dict(tly, True) if tly_live else {},
+            trolley_antenna_secondary=_ant_dict(tly, False) if tly_live else {},
         )
         result.gantry.heading = float(hdg_src.get("heading", 0.0))
         result.gantry.pitch = float(hdg_src.get("pitch", 0.0))

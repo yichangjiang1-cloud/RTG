@@ -1,4 +1,4 @@
-w_span: 50.0
+w_span: 10.0
 receiver_layout:
   left: gantry_a1
   right: gantry_a2
@@ -31,13 +31,13 @@ gantry:
       - -50.0
       - 0
   l_arm_elec:
-  - 15.000004624305573
-  - 5.000042899193566
-  - 2.999957273018948
+  - 0.0
+  - 0.0
+  - 0.0
   l_arm_diesel:
-  - 14.999975929259326
-  - 5.000036446059448
-  - 2.999914920704194
+  - 0.0
+  - 0.0
+  - 0.0
   l_arm_calibration:
     elec:
       measured_at: '2026-06-29T09:42:53.177Z'
@@ -76,16 +76,12 @@ gantry:
       - 5.000036446059448
       - 2.999914920704194
 l_arm:
-- 15.000004624305573
-- 5.000042899193566
-- 2.999957273018948
-height: 22.5
+- 0.0
+- 0.0
+- 0.0
+height: 20.0
 trolley:
-  origin_mode: manual
-  origin_body:
-  - 0.0
-  - 0.0
-  - 0.0
+  origin_mode: auto
 ekf:
   sigma_pos: 0.05
   sigma_vel: 0.01

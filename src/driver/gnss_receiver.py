@@ -28,6 +28,8 @@ _DATA_TIMEOUT_S = 2.0
 _IDLE_CHANNEL_WARN_INTERVAL_S = 60.0
 # 曾在线后断流：WARNING 最小间隔（秒）
 _ACTIVE_CHANNEL_WARN_INTERVAL_S = 10.0
+# 接收机状态 INFO 摘要最小间隔（秒）；定位质量变化时立即打一条
+_INFO_SUMMARY_INTERVAL_S = 60.0
 # 双天线基线水平距离合理范围（米），用于跨包识别副天线 GGA
 _SECONDARY_MIN_SEPARATION_M = 2.0
 _SECONDARY_MAX_SEPARATION_M = 80.0
@@ -67,6 +69,24 @@ def _summarize_nmea_types(text: str) -> str:
         else:
             types.append(head.split("*")[0][:8])
     return "+".join(types) if types else "?"
+
+
+def _gnss_raw_log_echo_console() -> bool:
+    """是否将每条 NMEA 实时打印到控制台（不写 rtg.log）。"""
+    try:
+        from src.utils.config_loader import get_config
+
+        return bool(get_config().get("gnss.raw_log.echo_console", False))
+    except Exception:
+        return False
+
+
+def _iter_nmea_lines(text: str):
+    """从 UDP 文本中提取 NMEA / 注释行。"""
+    for line in text.replace("\r", "\n").split("\n"):
+        line = line.strip()
+        if line.startswith("$") or line.startswith("#"):
+            yield line
 
 
 class GnssReceiver(threading.Thread):
@@ -109,10 +129,13 @@ class GnssReceiver(threading.Thread):
         # 单 GGA 包交替：主 → 副 → 主 …
         self._expect_secondary_gga: bool = False
         self._publish_count: int = 0
+        self._last_info_fix_quality: Optional[FixQuality] = None
+        self._last_info_summary_time: float = 0.0
+        self._echo_nmea_console = _gnss_raw_log_echo_console()
         self._raw_file_logger = create_gnss_raw_file_logger(receiver_id, port)
 
     def _log_raw_packet(self, data: bytes, addr: tuple, text: str) -> None:
-        """DEBUG：单行摘要；完整 NMEA 仅 DEBUG 逐条输出。"""
+        """DEBUG：单行摘要；echo_console 时逐条 NMEA 打印到控制台。"""
         host, port = addr[0], addr[1]
         if self._peer_addr != addr:
             self._peer_addr = addr
@@ -123,6 +146,9 @@ class GnssReceiver(threading.Thread):
         logger.debug(
             f"[{self.receiver_id}] UDP {len(data)}B from {host}:{port} | {summary}"
         )
+        if self._echo_nmea_console:
+            for line in _iter_nmea_lines(text):
+                print(f"[{self.receiver_id}] {line}", flush=True)
 
     def _log_timeout_if_needed(self) -> None:
         now = time.time()
@@ -144,11 +170,9 @@ class GnssReceiver(threading.Thread):
             logger.debug(msg + " — 未接接收机时可忽略")
 
     def _log_published_frame(self) -> None:
-        """发布前打印本帧解析结果（主天线 + 副天线 + 姿态句）。"""
+        """发布帧日志：逐帧 DEBUG；INFO 仅在定位质量变化或周期摘要。"""
         f = self._frame
         hdg = f.heading if f.heading is not None else float("nan")
-        pitch = f.pitch if f.pitch is not None else float("nan")
-        roll = f.roll if f.roll is not None else float("nan")
         ant2 = ""
         if f.has_antenna2:
             ant2 = (
@@ -157,12 +181,28 @@ class GnssReceiver(threading.Thread):
         self._publish_count += 1
         hdg_s = f"{hdg:.1f}" if f.heading is not None else "—"
         rtk_tag = "RTK" if f.is_rtk else f.fix_quality.name
-        logger.info(
+        logger.debug(
             f"[{self.receiver_id}] #{self._publish_count} "
             f"fix={rtk_tag}({int(f.fix_quality)}) sats={f.num_satellites} "
             f"({f.latitude:.6f},{f.longitude:.6f}) "
             f"spd={f.speed_mps:.2f} hdg={hdg_s}°{ant2}"
         )
+
+        now = time.time()
+        fix_changed = self._last_info_fix_quality != f.fix_quality
+        due_summary = now - self._last_info_summary_time >= _INFO_SUMMARY_INTERVAL_S
+        if fix_changed or due_summary:
+            self._last_info_fix_quality = f.fix_quality
+            self._last_info_summary_time = now
+            if fix_changed:
+                reason = "定位质量变化"
+            else:
+                reason = f"{_INFO_SUMMARY_INTERVAL_S:.0f}s 摘要"
+            logger.info(
+                f"[{self.receiver_id}] {reason} | #{self._publish_count} "
+                f"fix={rtk_tag} sats={f.num_satellites} "
+                f"({f.latitude:.6f},{f.longitude:.6f})"
+            )
 
     def stop(self) -> None:
         """通知接收线程停止。"""
@@ -179,6 +219,11 @@ class GnssReceiver(threading.Thread):
             logger.info(
                 f"[{self.receiver_id}] UDP 监听 {self.host}:{self.port}"
             )
+            if self._echo_nmea_console:
+                logger.info(
+                    f"[{self.receiver_id}] NMEA 实时回显已开启 "
+                    f"(gnss.raw_log.echo_console=true)"
+                )
 
             while not self._stop_event.is_set():
                 try:

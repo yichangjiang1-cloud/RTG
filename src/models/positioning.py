@@ -21,7 +21,8 @@ class GantryResult:
     """
     大车定位解算结果。
 
-    坐标基准：堆场局部坐标系（LYCS）
+    坐标基准：堆场局部坐标系（LYCS）——相对堆场原点的常规局部平面坐标
+    （当前实现：X=北、Y=东、Z=上；不强制对齐贝位）。
     偏移基准：以跑道中心线为零点，偏向堆场内为负，偏向堆场外为正。
     速度符号：大车值增大方向为正，减小为负。
     """
@@ -118,7 +119,7 @@ class PositionResult:
     bridge_node ��收并按协议下发给 PLC。
     """
     timestamp: float = 0.0
-    yard_id: str = ""               # 当前所在堆场 ID
+    yard_id: str = ""               # 当前所在堆场 ID（= PLC 场号，≤8 字节 ASCII）
 
     gantry: GantryResult = field(default_factory=GantryResult)
     trolley: TrolleyResult = field(default_factory=TrolleyResult)
@@ -155,4 +156,21 @@ class PositionResult:
 
     # 四天线 WGS84/ECEF（a1/a2 左列，b1/b2 右列；GGA[0]=电气，GGA[1]=柴油）
     gantry_antennas: dict = field(default_factory=dict)
+
+    # PLC V1.0.0 扩展字段
+    # 已废弃：场号与 yard_id 相同，保留字段仅为兼容旧遥测
+    yard_display_code: str = ""
+    yard_origin_lat: float = 0.0      # 堆场原点（六天线 XYZ 基准站，与 yard_config 一致）
+    yard_origin_lon: float = 0.0
+    yard_origin_alt: float = 0.0
+    bay_spacing_m: float = 6.0
+    current_bay_no: int = 0           # PLC 字段 10，由 RTK 贝位表「下一贝」规则得出
+    fix_quality_left: int = 0         # 左列接收机主天线
+    fix_quality_left_ant2: int = 0    # 左列副天线
+    fix_quality_right: int = 0        # 右列主天线
+    fix_quality_right_ant2: int = 0
+    fix_quality_trolley: int = 0
+    fix_quality_trolley_ant2: int = 0
+    trolley_antenna_primary: dict = field(default_factory=dict)
+    trolley_antenna_secondary: dict = field(default_factory=dict)
 

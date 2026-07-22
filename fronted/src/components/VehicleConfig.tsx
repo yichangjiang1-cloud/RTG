@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type Dispatch, type SetStateAction } from 'react';
+import { useState, useEffect, useCallback, useMemo, type Dispatch, type SetStateAction, type ReactNode } from 'react';
 import { Settings2, Plus, Save, FolderOpen, Car, Radio, RefreshCw, X, Loader2, AlertTriangle, Copy, Sparkles, WifiOff, ArrowLeftRight, MoveHorizontal } from 'lucide-react';
 import { SectionHeader, showToast } from './common';
 import { useAppContext } from '../context/AppContext';
@@ -101,11 +101,11 @@ function InitDeviceModal({ device, backendBase, onClose, onDone }: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-5 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      <div className="bg-slate-900 border border-slate-600/60 rounded-2xl p-7 w-full max-w-md space-y-5 shadow-2xl shadow-black/50">
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-bold text-white">初始化新设备</h3>
-          <button onClick={onClose} className="text-slate-500 hover:text-white"><X className="w-5 h-5" /></button>
+          <h3 className="text-lg font-bold text-white">初始化新设备</h3>
+          <button onClick={onClose} className="btn-icon p-2 text-slate-500 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="p-3 bg-slate-800/60 rounded-lg text-xs space-y-1 font-mono">
@@ -171,9 +171,9 @@ function InitDeviceModal({ device, backendBase, onClose, onDone }: {
           </div>
         </div>
 
-        <div className="flex gap-3 pt-1">
-          <button onClick={onClose} className="flex-1 btn-secondary">取消</button>
-          <button onClick={handleSubmit} disabled={saving} className="flex-1 btn-primary flex items-center justify-center gap-2">
+        <div className="flex gap-3 pt-2">
+          <button onClick={onClose} className="flex-1 btn-outline py-3">取消</button>
+          <button onClick={handleSubmit} disabled={saving} className="flex-1 btn-primary py-3 flex items-center justify-center gap-2">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
             {saving ? '初始化中…' : '确认初始化'}
           </button>
@@ -209,6 +209,26 @@ function defaultGantryAttitude(span: number, baseline = 20): GantryAttitudeConfi
 type ConfigTab = 'basic' | 'larm' | 'attitude' | 'trolley';
 type CalibSide = 'elec' | 'diesel';
 
+function ConfigPanelHeader({
+  icon: Icon,
+  title,
+  trailing,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  trailing?: ReactNode;
+}) {
+  return (
+    <div className="config-panel-header">
+      <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/25 flex items-center justify-center shrink-0">
+        <Icon className="w-4 h-4 text-blue-400" />
+      </div>
+      <h3 className="config-panel-title">{title}</h3>
+      {trailing}
+    </div>
+  );
+}
+
 function SwipeTabs<T extends string>({
   tabs,
   active,
@@ -219,18 +239,15 @@ function SwipeTabs<T extends string>({
   onChange: (id: T) => void;
 }) {
   return (
-    <div className="flex gap-1 p-1 bg-slate-900/80 rounded-xl border border-slate-700/60 overflow-x-auto">
+    <div className="config-tabs">
       {tabs.map((t) => (
         <button
           key={t.id}
           type="button"
           onClick={() => onChange(t.id)}
-          className={clsx(
-            'flex-1 min-w-[7rem] px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap',
-            active === t.id
-              ? 'bg-violet-600 text-white shadow-md shadow-violet-900/40'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800',
-          )}
+          className={active === t.id
+            ? 'config-tab-active bg-gradient-to-b from-blue-600 to-blue-700 shadow-blue-900/50'
+            : 'config-tab-inactive'}
         >
           {t.label}
         </button>
@@ -315,7 +332,7 @@ function ReadOnlyLArmBlock({
       <p className="text-[10px] text-slate-500 mb-1">{title}</p>
       <p className={clsx(
         'font-mono text-sm',
-        uncalibrated || isZero ? 'text-amber-400/80' : 'text-violet-200',
+        uncalibrated || isZero ? 'text-amber-400/80' : 'text-blue-200',
       )}>
         {uncalibrated || isZero ? '未标定' : formatArm(arm)}
       </p>
@@ -420,12 +437,21 @@ function LArmSmartCalibration({
       if (json.code !== 200 || !json.data?.l_arm) throw new Error('反算失败');
 
       const arm = json.data.l_arm;
+      const layout = cfg.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT;
+      const ggaIndex = layout.gga_order.indexOf(side);
       const record: LArmCalibrationRecord = {
         measured_at: new Date().toISOString(),
         lpoint,
         antenna,
         attitude,
         l_arm: arm,
+        receiver_id: liveData.ref_antenna?.receiver_id ?? layout.left,
+        gga_index: ggaIndex >= 0 ? ggaIndex : (side === 'elec' ? 0 : 1),
+        layout_snapshot: {
+          left: layout.left,
+          right: layout.right,
+          gga_order: layout.gga_order,
+        },
       };
 
       setCfg(prev => {
@@ -465,37 +491,39 @@ function LArmSmartCalibration({
   }
 
   return (
-    <div className="card p-5 border border-violet-500/30 bg-violet-900/10 space-y-4">
-      <div className="flex items-center gap-2">
-        <Sparkles className="w-4 h-4 text-violet-400" />
-        <h3 className="text-sm font-bold uppercase tracking-wide text-violet-200">智能杆臂标定</h3>
-        <span className={clsx(
-          'ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full border',
-          canCalib ? 'text-emerald-400 border-emerald-500/40 bg-emerald-900/30' : 'text-amber-400 border-amber-500/40 bg-amber-900/30',
-        )}>
-          {canCalib ? '可标定' : '等待条件'}
-        </span>
-      </div>
+    <div className="config-panel">
+      <ConfigPanelHeader
+        icon={Sparkles}
+        title="智能杆臂标定"
+        trailing={
+          <span className={clsx(
+            'text-xs font-bold px-3 py-1 rounded-full border',
+            canCalib ? 'text-emerald-300 border-emerald-500/50 bg-emerald-900/40' : 'text-amber-300 border-amber-500/50 bg-amber-900/40',
+          )}>
+            {canCalib ? '可标定' : '等待条件'}
+          </span>
+        }
+      />
 
-      <p className="text-[11px] text-slate-400 leading-relaxed">
+      <p className="text-sm text-slate-400 leading-relaxed">
         车辆<strong className="text-slate-300">静止</strong>且中控<strong className="text-slate-300">实时运行</strong>时，
         输入 RTK 测量的<strong className="text-slate-300">作业点 WGS84</strong>；
-        系统用当前天线坐标与姿态（heading/pitch/roll）反算车体系杆臂 <code className="text-violet-300">L_arm = Rᵀ·(P_天线−P_作业点)</code>。
+        系统用当前天线坐标与姿态（heading/pitch/roll）反算车体系杆臂 <code className="text-blue-300">L_arm = Rᵀ·(P_天线−P_作业点)</code>。
       </p>
 
-      <div className={clsx('p-3 rounded-lg text-xs flex items-start gap-2 border', canCalib ? 'bg-slate-900/50 border-slate-700 text-slate-400' : 'bg-amber-900/20 border-amber-500/30 text-amber-200/80')}>
+      <div className={clsx(canCalib ? 'config-hint' : 'config-hint-warn')}>
         {!wsOk ? <WifiOff className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />}
         <span>{liveHint}</span>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-[11px] font-mono">
-        <div className="p-3 bg-slate-900/60 rounded-lg space-y-1">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs font-mono">
+        <div className="config-data-block space-y-1">
           <p className="text-slate-500 mb-1">实时 A1（电气房天线）</p>
           <p>lat {liveData.ref_antenna.lat.toFixed(8)}</p>
           <p>lon {liveData.ref_antenna.lon.toFixed(8)}</p>
           <p>alt {liveData.ref_antenna.alt.toFixed(3)} m</p>
         </div>
-        <div className="p-3 bg-slate-900/60 rounded-lg space-y-1">
+        <div className="config-data-block space-y-1">
           <p className="text-slate-500 mb-1">实时 A2（柴油机天线）{a2Ok ? '' : ' — 无效'}</p>
           <p>lat {(liveData.antenna2?.lat ?? 0).toFixed(8)}</p>
           <p>lon {(liveData.antenna2?.lon ?? 0).toFixed(8)}</p>
@@ -503,7 +531,7 @@ function LArmSmartCalibration({
         </div>
       </div>
 
-      <div className="p-3 bg-slate-900/40 rounded-lg grid grid-cols-3 gap-3 text-xs font-mono text-slate-400">
+      <div className="config-data-block grid grid-cols-3 gap-3 text-xs font-mono text-slate-400">
         <div>heading {liveData.heading.toFixed(2)}°</div>
         <div>pitch {liveData.pitch.toFixed(2)}°</div>
         <div>roll {liveData.roll.toFixed(2)}°</div>
@@ -530,9 +558,9 @@ function LArmSmartCalibration({
               type="button"
               disabled={!canCalib || computing !== null}
               onClick={() => computeSide('elec')}
-              className="w-full btn-primary text-xs py-2 flex items-center justify-center gap-2 disabled:opacity-40"
+              className="w-full btn-primary py-3 flex items-center justify-center gap-2"
             >
-              {computing === 'elec' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              {computing === 'elec' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
               计算 l_arm_elec
             </button>
             {cfg && (
@@ -551,9 +579,9 @@ function LArmSmartCalibration({
               type="button"
               disabled={!canCalib || !a2Ok || computing !== null}
               onClick={() => computeSide('diesel')}
-              className="w-full btn-primary text-xs py-2 flex items-center justify-center gap-2 disabled:opacity-40"
+              className="w-full btn-primary py-3 flex items-center justify-center gap-2"
             >
-              {computing === 'diesel' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              {computing === 'diesel' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
               计算 l_arm_diesel
             </button>
             {cfg && (
@@ -568,11 +596,22 @@ function LArmSmartCalibration({
       </div>
 
       {cfg?.l_arm_calibration && (
-        <p className="text-[10px] text-slate-500">
-          已记录标定溯源：
-          {cfg.l_arm_calibration.elec && ` 电气房 @ ${cfg.l_arm_calibration.elec.measured_at.slice(0, 19)}`}
-          {cfg.l_arm_calibration.diesel && ` · 柴油机 @ ${cfg.l_arm_calibration.diesel.measured_at.slice(0, 19)}`}
-        </p>
+        <div className="text-[10px] text-slate-500 space-y-0.5">
+          {cfg.l_arm_calibration.elec && (
+            <p>
+              电气房溯源：{cfg.l_arm_calibration.elec.measured_at.slice(0, 19)}
+              {cfg.l_arm_calibration.elec.receiver_id &&
+                ` · 来源 ${cfg.l_arm_calibration.elec.receiver_id} GGA[${cfg.l_arm_calibration.elec.gga_index ?? 0}]`}
+            </p>
+          )}
+          {cfg.l_arm_calibration.diesel && (
+            <p>
+              柴油机溯源：{cfg.l_arm_calibration.diesel.measured_at.slice(0, 19)}
+              {cfg.l_arm_calibration.diesel.receiver_id &&
+                ` · 来源 ${cfg.l_arm_calibration.diesel.receiver_id} GGA[${cfg.l_arm_calibration.diesel.gga_index ?? 1}]`}
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
@@ -642,20 +681,25 @@ function ReceiverLayoutPanel({
   ];
 
   return (
-    <div className="lg:col-span-2 card p-6 space-y-4">
-      <div className="flex items-center justify-between pb-3 border-b border-slate-700/60">
-        <div>
-          <h3 className="text-sm font-bold uppercase tracking-wide text-slate-300">接收机布局</h3>
-          <p className="text-[10px] text-slate-500 mt-0.5">
-            同包 GGA 顺序固定：GGA[0]=电气房，GGA[1]=柴油机；四天线 a1/a2=左列，b1/b2=右列
-          </p>
+    <div className="lg:col-span-2 config-panel">
+      <div className="flex items-center justify-between pb-4 border-b border-slate-700/60">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/25 flex items-center justify-center shrink-0">
+            <Radio className="w-4 h-4 text-blue-400" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-slate-200">接收机布局</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              同包 GGA 顺序固定：GGA[0]=电气房，GGA[1]=柴油机；四天线 a1/a2=左列，b1/b2=右列
+            </p>
+          </div>
         </div>
         <button
           type="button"
           onClick={swapSides}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs font-bold"
+          className="btn-outline flex items-center gap-2 shrink-0"
         >
-          <ArrowLeftRight className="w-3.5 h-3.5" />
+          <ArrowLeftRight className="w-4 h-4" />
           交换左右
         </button>
       </div>
@@ -677,15 +721,15 @@ function ReceiverLayoutPanel({
                 <td className="py-2.5 pr-3 text-slate-300">{r.side}</td>
                 <td className="py-2.5 px-2 text-blue-300">{r.id}</td>
                 <td className="py-2.5 px-2 text-slate-400">{r.port}</td>
-                <td className="py-2.5 px-2 text-emerald-400/90">{r.gga0}</td>
-                <td className="py-2.5 pl-2 text-amber-400/90">{r.gga1}</td>
+                <td className="py-2.5 px-2 text-slate-300">{r.gga0}</td>
+                <td className="py-2.5 pl-2 text-slate-300">{r.gga1}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      <div className="p-3 bg-slate-900/60 border border-slate-700/40 rounded-lg text-[10px] text-slate-500 leading-relaxed space-y-1">
+      <div className="config-data-block text-xs text-slate-500 leading-relaxed space-y-1">
         <p>左接收机（{layout.left_port}）双 GGA 对应 a1/a2；右接收机（{layout.right_port}）对应 b1/b2。</p>
         <p>姿态解算与杆臂标定均按此顺序，无需再维护 ant1–ant6 天线标识。若现场左右接线与默认相反，点「交换左右」后保存。</p>
       </div>
@@ -753,18 +797,15 @@ function TrolleyOriginPanel({
   }
 
   return (
-    <div className="card p-5 border border-emerald-500/30 bg-emerald-900/10 space-y-4">
-      <div className="flex items-center gap-2">
-        <MoveHorizontal className="w-4 h-4 text-emerald-400" />
-        <h3 className="text-sm font-bold uppercase tracking-wide text-emerald-200">小车零点（大车车体系）</h3>
-      </div>
+    <div className="config-panel">
+      <ConfigPanelHeader icon={MoveHorizontal} title="小车零点（大车车体系）" />
 
-      <p className="text-[11px] text-slate-400 leading-relaxed">
+      <p className="text-sm text-slate-400 leading-relaxed">
         零点锚定在大车 L-Point 车体系上，<strong className="text-slate-300">随大车移动/转向</strong>；
         行程 = 相对零点的 Y 分量（沿横梁）。双 GGA 在线且中控运行时可用「捕获当前位置」。
       </p>
 
-      <div className="p-3 bg-slate-900/50 rounded-lg text-xs font-mono space-y-1 text-slate-400">
+      <div className="config-data-block text-xs font-mono space-y-1 text-slate-400">
         <p>模式 {liveData.trolley.origin_mode ?? trolley.origin_mode}</p>
         {liveData.trolley.body_position && (
           <p>实时车体系 body: {liveData.trolley.body_position.x.toFixed(3)}, {liveData.trolley.body_position.y.toFixed(3)}, {liveData.trolley.body_position.z.toFixed(3)}</p>
@@ -775,20 +816,21 @@ function TrolleyOriginPanel({
         <p>相对 Δ: {liveData.trolley.position.x.toFixed(3)}, {liveData.trolley.position.y.toFixed(3)} m · 行程 {liveData.trolley.travel.toFixed(3)} m</p>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-3">
         <button
           type="button"
           disabled={!wsOk || !tlyOk || busy !== null}
           onClick={() => callOrigin('capture')}
-          className="btn-primary text-xs py-2 px-3 disabled:opacity-40"
+          className="btn-primary flex items-center gap-2"
         >
+          {busy === 'capture' ? <Loader2 className="w-4 h-4 animate-spin" /> : <MoveHorizontal className="w-4 h-4" />}
           {busy === 'capture' ? '下发中…' : '捕获当前位置为零点'}
         </button>
         <button
           type="button"
           disabled={busy !== null}
           onClick={() => callOrigin('reset')}
-          className="btn-secondary text-xs py-2 px-3"
+          className="btn-outline"
         >
           重置为 auto
         </button>
@@ -820,7 +862,7 @@ function TrolleyOriginPanel({
             setCfg(p => p ? { ...p, trolley: { origin_mode: 'manual', origin_body: body } } : null);
             callOrigin('manual', body);
           }}
-          className="w-full btn-secondary text-xs py-2"
+          className="w-full btn-outline py-3"
         >
           保存手动零点并下发
         </button>
@@ -941,21 +983,15 @@ function GantryAttitudePanel({
   }
 
   return (
-    <div className="card p-5 border border-cyan-500/30 bg-cyan-900/10 space-y-4">
-      <div className="flex items-center gap-2">
-        <Radio className="w-4 h-4 text-cyan-400" />
-        <h3 className="text-sm font-bold uppercase tracking-wide text-cyan-200">四天线姿态解算</h3>
-      </div>
+    <div className="config-panel">
+      <ConfigPanelHeader icon={Radio} title="四天线姿态解算" />
 
-      <p className="text-[11px] text-slate-400 leading-relaxed">
+      <p className="text-sm text-slate-400 leading-relaxed">
         双接收机同时在线时：A/B 各自双 GGA 求航向/俯仰并取平均；<strong className="text-slate-300">roll</strong> 由四天线刚体定姿解算。
         安装坐标应通过<strong className="text-slate-300">一键采集</strong>从现场四天线 ECEF 标定，而非长期使用默认值。车体系：X 前、Y 左、Z 上。
       </p>
 
-      <div className={clsx(
-        'p-3 rounded-lg text-xs flex items-start gap-2 border',
-        canCapture ? 'bg-slate-900/50 border-slate-700 text-slate-400' : 'bg-amber-900/20 border-amber-500/30 text-amber-200/80',
-      )}>
+      <div className={clsx(canCapture ? 'config-hint' : 'config-hint-warn')}>
         {!wsOk ? <WifiOff className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />}
         <span>{captureHint}</span>
       </div>
@@ -964,7 +1000,7 @@ function GantryAttitudePanel({
         type="button"
         disabled={!canCapture || capturing}
         onClick={captureFromLive}
-        className="w-full btn-primary text-xs py-2.5 flex items-center justify-center gap-2 disabled:opacity-40"
+        className="w-full btn-primary py-3 flex items-center justify-center gap-2"
       >
         {capturing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
         一键采集四天线安装坐标
@@ -993,7 +1029,7 @@ function GantryAttitudePanel({
                 const p = liveData.gantry_antennas![k];
                 return (
                   <tr key={k} className="border-b border-slate-800/40 text-slate-400">
-                    <td className="py-1 pr-2 uppercase text-cyan-500/80">{k}</td>
+                    <td className="py-1 pr-2 uppercase text-blue-400/80">{k}</td>
                     <td className="py-1 px-1">{p.lat.toFixed(8)}</td>
                     <td className="py-1 px-1">{p.lon.toFixed(8)}</td>
                     <td className="py-1 px-1">{p.alt.toFixed(3)}</td>
@@ -1031,7 +1067,7 @@ function GantryAttitudePanel({
 
       <div className="flex items-center justify-between">
         <p className="section-title">天线安装坐标（车体系，米）</p>
-        <button type="button" onClick={applyDefaults} className="text-[10px] text-cyan-400 hover:underline">
+        <button type="button" onClick={applyDefaults} className="btn-outline text-xs py-2 px-3">
           按 W_span 生成参考值
         </button>
       </div>
@@ -1067,7 +1103,7 @@ function GantryAttitudePanel({
         </table>
       </div>
 
-      <div className="p-3 bg-slate-900/50 rounded-lg grid grid-cols-3 gap-2 text-xs font-mono text-slate-400">
+      <div className="config-data-block grid grid-cols-3 gap-2 text-xs font-mono text-slate-400">
         <div>实时 heading {liveData.heading.toFixed(2)}°</div>
         <div>pitch {liveData.pitch.toFixed(2)}°</div>
         <div>roll {liveData.roll.toFixed(2)}°</div>
@@ -1258,30 +1294,34 @@ export default function VehicleConfig({
 
       {/* ── 待初始化设备 ── */}
       {!useMock && pendingDevices.length > 0 && (
-        <div className="card p-5 border border-amber-500/30 bg-amber-900/10 space-y-3">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-400" />
-            <h3 className="text-sm font-bold uppercase tracking-wide text-amber-300">待初始化设备</h3>
-            <span className="ml-auto text-[10px] text-amber-500">{pendingDevices.length} 台待分配</span>
+        <div className="card p-6 border border-amber-500/40 bg-gradient-to-br from-amber-950/40 to-slate-900/60 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center">
+              <AlertTriangle className="w-5 h-5 text-amber-400" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-amber-200">待初始化设备</h3>
+              <p className="text-xs text-amber-400/70">{pendingDevices.length} 台待分配正式 ID</p>
+            </div>
           </div>
-          <p className="text-[11px] text-amber-200/60">
+          <p className="text-sm text-amber-100/60 leading-relaxed">
             以下设备已上线但尚未分配正式 ID。点击「初始化」填写参数后，后端将向设备下发 CMD_INIT_IDENTITY，中控机会自动切换 ID 并同步配置，无需重启。
           </p>
-          <div className="space-y-2">
+          <div className="space-y-3">
             {pendingDevices.map(dev => (
-              <div key={dev.temp_id} className="flex items-center gap-3 p-3 bg-slate-900/60 rounded-xl border border-amber-500/20">
-                <div className="w-9 h-9 rounded-lg bg-amber-900/40 border border-amber-500/30 flex items-center justify-center shrink-0">
-                  <Car className="w-4 h-4 text-amber-400" />
+              <div key={dev.temp_id} className="flex items-center gap-4 p-4 bg-slate-900/70 rounded-2xl border border-amber-500/25">
+                <div className="w-11 h-11 rounded-xl bg-amber-500/15 border border-amber-500/35 flex items-center justify-center shrink-0">
+                  <Car className="w-5 h-5 text-amber-400" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-amber-200 font-mono">{dev.temp_id}</p>
-                  <p className="text-[10px] text-slate-500 font-mono">SN: {dev.sn || '-'}</p>
+                  <p className="text-base font-bold text-amber-100 font-mono">{dev.temp_id}</p>
+                  <p className="text-xs text-slate-500 font-mono mt-0.5">SN: {dev.sn || '-'}</p>
                 </div>
                 <button
                   onClick={() => setInitTarget(dev)}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold shrink-0"
+                  className="btn-amber flex items-center gap-2 shrink-0 py-3 px-5"
                 >
-                  <Plus className="w-3.5 h-3.5" /> 初始化
+                  <Plus className="w-4 h-4" /> 初始化
                 </button>
               </div>
             ))}
@@ -1290,34 +1330,33 @@ export default function VehicleConfig({
       )}
 
       {/* ── 车辆选择器 ── */}
-      <div className="card p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <Car className="w-4 h-4 text-blue-400" />
-          <span className="text-sm font-bold uppercase tracking-wide text-slate-300">选择要编辑的车辆</span>
-          <span className="text-[10px] text-slate-500">{vehicles.length} 台</span>
+      <div className="card p-5">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center">
+            <Car className="w-4 h-4 text-blue-400" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <span className="text-sm font-bold text-slate-200">选择要编辑的车辆</span>
+            <p className="text-xs text-slate-500 mt-0.5">{vehicles.length} 台已注册</p>
+          </div>
           <button
             onClick={handleRefresh}
             disabled={useMock || refreshing}
             title={useMock ? '模拟模式下不可刷新' : '从后端重新拉取车辆列表'}
-            className="ml-auto p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="btn-icon"
           >
-            <RefreshCw className={clsx('w-3.5 h-3.5', refreshing && 'animate-spin')} />
+            <RefreshCw className={clsx('w-4 h-4', refreshing && 'animate-spin')} />
           </button>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2.5">
           {vehicles.map((v) => (
             <button
               key={v.vehicle_id}
               onClick={() => handleSelectVehicle(v.vehicle_id)}
-              className={clsx(
-                'px-4 py-2 rounded-lg text-sm font-bold border transition-all duration-150',
-                editId === v.vehicle_id
-                  ? 'bg-blue-600 border-blue-500 text-white shadow-lg shadow-blue-900/30'
-                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500',
-              )}
+              className={editId === v.vehicle_id ? 'chip-btn-active' : 'chip-btn-inactive'}
             >
               {v.label}
-              <span className="ml-2 text-[10px] font-mono opacity-60">{v.vehicle_id}</span>
+              <span className="ml-2 text-xs font-mono opacity-70">{v.vehicle_id}</span>
             </button>
           ))}
           {vehicles.length === 0 && !useMock && (
@@ -1397,11 +1436,8 @@ export default function VehicleConfig({
           {configTab === 'basic' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
             {/* 基本参数 */}
-            <div className="card p-6 space-y-5">
-              <div className="flex items-center gap-2 pb-3 border-b border-slate-700/60">
-                <Settings2 className="w-4 h-4 text-blue-400" />
-                <span className="text-sm font-bold uppercase tracking-wide text-slate-300">基本属性</span>
-              </div>
+            <div className="config-panel">
+              <ConfigPanelHeader icon={Settings2} title="基本属性" />
 
               <div className="space-y-4">
                 <div>
@@ -1448,7 +1484,7 @@ export default function VehicleConfig({
                 </p>
               </div>
 
-              <div className="mt-4 p-4 bg-blue-900/10 border border-blue-500/20 rounded-xl">
+              <div className="config-formula-box">
                 <p className="section-title mb-2">L-Point 解算公式</p>
                 <p className="text-xs font-mono text-blue-300 leading-relaxed">
                   P_final = P_gps − R · L_arm
@@ -1466,15 +1502,15 @@ export default function VehicleConfig({
           )}
 
           {/* 操作按钮 */}
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-700/60">
-            <button className="btn-secondary flex items-center gap-2">
+          <div className="action-bar">
+            <button className="btn-outline flex items-center gap-2 py-3">
               <FolderOpen className="w-4 h-4" />
               导入配置
             </button>
             <button
               onClick={handleSave}
               disabled={saving}
-              className="btn-primary flex items-center gap-2"
+              className="btn-primary flex items-center gap-2 py-3 px-8"
             >
               <Save className="w-4 h-4" />
               {saving ? '保存中...' : '保存并下发至中控机'}
