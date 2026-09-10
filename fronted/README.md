@@ -159,10 +159,10 @@ server: {
 | 接口 | 方法 | 说明 |
 |------|------|------|
 | `/api/vehicle/config` | POST/GET | 车辆参数存取 |
-| `/api/survey/confirm` | POST | 确认到达贝位 |
-| `/api/yard/generate_map` | POST | 生成场地底图 |
-| `/api/yard/map` | GET | 获取底图数据 |
-| `/api/survey/finalize` | POST | 完成校准 |
+| `/api/survey/confirm` | POST | RTK 建图（mapping）或车辆校准采点（calibration） |
+| `/api/survey/batch_import` | POST | CSV 批量导入 RTK 真值 |
+| `/api/yard/map` | GET | 获取 RTK + 校准聚合数据 |
+| `/api/survey/finalize` | POST | 完成校准（含 002 求 M） |
 
 ### WebSocket
 

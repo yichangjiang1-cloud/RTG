@@ -231,13 +231,27 @@ python -m src.main
 **Topic**: `rtg/RTG-001/control`  
 **QoS**: 1  
 
-#### 打点指令
+建图/校准**采点**在 Web 完成（`POST /api/survey/confirm`），不经 MQTT。中控仅接收配置与校准同步类指令。
+
+#### 校准完成同步
 ```json
 {
-  "cmd": "RECORD_POINT",
+  "cmd": "CALIBRATION_FINALIZED",
   "data": {
-    "truth": [12.34, 45.67, 1.23],
-    "bay_id": "1"
+    "vehicle_id": "RTG-002",
+    "yard_id": "A01",
+    "status": "completed"
+  }
+}
+```
+
+#### 设备初始化
+```json
+{
+  "cmd": "CMD_INIT_IDENTITY",
+  "data": {
+    "new_vehicle_id": "RTG-002",
+    "params": { "l_arm": [0.0, 0.0, 0.0], "height": 20.0, "w_span": 23.47 }
   }
 }
 ```

@@ -30,17 +30,6 @@ class YardCreateRequest(BaseModel):
     bay_count: int = 0
 
 
-class GenerateMapRequest(BaseModel):
-    yard_id: str
-    vehicle_id: str
-
-
-class SaveMapRequest(BaseModel):
-    yard_id: str
-    vehicle_id: str
-    m_matrix: dict
-
-
 # ==================== 堆场 CRUD ====================
 
 @router.get("/all_origins", response_model=ApiResponse)
@@ -203,64 +192,4 @@ async def get_yard_map(
         raise
     except Exception as e:
         logger.error(f"获取堆场地图失败: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
-@router.post("/generate_map", response_model=ApiResponse)
-async def generate_yard_map(
-    req: GenerateMapRequest,
-    db: Session = Depends(get_db)
-):
-    """触发中控机生成堆场底图（A 车建图指令）"""
-    try:
-        logger.info(f"生成堆场底图: {req.yard_id} 车辆: {req.vehicle_id}")
-        return ApiResponse(
-            code=200,
-            message="底图生成命令已发送",
-            data={"yard_id": req.yard_id, "vehicle_id": req.vehicle_id}
-        )
-    except Exception as e:
-        logger.error(f"生成堆场底图失败: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
-@router.post("/save_map", response_model=ApiResponse)
-async def save_yard_map(
-    req: SaveMapRequest,
-    db: Session = Depends(get_db)
-):
-    """保存 A 车底图校准矩阵，并将堆场标记为已建图"""
-    try:
-        calibration = db.query(CalibrationData).filter(
-            CalibrationData.yard_id == req.yard_id,
-            CalibrationData.vehicle_id == req.vehicle_id
-        ).first()
-
-        if calibration:
-            calibration.m_matrix = req.m_matrix
-            calibration.status = "completed"
-        else:
-            calibration = CalibrationData(
-                vehicle_id=req.vehicle_id,
-                yard_id=req.yard_id,
-                m_matrix=req.m_matrix,
-                status="completed"
-            )
-            db.add(calibration)
-
-        yard = db.query(Yard).filter(Yard.yard_id == req.yard_id).first()
-        if yard:
-            yard.mapped = True
-
-        db.commit()
-        logger.info(f"保存底图矩阵: {req.yard_id}，堆场已标记为已建图")
-
-        return ApiResponse(
-            code=200,
-            message="底图保存成功",
-            data={"yard_id": req.yard_id}
-        )
-    except Exception as e:
-        db.rollback()
-        logger.error(f"保存校准矩阵失败: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

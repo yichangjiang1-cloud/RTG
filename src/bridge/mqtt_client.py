@@ -46,18 +46,33 @@ class MqttClient:
         :param password:     MQTT 认证密码
         :param keepalive:    心跳间隔（秒）
         """
+        # Windows + Docker 下 localhost 会解析成 ::1，连到 wslrelay 而非 0.0.0.0 映射
+        if broker_host in ("localhost", "::1"):
+            broker_host = "127.0.0.1"
         self._broker_host = broker_host
         self._broker_port = broker_port
         self._vehicle_id  = vehicle_id or self._generate_temp_id()
         self._keepalive   = keepalive
 
-        # MQTT 客户端
-        self._client = mqtt.Client(
-            client_id=f"rtg_{self._vehicle_id}_{int(time.time())}",
-            clean_session=True,
-        )
-        if username and password:
-            self._client.username_pw_set(username, password)
+        # MQTT 客户端（paho 2.x 首参是 CallbackAPIVersion，须显式 VERSION1）
+        client_id = f"rtg_{self._vehicle_id}_{int(time.time())}"
+        cb_api = getattr(mqtt, "CallbackAPIVersion", None)
+        if cb_api is not None:
+            self._client = mqtt.Client(
+                cb_api.VERSION1,
+                client_id=client_id,
+                clean_session=True,
+            )
+        else:
+            self._client = mqtt.Client(
+                client_id=client_id,
+                clean_session=True,
+            )
+        # YAML 未加引号时 password: 123456 会被解析成 int，paho 2.x 会对密码做 len()
+        user = str(username).strip() if username is not None else ""
+        pwd = "" if password is None else str(password)
+        if user:
+            self._client.username_pw_set(user, pwd)
 
         # 回调注册
         self._control_callback: Optional[Callable[[dict], None]] = None
@@ -91,6 +106,10 @@ class MqttClient:
             logger.info("MQTT 后台循环已启动，等待连接回调...")
         except Exception as e:
             logger.error(f"MQTT 连接失败: {e}")
+            try:
+                self._client.disconnect()
+            except Exception:
+                pass
             raise
 
     def stop(self) -> None:

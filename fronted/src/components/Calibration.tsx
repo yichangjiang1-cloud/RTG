@@ -5,6 +5,7 @@ import { useAppContext } from '../context/AppContext';
 import type { RealtimeData } from '../types';
 import { clsx } from 'clsx';
 import { logger } from '../utils/logger';
+import { httpBase } from '../utils/backendUrl';
 
 interface CalibrationProps {
   liveData: RealtimeData;
@@ -47,7 +48,7 @@ export default function Calibration({ liveData }: CalibrationProps) {
   const [finalizing, setFinalizing] = useState(false);
   const [clearing, setClearing] = useState(false);
 
-  const baseUrl = `http://${backendConfig.host}:${backendConfig.port}`;
+  const baseUrl = httpBase(backendConfig);
   const yardId = selectedYard?.yard_id ?? '';
 
   const fetchRtkFromHistory = async (): Promise<RtkBay[]> => {

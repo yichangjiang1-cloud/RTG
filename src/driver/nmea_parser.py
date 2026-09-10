@@ -1,7 +1,7 @@
 """
 驱动模块：NMEA 语句解析器
-支持标准 NMEA 0183 句型：GGA、RMC、HDT
-以及双天线接收机专有语句：$PSAT,GGA2（副天线 GGA）、PASHR、GPTRA 等。
+支持标准 NMEA 0183 句型：GGA、RMC、VTG、HDT
+以及双天线接收机专有语句：$PSAT,GGA2（副天线 GGA）、PASHR、GPTRA、GNHPR 等。
 """
 
 import logging
@@ -162,9 +162,42 @@ def parse_rmc(sentence: str) -> Optional[dict]:
         return None
 
 
+def parse_vtg(sentence: str) -> Optional[dict]:
+    """
+    解析 $GxVTG 地面航迹与速度。
+
+    例：$GNVTG,231.65,T,,M,0.06,N,0.11,K,R*35
+    优先用 km/h 字段，缺省则用节。
+    """
+    if not verify_checksum(sentence):
+        return None
+
+    parts = sentence.split(",")
+    if len(parts) < 8:
+        return None
+
+    try:
+        course = float(parts[1]) if parts[1] else 0.0
+        speed_mps = 0.0
+        # parts[7]=km/h 数值，parts[8]=K；parts[5]=节，parts[6]=N
+        if len(parts) > 7 and parts[7]:
+            speed_mps = float(parts[7]) / 3.6
+        elif parts[5]:
+            speed_mps = float(parts[5]) * 0.514444
+        return {
+            "type": "VTG",
+            "timestamp": time.time(),
+            "speed_mps": speed_mps,
+            "course_deg": course,
+        }
+    except (ValueError, IndexError) as e:
+        logger.debug("VTG 解析失败: %s | 错误: %s", sentence[:60], e)
+        return None
+
+
 def parse_hdt(sentence: str) -> Optional[dict]:
     """
-    解析 $GPHDT 语句（真北航向角）。
+    解析 $GPHDT / $GNHDT 语句（真北航向角）。
 
     返回字段：
         timestamp, heading_deg
@@ -195,6 +228,7 @@ def parse_attitude(sentence: str) -> Optional[dict]:
       $PTNLA,HV,...       （天宝专有）
       $GPTRA,...          （u-blox 专有）
       $PASHR,...          （通用 PASHR）
+      $GNHPR / $GPHPR     （航向/俯仰/横滚，MC10 等）
 
     返回字段：
         timestamp, heading_deg, pitch_deg, roll_deg, heading_accuracy
@@ -238,6 +272,22 @@ def parse_attitude(sentence: str) -> Optional[dict]:
                 "heading_accuracy": 0.1,
             }
 
+        # ---- GxHPR: $GNHPR,time,heading,pitch,roll,quality,sats,... ----
+        if "HPR" in sentence_upper[:8]:
+            if len(parts) < 5:
+                return None
+            heading = float(parts[2]) if parts[2] else 0.0
+            pitch = float(parts[3]) if parts[3] else 0.0
+            roll = float(parts[4]) if parts[4] else 0.0
+            return {
+                "type": "ATTITUDE",
+                "timestamp": time.time(),
+                "heading_deg": heading,
+                "pitch_deg": pitch,
+                "roll_deg": roll,
+                "heading_accuracy": 0.1,
+            }
+
     except (ValueError, IndexError) as e:
         logger.debug("姿态语句解析失败: %s | 错误: %s", sentence[:60], e)
 
@@ -260,11 +310,13 @@ def parse_sentence(sentence: str) -> Optional[dict]:
         return parse_psat_gga2(sentence)
     if "GGA" in upper[:10]:
         return parse_gga(sentence)
-    elif "RMC" in upper[:10]:
+    if "RMC" in upper[:10]:
         return parse_rmc(sentence)
-    elif "HDT" in upper[:10]:
+    if "VTG" in upper[:10]:
+        return parse_vtg(sentence)
+    if "HDT" in upper[:10]:
         return parse_hdt(sentence)
-    elif any(kw in upper[:12] for kw in ("PASHR", "GPTRA", "PTNLA")):
+    if any(kw in upper[:12] for kw in ("PASHR", "GPTRA", "PTNLA")) or "HPR" in upper[:8]:
         return parse_attitude(sentence)
 
     return None

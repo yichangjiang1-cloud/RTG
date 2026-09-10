@@ -31,16 +31,22 @@ RTG 高精度定位系统交互设计 (多机扩展版)
 角色 C (Worker)：该 vehicle_id 在该场地已完成校准，直接进入高频作业模式。
 
 5. 第四阶段：建图与校准流程 (Survey & Calibration)
-核心原则：计算在端（中控机），存证在云（后端）。
-打点确认：前端点击“到达贝位”，后端转发真值给中控机。
-本地解算：中控机捕获高频数据，对比真值，计算偏差。
-矩阵生成：所有点完成后，中控机本地执行 SVD 求解 $M$ 矩阵。
-结果入库：中控机将 $M$ 矩阵提交给后端。后端标记：“场地 X 的底图已由 A 车生成” 或 “B 车已完成校准”。
+核心原则：采点与矩阵计算在 Web 后端，中控负责实时解算与消费校准结果。
+
+建图（RTK 真值）：Mapping 页录入或 confirm(mode=mapping) → survey_points（vehicle_id=RTK_HANDHELD，不经中控）。
+不使用中控建图：无 generate_map / 中控逐贝录 RTK 流程。
+车辆校准（001 全场 / 002 三点 verify）：
+  1. 中控持续 MQTT 遥测 → 后端 → 前端 WebSocket 展示 local_coord。
+  2. 用户在前端 Calibration 页点「确认贝位」→ POST /api/survey/confirm（提交当前 L-Point 与 local_x/y/z）。
+  3. 后端写入 vehicle_bay_transforms；finalize 时求 M（002）或标记 completed（001）。
+  4. 后端 MQTT 下发 CALIBRATION_FINALIZED → 中控 reload_calibration，作业套用 M + 参考车全场 delta。
+
+不使用 RECORD_POINT：中控不接收「后端推送真值再本地采点」指令。
 
 6. MQTT 协议定义（带身份路由）
 注册流：rtg/discovery（新设备广播身份）。
 实时流：rtg/{vehicle_id}/telemetry（中控机推送实时坐标）。
-控制链：rtg/{vehicle_id}/control（后端下发打点指令/配置更新）。
+控制链：rtg/{vehicle_id}/control（配置更新、校准完成通知、设备初始化等；不含采点）。
 状态链：rtg/{vehicle_id}/status（中控机汇报健康度/当前场地）。
 
 7. 职责总结
@@ -50,10 +56,10 @@ RTG 高精度定位系统交互设计 (多机扩展版)
 
 后端 (Backend)
 身份中心：维护 ID 与 MAC 地址的映射，确保存储的数据（参数、矩阵）都能通过 ID 索引。
-真值中转：根据打点动作，将数据库里的真值精准推送到对应 ID 的中控机。
+校准存证：接收 Web 采点、计算 M 矩阵、持久化 transform_list 与 calibration_data。
 中控机 (Python Core)
-持久化存储：负责将后端下发的“身份证”保存到本地硬盘。
-自主解算：利用本地存储的 ID 和参数，完成从 GNSS 原始信号到 LYCS 坐标的全过程。
+持久化存储：负责将后端下发的“身份证”与堆场校准备份保存到本地。
+实时解算：GNSS/IMU → L-Point → 套用 API 同步的 M 与逐贝残差；MQTT 上报遥测供 Web 采点。
 
 
 
@@ -118,44 +124,33 @@ RTG 高精度定位系统接口定义文档 (V2.0)
   { "yard_id": "yard_02", "name": "西区2号堆场", "origin": [22.125, 114.459] }
 ]
 
-2.2 获取堆场底图与M矩阵
+2.2 获取堆场底图与校准态
 接口: GET /api/yard/map
-参数: ?yard_id=yard_01&vehicle_id=RTG-01
-说明: 获取该场地的 SVD 转换矩阵。若该车未校准，m_matrix 可能为空。
-返回数据:
-{
-  "yard_id": "yard_01",
-  "m_matrix": [[...], [...], [...]], // 3x3 旋转平移矩阵
-  "has_base_map": true,
-  "calibration_status": "none|calibrated"
-}
-
-2.3 保存解算结果 (中控机调用)
-接口: POST /api/yard/save_map
-说明: A车建图完成后，中控机将计算好的 M 矩阵上传。
-请求体:
-{
-  "yard_id": "yard_01",
-  "vehicle_id": "RTG-01",
-  "m_matrix": [[...]], 
-  "map_data": { "bays": [...] } // 场地底图元数据
-}
+参数: ?yard_id=A01&vehicle_id=RTG-001
+说明: 聚合 RTK survey_points、本车 transform_list、calibration_data（含 m_matrix）。
+      建图真值请用 3.1 mapping；车辆 M 矩阵请用 3.2 finalize 写入。
 
 3. 打点与校准控制 (Survey & Calibration)
-3.1 确认到达贝位 (打点)
+3.1 确认到达贝位 (Web 采点)
 接口: POST /api/survey/confirm
-说明: 前端用户点击按钮，后端匹配真值。
-请求体:
+说明: 前端从 WebSocket 读取当前车实时解算坐标后提交；后端匹配 RTK 真值或参考车同贝坐标。
+请求体（校准示例）:
 {
-  "vehicle_id": "RTG-01",
-  "yard_id": "yard_01",
-  "bay_id": "1",
-  "mode": "A" // A: 建图打点, B: 校准验证
+  "vehicle_id": "RTG-002",
+  "yard_id": "A01",
+  "bay_id": "8",
+  "mode": "calibration",
+  "lat": 22.1234567,
+  "lon": 114.6543210,
+  "alt": 12.5,
+  "local_x": 48.2,
+  "local_y": 3.1,
+  "local_z": 0.0
 }
 
 3.2 校准状态终审
 接口: POST /api/survey/finalize
-说明: 3点校准通过后，正式标记该车在场地的可用性。
+说明: 001 全场或 002 至少 3 贝 verify 通过后，后端计算 M（002）、标记 completed，并 MQTT 通知中控 reload。
 
 4. MQTT 实时消息协议 (Real-time Flow)
 4.1 实时高频坐标流 (Telemetry)
@@ -172,13 +167,15 @@ Payload:
 
 4.2 控制指令链 (Control)
 Topic: rtg/{vehicle_id}/control
-Payload:
+常用 cmd（采点不在此列，见 3.1）:
+  - CMD_INIT_IDENTITY   设备绑定正式 ID
+  - UPDATE_CONFIG       热更新杆臂/姿态等
+  - CALIBRATION_FINALIZED  finalize 后触发中控同步校准
+  - SET_TROLLEY_ORIGIN  小车零点
+示例:
 {
-  "cmd": "RECORD_POINT", // RECORD_POINT, UPDATE_CONFIG, START_SVD
-  "data": {
-    "truth": [12.33, 45.68, 1.20], // 后端下发的真值
-    "bay_id": "1"
-  }
+  "cmd": "CALIBRATION_FINALIZED",
+  "data": { "vehicle_id": "RTG-002", "yard_id": "A01", "status": "completed" }
 }
 
 4.3 状态汇报链 (Status)

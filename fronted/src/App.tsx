@@ -10,6 +10,7 @@ import { ToastContainer } from './components/common';
 import { useWebSocket } from './hooks/useWebSocket';
 import { AppProvider, useAppContext } from './context/AppContext';
 import type { TabId, RealtimeData } from './types';
+import { wsUrl as buildWsUrl } from './utils/backendUrl';
 
 const MAX_HISTORY = 120;
 
@@ -48,11 +49,11 @@ function AppInner() {
    * 前端不直接连接中控机，而是通过后端统一接入。
    * 后端通过 vehicle_id 查询参数订阅对应车辆的 MQTT Topic 并转发给前端。
    */
-  const wsUrl = selectedVehicleId && !useMock
-    ? `ws://${backendConfig.host}:${backendConfig.port}/ws/realtime?vehicle_id=${selectedVehicleId}`
+  const realtimeWsUrl = selectedVehicleId && !useMock
+    ? buildWsUrl(backendConfig, `/ws/realtime?vehicle_id=${selectedVehicleId}`)
     : null;
 
-  const { data, isMock, connStatus } = useWebSocket({ url: wsUrl, forceMock: useMock });
+  const { data, isMock, connStatus } = useWebSocket({ url: realtimeWsUrl, forceMock: useMock });
 
   // 同步 WS 状态到 context，让 Settings 等页面可以读到
   useEffect(() => { setConnStatus(connStatus); }, [connStatus, setConnStatus]);

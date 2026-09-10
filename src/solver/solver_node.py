@@ -159,10 +159,13 @@ class SolverNode:
 
         recv1_live = _is_receiver_live(ga1, now)
         recv2_live = _is_receiver_live(ga2, now)
+        tly_live = _is_receiver_live(tly, now)
+        # 小车相对行程依赖大车 L-Point；无大车时整帧不出解算结果
         if not recv1_live:
             return None
 
         ref = ga1
+        ref_rid = "gantry_a1"
 
         # ---- 1. 识别当前堆场 ----
         yard_id = self._yard_manager.detect_yard(
@@ -185,7 +188,6 @@ class SolverNode:
         )
 
         # ---- 3. 小车解算 ----
-        tly_live = _is_receiver_live(tly, now)
         trolley_result = (
             self._solve_trolley(tly, gantry_result, transform, now)
             if tly_live
@@ -194,7 +196,6 @@ class SolverNode:
 
         # ---- 4. 组装结果 ----
         hdg_src = ga1
-        ref_rid = "gantry_a1"
 
         lp_lat, lp_lon, lp_alt = transform.lycs_to_wgs84(
             gantry_result.lpoint_x,
@@ -415,32 +416,38 @@ class SolverNode:
         now: float,
     ) -> TrolleyResult:
         """
-        小车定位：双 GGA → LYCS → 大车车体系（锚定 L-Point，随大车移动）。
-        输出相对零点的 rel_x/rel_y 及沿横梁行程（rel_y）与速度。
+        小车定位：双 GGA（优先）或单 GGA → LYCS → 大车车体系（锚定 L-Point）。
+        必须有大车有效 L-Point，才能输出相对横梁行程；仅小车在线时不出相对结果。
         """
         trolley = TrolleyResult(timestamp=now)
         trolley.origin_mode = self._trolley_origin_mode
 
-        if not tly.get("has_antenna2"):
-            return trolley
-
-        a2x = float(tly.get("antenna2_ecef_x", 0.0))
-        a2y = float(tly.get("antenna2_ecef_y", 0.0))
-        a2z = float(tly.get("antenna2_ecef_z", 0.0))
-        if a2x == 0.0 and a2y == 0.0 and a2z == 0.0:
-            return trolley
-
         if not gantry.a1_valid:
             return trolley
 
-        c1 = (float(tly["ecef_x"]), float(tly["ecef_y"]), float(tly["ecef_z"]))
-        c2 = (a2x, a2y, a2z)
+        c1 = (float(tly.get("ecef_x", 0.0)), float(tly.get("ecef_y", 0.0)), float(tly.get("ecef_z", 0.0)))
+        if c1[0] == 0.0 and c1[1] == 0.0 and c1[2] == 0.0:
+            return trolley
+
+        has_a2 = bool(tly.get("has_antenna2"))
+        a2x = float(tly.get("antenna2_ecef_x", 0.0))
+        a2y = float(tly.get("antenna2_ecef_y", 0.0))
+        a2z = float(tly.get("antenna2_ecef_z", 0.0))
+        if has_a2 and not (a2x == 0.0 and a2y == 0.0 and a2z == 0.0):
+            c2 = (a2x, a2y, a2z)
+        else:
+            # 单天线：中心 = 主天线（双 GGA 未开时的降级）
+            c2 = c1
+            has_a2 = False
 
         x1, y1, z1 = transform.ecef_to_lycs(*c1)
         x2, y2, z2 = transform.ecef_to_lycs(*c2)
 
         trolley.antenna1_x, trolley.antenna1_y, trolley.antenna1_z = x1, y1, z1
-        trolley.antenna2_x, trolley.antenna2_y, trolley.antenna2_z = x2, y2, z2
+        if has_a2:
+            trolley.antenna2_x, trolley.antenna2_y, trolley.antenna2_z = x2, y2, z2
+        else:
+            trolley.antenna2_x = trolley.antenna2_y = trolley.antenna2_z = 0.0
 
         cx = (x1 + x2) / 2.0
         cy = (y1 + y2) / 2.0
@@ -505,11 +512,9 @@ class SolverNode:
         reference_xy: tuple,
     ) -> None:
         """
-        添加 B 车校准点对。满 3 点后自动执行校准。
+        添加 B 车校准点对（**仅调试/离线工具**，生产采点走 Web API）。
 
-        :param yard_id:       堆场 ID
-        :param measured_xy:   RTG 实测 (x, y)（米）
-        :param reference_xy:  参考真值 (x, y)（米）
+        Web 流程：前端 confirm → 后端 finalize 算 M → MQTT CALIBRATION_FINALIZED → reload_calibration。
         """
         if yard_id not in self._calibrators:
             self._calibrators[yard_id] = BVehicleCalibrator()

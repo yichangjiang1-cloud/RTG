@@ -4,6 +4,7 @@ import { SectionHeader, showToast } from './common';
 import { useAppContext } from '../context/AppContext';
 import { clsx } from 'clsx';
 import { normalizeYardIdInput, validateYardId, PLC_YARD_ID_MAX_LEN } from '../utils/yardId';
+import { httpBase } from '../utils/backendUrl';
 
 // ── 新建场地弹窗 ──────────────────────────────────────
 function CreateYardModal({ backendBase, onClose, onDone }: {
@@ -167,7 +168,7 @@ export default function Settings() {
     setCalibrationStatus(null);
     if (!selectedVehicleId || !selectedYardId || useMock) return;
     setCheckingRole(true);
-    fetch(`http://${backendConfig.host}:${backendConfig.port}/api/yard/map?yard_id=${selectedYardId}&vehicle_id=${selectedVehicleId}`,
+    fetch(`${httpBase(backendConfig)}/api/yard/map?yard_id=${selectedYardId}&vehicle_id=${selectedVehicleId}`,
       { signal: AbortSignal.timeout(5000) })
       .then(r => r.ok ? r.json() : null)
       .then((resp: { code: number; data: { calibration_status?: string } } | null) => {
@@ -204,16 +205,21 @@ export default function Settings() {
 
   function saveConnEdit() {
     const port = parseInt(editPort, 10);
-    if (!editHost.trim() || isNaN(port) || port < 1 || port > 65535) {
-      showToast('IP 或端口格式不正确');
+    const host = editHost.trim();
+    if (!host) {
+      showToast('请填写主机地址（Docker 部署可填 auto）', 'error');
       return;
     }
-    setBackendConfig({ host: editHost.trim(), port });
+    if (host.toLowerCase() !== 'auto' && (isNaN(port) || port < 1 || port > 65535)) {
+      showToast('IP 或端口格式不正确', 'error');
+      return;
+    }
+    setBackendConfig({ host, port: host.toLowerCase() === 'auto' ? 80 : port });
     setEditingConn(false);
     showToast('后端服务地址已更新，下次连接时生效');
   }
 
-  const baseUrl = `http://${backendConfig.host}:${backendConfig.port}`;
+  const baseUrl = httpBase(backendConfig);
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -286,8 +292,9 @@ export default function Settings() {
                 className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-slate-200 font-mono w-44 focus:outline-none focus:border-blue-500"
                 value={editHost}
                 onChange={e => setEditHost(e.target.value)}
-                placeholder="localhost"
+                placeholder="localhost 或 auto"
               />
+              <p className="text-[10px] text-slate-500 mt-1">Docker 同源部署填 auto（走 Nginx 反代）</p>
               <span className="text-slate-500">:</span>
               <input
                 className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-slate-200 font-mono w-20 focus:outline-none focus:border-blue-500"
@@ -320,7 +327,7 @@ export default function Settings() {
             {useMock
               ? '模拟模式下不会发起真实连接，关闭模拟后自动连接上方地址。'
               : connStatus === 'connected'
-              ? `已与后端服务 ${backendConfig.host}:${backendConfig.port} 建立 WebSocket 连接。`
+              ? `已与后端服务建立 WebSocket（${backendConfig.host === 'auto' ? '同源 auto' : `${backendConfig.host}:${backendConfig.port}`}）。`
               : '修改地址后，切换模拟模式或重新选择车辆以触发连接。'}
           </p>
         </div>

@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useCallback, useEffect } from 'rea
 import type { ReactNode } from 'react';
 import type { VehicleProfile, YardInfo, BackendConfig } from '../types';
 import { logger } from '../utils/logger';
+import { httpBase } from '../utils/backendUrl';
 
 // ============================================================
 // Context 类型定义
@@ -163,6 +164,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
   const [selectedYardId, setSelectedYardId] = useState<string | null>(null);
   const [useMock, setUseMock] = useState<boolean>(false);
+  // Docker Nginx 部署可把 host 设为 auto（同源反代）；本机 Vite 开发用 localhost:8000
   const [backendConfig, setBackendConfig] = useState<BackendConfig>({ host: 'localhost', port: 8000 });
   const [connStatus, setConnStatus] = useState<ConnStatus>('disconnected');
   const [isMock, setIsMock] = useState<boolean>(false);
@@ -188,7 +190,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   /** 从后端 GET /api/yard/all_origins 拉取场地列表 */
   const fetchYards = useCallback(async () => {
-    const url = `http://${backendConfig.host}:${backendConfig.port}/api/yard/all_origins`;
+    const url = `${httpBase(backendConfig)}/api/yard/all_origins`;
     logger.info('AppContext', 'GET /api/yard/all_origins', { url });
     try {
       const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
@@ -224,7 +226,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   /** 从后端 GET /api/vehicle/list 拉取在线车辆列表 */
   const fetchVehicles = useCallback(async () => {
-    const url = `http://${backendConfig.host}:${backendConfig.port}/api/vehicle/list`;
+    const url = `${httpBase(backendConfig)}/api/vehicle/list`;
     logger.info('AppContext', 'GET /api/vehicle/list', { url });
     try {
       const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
@@ -313,7 +315,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     w_span: number;
   }) => {
     const resp = await fetch(
-      `http://${backendConfig.host}:${backendConfig.port}/api/vehicle/init`,
+      `${httpBase(backendConfig)}/api/vehicle/init`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -62,10 +62,12 @@ def _summarize_nmea_types(text: str) -> str:
             types.append("GGA")
         elif "RMC" in head:
             types.append("RMC")
+        elif "VTG" in head:
+            types.append("VTG")
         elif "HDT" in head:
             types.append("HDT")
-        elif "PASHR" in head:
-            types.append("PASHR")
+        elif "PASHR" in head or "HPR" in head:
+            types.append("HPR" if "HPR" in head else "PASHR")
         else:
             types.append(head.split("*")[0][:8])
     return "+".join(types) if types else "?"
@@ -388,6 +390,13 @@ class GnssReceiver(threading.Thread):
         if msg_type == "RMC":
             self._frame.speed_mps = parsed["speed_mps"]
             self._frame.course_deg = parsed["course_deg"]
+
+        elif msg_type == "VTG":
+            # RMC 优先；无 RMC 速度时用 VTG 补
+            if self._frame.speed_mps <= 0.0:
+                self._frame.speed_mps = parsed["speed_mps"]
+            if self._frame.course_deg == 0.0 and parsed.get("course_deg"):
+                self._frame.course_deg = parsed["course_deg"]
 
         elif self.receiver_id != "trolley" and msg_type == "HDT":
             self._frame.heading = parsed["heading_deg"]

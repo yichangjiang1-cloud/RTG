@@ -1,28 +1,32 @@
-version: '3.8'
+# 使用前：
+# 1. copy .env.example -> .env，密码必须与 passwd 文件里 rtg_user 的密码一致
+# 2. 准备【文件】server/mosquitto/passwd（不能是目录！）
+# 3. 停本机计划任务 Broker，避免 1883 冲突
+# 4. 前端占主机 80 端口；若被占用可改 ports 为 "8080:80"
 
 services:
-  # MQTT Broker - Mosquitto
   mosquitto:
-    image: eclipse-mosquitto:latest
+    image: eclipse-mosquitto:2
     container_name: rtg-mosquitto
     ports:
       - "1883:1883"
-      - "9001:9001"
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
       - mosquitto-data:/mosquitto/data
       - mosquitto-logs:/mosquitto/log
     networks:
       - rtg-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "mosquitto_sub", "-h", "localhost", "-t", "$SYS/broker/uptime"]
+      test: ["CMD-SHELL", "ps | grep -v grep | grep -q mosquitto || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
+      start_period: 5s
 
-  # RTG 后端服务
   backend:
+    image: server-backend:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -32,6 +36,8 @@ services:
     environment:
       - MQTT_BROKER_HOST=mosquitto
       - MQTT_BROKER_PORT=1883
+      - MQTT_USERNAME=${MQTT_USERNAME:-rtg_user}
+      - MQTT_PASSWORD=${MQTT_PASSWORD:-123456}
       - DATABASE_URL=sqlite:///./data/ground_truth.db
       - LOG_LEVEL=INFO
       - DEBUG=false
@@ -39,8 +45,7 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
     depends_on:
-      mosquitto:
-        condition: service_healthy
+      - mosquitto
     networks:
       - rtg-network
     restart: unless-stopped
@@ -49,6 +54,22 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 15s
+
+  # 前端：Node 构建 → Nginx 托管；/api /ws 反代到 backend
+  frontend:
+    image: rtg-frontend:latest
+    build:
+      context: ../fronted
+      dockerfile: Dockerfile
+    container_name: rtg-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - rtg-network
+    restart: unless-stopped
 
 networks:
   rtg-network:

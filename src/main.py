@@ -241,11 +241,13 @@ class RTGSystem:
         处理 MQTT 控制指令回调。
         
         支持的指令：
-          - CMD_INIT_IDENTITY:  设备初始化（临时ID→正式ID）
-          - RECORD_POINT:       建图/校准打点
-          - UPDATE_CONFIG:      更新车辆配置
-          - START_SVD:          执行校准计算
-          - SET_TROLLEY_ORIGIN: 小车零点（捕获/手动/重置）
+          - CMD_INIT_IDENTITY:     设备初始化（临时ID→正式ID）
+          - UPDATE_CONFIG:         更新车辆配置
+          - START_SVD:             刷新云端校准数据（与 finalize 后同步等价）
+          - CALIBRATION_FINALIZED: 校准完成，拉取 M 矩阵与参考车全场表
+          - SET_TROLLEY_ORIGIN:    小车零点（捕获/手动/重置）
+
+        建图/校准采点走 Web API（POST /api/survey/confirm），不经 MQTT 打点指令。
         """
         cmd_type = cmd.get("cmd")
         logger.info(f"← 收到 MQTT 控制指令: cmd={cmd_type}")
@@ -253,8 +255,6 @@ class RTGSystem:
         try:
             if cmd_type == "CMD_INIT_IDENTITY":
                 self._handle_init_identity(cmd)
-            elif cmd_type == "RECORD_POINT":
-                self._handle_record_point(cmd)
             elif cmd_type == "UPDATE_CONFIG":
                 self._handle_update_config(cmd)
             elif cmd_type == "START_SVD":
@@ -315,19 +315,6 @@ class RTGSystem:
         self._sync_yard_data_from_cloud()
         self._publish_online_status()
         logger.info(f"✓ 设备初始化完成: {new_vehicle_id}（已热更新，无需重启）")
-
-    def _handle_record_point(self, cmd: dict) -> None:
-        """处理打点指令（建图/校准）。"""
-        data = cmd.get("data", {})
-        truth = data.get("truth")  # [x, y, z]
-        bay_id = data.get("bay_id")
-
-        if not truth or not bay_id:
-            logger.error("✗ 打点指令参数不完整")
-            return
-
-        logger.info(f"→ 收到打点指令: 贝位={bay_id}, 真值={truth}")
-        # TODO: 触发 solver_node 的校准点采集
 
     def _handle_update_config(self, cmd: dict) -> None:
         """处理配置更新指令。"""

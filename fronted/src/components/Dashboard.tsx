@@ -27,7 +27,7 @@ function formatCoordM(v: number, valid = true, digits = 4): string {
   return `${v.toFixed(digits)} m`;
 }
 
-function isCenterValid(valid: boolean | undefined, fallback = true): boolean {
+function isCenterValid(valid: boolean | undefined): boolean {
   return valid !== false;
 }
 

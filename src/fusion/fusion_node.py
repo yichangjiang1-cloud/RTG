@@ -470,14 +470,24 @@ class FusionNode:
             a1_ready = s_a1.ref_lat is not None
         with s_a2._lock:
             a2_ready = s_a2.ref_lat is not None
-        if not a1_ready and not a2_ready:
+        with s_tly._lock:
+            tly_ready = s_tly.ref_lat is not None
+        # 允许仅小车在线时也发布（单机调试 MC10→9003）
+        if not a1_ready and not a2_ready and not tly_ready:
             return
 
         d_a1 = _state_dict(s_a1)
         d_a2 = _state_dict(s_a2)
         d_tly = _state_dict(s_tly)
         self._apply_gantry_attitude(s_a1, s_a2, d_a1, d_a2)
-        ref = d_a1 if d_a1.get("is_live") else (d_a2 if d_a2.get("is_live") else d_a1)
+        if d_a1.get("is_live"):
+            ref = d_a1
+        elif d_a2.get("is_live"):
+            ref = d_a2
+        elif d_tly.get("is_live"):
+            ref = d_tly
+        else:
+            ref = d_a1 if a1_ready else (d_a2 if a2_ready else d_tly)
         gantry_antennas = build_gantry_antennas_payload(d_a1, d_a2)
 
         fused = {

@@ -4,34 +4,36 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="接收机设备接入、小车数据管理">
+    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="1、ui修改&#10;2、作业点参考位置变更&#10;3、MQTT Broker部署&#10;4、中控机 -&gt; PLC交互等">
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/CONTROLLER_README.md" beforeDir="false" afterPath="$PROJECT_DIR$/CONTROLLER_README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/PROJECT_SUMMARY.md" beforeDir="false" afterPath="$PROJECT_DIR$/PROJECT_SUMMARY.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/config/system.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/system.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/vehicle_params.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/vehicle_params.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/yard_config.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/yard_config.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/connect.md" beforeDir="false" afterPath="$PROJECT_DIR$/connect.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/App.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/App.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Calibration.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Calibration.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Dashboard.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Dashboard.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Manual.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Manual.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Mapping.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Mapping.tsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/fronted/src/components/Settings.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Settings.tsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/fronted/src/components/VehicleConfig.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/VehicleConfig.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/fronted/src/index.css" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/index.css" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/fronted/src/types/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/types/index.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/context/AppContext.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/context/AppContext.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/API_INTERFACES.md" beforeDir="false" afterPath="$PROJECT_DIR$/server/API_INTERFACES.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/server/README.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/server/app/api/routers/yard.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/api/routers/yard.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/server/docker-compose.yml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/server/mosquitto/mosquitto.conf" beforeDir="false" afterPath="$PROJECT_DIR$/server/mosquitto/mosquitto.conf" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/bridge/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/bridge/bridge_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/bridge_node.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/bridge/plc_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/plc_client.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/bridge/protocol.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/protocol.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/test_api.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/test_api.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/bridge/api_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/api_client.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/bridge/mqtt_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/mqtt_client.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/driver/gnss_receiver.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/gnss_receiver.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/driver/nmea_parser.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/nmea_parser.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/fusion/fusion_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/fusion/fusion_node.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/models/positioning.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/positioning.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/solver/bay_residual.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/bay_residual.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/solver/calibration_context.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/calibration_context.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/solver/coordinate_transform.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/coordinate_transform.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/solver/solver_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/solver_node.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/solver/yard_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/yard_manager.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/test_coordinate_transform.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_coordinate_transform.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/test_protocol.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_protocol.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tools/run_sim_trolley_static.ps1" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/tools/sim_rtg_gnss_static.py" beforeDir="false" afterPath="$PROJECT_DIR$/tools/sim_rtg_gnss_static.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tools/simulator.py" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -80,6 +82,7 @@
   &quot;keyToString&quot;: {
     &quot;Python.gnss_listener.executor&quot;: &quot;Run&quot;,
     &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;Python.sim_plc_server.executor&quot;: &quot;Run&quot;,
     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
     &quot;SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
     &quot;git-widget-placeholder&quot;: &quot;main&quot;,
@@ -97,7 +100,7 @@
       <recent name="D:\kpl\pycharmproject\RTG" />
     </key>
   </component>
-  <component name="RunManager" selected="Python.gnss_listener">
+  <component name="RunManager" selected="Python.sim_plc_server">
     <configuration name="gnss_listener" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="RTG" />
       <option name="ENV_FILES" value="" />
@@ -142,8 +145,31 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
+    <configuration name="sim_plc_server" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="RTG" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/tools" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/tools/sim_plc_server.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
     <recent_temporary>
       <list>
+        <item itemvalue="Python.sim_plc_server" />
         <item itemvalue="Python.gnss_listener" />
         <item itemvalue="Python.main" />
       </list>
@@ -173,7 +199,15 @@
       <option name="project" value="LOCAL" />
       <updated>1783583355622</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="1、ui修改&#10;2、作业点参考位置变更&#10;3、MQTT Broker部署&#10;4、中控机 -&gt; PLC交互等">
+      <option name="closed" value="true" />
+      <created>1784705486261</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1784705486261</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -189,7 +223,8 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="接收机设备接入、小车数据管理" />
-    <option name="LAST_COMMIT_MESSAGE" value="接收机设备接入、小车数据管理" />
+    <MESSAGE value="1、ui修改&#10;2、作业点参考位置变更&#10;3、MQTT Broker部署&#10;4、中控机 -&gt; PLC交互等" />
+    <option name="LAST_COMMIT_MESSAGE" value="1、ui修改&#10;2、作业点参考位置变更&#10;3、MQTT Broker部署&#10;4、中控机 -&gt; PLC交互等" />
   </component>
   <component name="github-copilot-workspace">
     <instructionFileLocations>

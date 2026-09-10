@@ -164,12 +164,11 @@ export default function Manual() {
               </thead>
               <tbody>
                 {[
+                  ['/api/survey/confirm',    'POST',       'RTK 建图（mapping）或车辆校准采点（calibration）'],
+                  ['/api/survey/batch_import','POST',      'CSV 批量导入 RTK 真值'],
+                  ['/api/survey/finalize',   'POST',       '标记校准完成（001 全场 / 002 求 M）'],
+                  ['/api/yard/map',          'GET',        '堆场 RTK + 校准聚合查询'],
                   ['/api/vehicle/config',    'POST / GET', '车型静态参数存取'],
-                  ['/api/survey/confirm',    'POST',       '确认到达贝位，触发与后端交互'],
-                  ['/api/yard/generate_map', 'POST',       '生成底图（SVD 求解矩阵 M）'],
-                  ['/api/yard/map',          'GET',        '获取场地底图数据'],
-                  ['/api/survey/calibrate',  'POST',       '启动 B 车校准流程'],
-                  ['/api/survey/finalize',   'POST',       '完成 B 车校准，持久化矩阵 M'],
                   ['ws://host/ws/realtime',  'WebSocket',  '中控机实时推送坐标（10Hz+）'],
                 ].map(([path, method, desc]) => (
                   <tr key={path} className="border-b border-slate-700/30 hover:bg-slate-700/20 transition-colors">

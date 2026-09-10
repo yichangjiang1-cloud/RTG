@@ -6,6 +6,7 @@ import type { ConnStatus, PendingDevice } from '../context/AppContext';
 import type { VehicleProfile, RealtimeData, LArmCalibrationRecord, GpsCoord, GantryAttitudeConfig, GantryAntennaBody, ReceiverLayout, GantryAntennaPoint, TrolleyOriginConfig } from '../types';
 import { clsx } from 'clsx';
 import { logger } from '../utils/logger';
+import { httpBase } from '../utils/backendUrl';
 
 // ── 新设备初始化弹窗 ──────────────────────────────────────
 function InitDeviceModal({ device, backendBase, onClose, onDone }: {
@@ -267,6 +268,7 @@ function mergeVehicleConfig(
     l_arm_calibration?: VehicleProfile['l_arm_calibration'];
     gantry_attitude?: GantryAttitudeConfig;
     receiver_layout?: ReceiverLayout;
+    trolley?: TrolleyOriginConfig;
   } | null,
 ): VehicleProfile {
   const legacy = data?.l_arm ?? local.l_arm ?? DEFAULT_ARM;
@@ -472,7 +474,7 @@ function LArmSmartCalibration({
     }
   }
 
-  function renderLpointInputs(side: CalibSide, val: typeof lpElec, setVal: typeof setLpElec) {
+  function renderLpointInputs(_side: CalibSide, val: typeof lpElec, setVal: typeof setLpElec) {
     return (
       <div className="grid grid-cols-3 gap-2">
         {(['lat', 'lon', 'alt'] as const).map(k => (
@@ -1138,7 +1140,7 @@ export default function VehicleConfig({
   const baseVehicle = vehicles.find(v => v.vehicle_id === editId) ?? null;
   const [cfg, setCfg] = useState<VehicleProfile | null>(baseVehicle);
 
-  const baseUrl = `http://${backendConfig.host}:${backendConfig.port}`;
+  const baseUrl = httpBase(backendConfig);
 
   // 进入页面时拉取车辆列表（与工作配置共用数据源）
   useEffect(() => {

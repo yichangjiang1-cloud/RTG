@@ -140,25 +140,6 @@ def test_yard_map():
     return pretty(requests.get(f"{BASE_URL}/api/yard/map", params={"yard_id": "yard_01"}, timeout=5))
 
 
-def test_yard_generate_map():
-    print("\n=== 14. 生成底图 POST /api/yard/generate_map ===")
-    payload = {"yard_id": "yard_01", "vehicle_id": "RTG-001"}
-    return pretty(requests.post(f"{BASE_URL}/api/yard/generate_map", json=payload, timeout=5))
-
-
-def test_yard_save_map():
-    print("\n=== 15. 保存校准矩阵 POST /api/yard/save_map ===")
-    payload = {
-        "yard_id": "yard_01",
-        "vehicle_id": "RTG-001",
-        "m_matrix": {
-            "R": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-            "t": [0.01, -0.02, 0.05]
-        }
-    }
-    return pretty(requests.post(f"{BASE_URL}/api/yard/save_map", json=payload, timeout=5))
-
-
 # ==================== 打点管理 ====================
 
 def test_survey_confirm():
@@ -214,8 +195,6 @@ def main():
         ("创建堆场 yard_01", test_yard_create),
         ("获取堆场列表", test_yard_list),
         ("获取堆场底图", test_yard_map),
-        ("生成底图", test_yard_generate_map),
-        ("保存校准矩阵", test_yard_save_map),
         ("确认到达贝位", test_survey_confirm),
         ("完成校准", test_survey_finalize),
         ("查询打点历史", test_survey_history),

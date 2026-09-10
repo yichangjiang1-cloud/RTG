@@ -270,34 +270,6 @@ class ApiClient:
 
 
 
-    def save_yard_map(self, yard_id: str, vehicle_id: str, m_matrix: List[List[float]], map_data: Optional[Dict] = None) -> bool:
-
-        """保存堆场地图"""
-
-        url = f"{self._base_url}/api/yard/save_map"
-
-        payload = {"yard_id": yard_id, "vehicle_id": vehicle_id, "m_matrix": m_matrix, "map_data": map_data or {}}
-
-        logger.info(f"→ 保存堆场地图: yard_id={yard_id}, vehicle_id={vehicle_id}")
-
-        try:
-
-            resp = self._session.post(url, json=payload, timeout=self._timeout)
-
-            resp.raise_for_status()
-
-            logger.info(f"✓ 堆场地图保存成功: yard_id={yard_id}")
-
-            return True
-
-        except Exception as e:
-
-            logger.error(f"✗ 保存堆场地图失败: yard_id={yard_id}, error={e}")
-
-            return False
-
-
-
     def confirm_survey_point(self, vehicle_id: str, yard_id: str, bay_id: str, mode: str) -> Optional[Dict[str, Any]]:
 
         """确认打点"""

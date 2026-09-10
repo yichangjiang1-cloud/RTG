@@ -418,37 +418,7 @@ Base URL: `http://localhost:8000`
 
 前端校准页优先调本接口以减少请求次数；`history` 作为 map 失败时的回退。
 
----
-
-### 2.4 生成底图（占位）
-
-`POST /api/yard/generate_map`
-
-当前为占位接口，实际建图通过 `POST /api/survey/confirm (mode=mapping)` 逐点完成。
-
-```json
-{"yard_id": "yard_01", "vehicle_id": "RTG-001"}
-```
-
----
-
-### 2.5 保存校准矩阵
-
-`POST /api/yard/save_map`
-
-保存 A 车建图后的转换矩阵，并将堆场标记为「已建图」。
-
-**请求字段：**
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `yard_id` | string | 是 | 堆场标识 |
-| `vehicle_id` | string | 是 | 建图车辆编号 |
-| `m_matrix` | object | 是 | 转换矩阵，如 `{"R": [[1,0,0],[0,1,0],[0,0,1]], "t": [0.01,-0.02,0.05]}` |
-
-**副作用：**
-- `calibration_data` 表：保存 m_matrix，status 置为 "completed"
-- `yards` 表：mapped 置为 True
+**建图说明：** RTK 场地真值仅在 Web Mapping 页录入（`confirm` mode=mapping），不由中控生成底图。车辆转换矩阵 M 由 `POST /api/survey/finalize` 写入。
 
 ---
 

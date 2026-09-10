@@ -59,7 +59,8 @@ RTG 高精度定位系统的 **Web 后端**：连接 **中控机（MQTT）**、*
 1. **统一响应**：`ApiResponse { code, message, data }`（见 `schemas.py`）。
 2. **RTK 与车载分离**：RTK 真值在 `survey_points`（`point_type=mapping`）；车载对比在 `vehicle_bay_transforms`。
 3. **同贝位覆盖**：`yard_id + bay_no`（RTK）或 `vehicle_id + yard_id + bay_no`（校准）upsert，支持建图/校准页「可改可追加」。
-4. **MQTT 线程桥接**：Paho 回调在子线程，`asyncio.run_coroutine_threadsafe` 转入 FastAPI 事件循环处理（见 `main.py`）。
+4. **采点在 Web**：前端读 WebSocket 实时坐标后 `confirm` 提交；后端不算解算、不通过 MQTT 向中控下发打点指令。`finalize` 后 MQTT `CALIBRATION_FINALIZED` 通知中控 reload。
+5. **MQTT 线程桥接**：Paho 回调在子线程，`asyncio.run_coroutine_threadsafe` 转入 FastAPI 事件循环处理（见 `main.py`）。
 
 ---
 
@@ -165,7 +166,8 @@ server/
 - `all_origins`：堆场列表（有 RTK 时同步 `mapped=true`）。
 - `create`：创建/更新堆场。
 - **`map`**：聚合查询（RTK + 本车 `transform_list` + `calibration_*`）；**未传 `vehicle_id` 时不返回车辆校准字段**。
-- `generate_map` / `save_map`：占位或保存矩阵（部分场景与 `finalize` 重叠）。
+- **建图（RTK 真值）**：Web Mapping 页 → `POST /api/survey/confirm`（`mode=mapping`，`vehicle_id=RTK_HANDHELD`），不经中控。
+- **车辆校准 / M 矩阵**：`confirm`（calibration）→ `finalize` 写入 `calibration_data`；中控通过 `map` 或同步备份拉取。
 
 ### `app/api/routers/survey.py`
 
@@ -199,14 +201,20 @@ server/
 
 ### Docker Compose（推荐）
 
+本机调试：
+
 ```bash
 cd server
-docker-compose up -d
-docker-compose logs -f
+docker compose up -d --build
+docker compose logs -f
 ```
 
 访问：http://localhost:8000  
 Swagger：http://localhost:8000/docs
+
+**首次使用 Docker：打包导出、生产机加载部署、账号密码（passwd / .env）说明**见：
+
+→ **[DEPLOY_DOCKER.md](./DEPLOY_DOCKER.md)**（写给第一次用 Docker 的同事）
 
 ### 本地开发
 
@@ -215,7 +223,7 @@ cd server
 pip install -r requirements.txt
 
 # MQTT（示例：Docker）
-docker run -d -p 1883:1883 -p 9001:9001 eclipse-mosquitto:latest
+docker run -d -p 1883:1883 eclipse-mosquitto:latest
 
 # 启动后端（在 server 目录下执行，保证 data/ 路径正确）
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
@@ -352,3 +360,25 @@ curl "http://localhost:8000/api/yard/map?yard_id=yard_01&vehicle_id=RTG-001"
 ---
 
 Private & Proprietary
+
+
+目的	命令
+启动（日常）
+docker compose up -d
+启动并重建后端镜像（改了 Python 代码后）
+docker compose up -d --build
+看状态
+docker compose ps
+看日志
+docker compose logs -f backend 或 ... mosquitto
+只重启某个服务
+docker compose restart backend
+不用时关闭
+docker compose stop
+关闭并删容器（数据一般还在）
+docker compose down
+连库/配置卷也清掉（慎用）
+docker compose down -v
+
+只停 RTG 这两个容器：docker compose stop（推荐，下次 up -d 很快）
+连 Docker Desktop 一起关：托盘图标右键 → Quit Docker Desktop（省内存；下次要先开 Desktop 再 compose up）

@@ -5,6 +5,7 @@ import { SectionHeader, showToast } from './common';
 import { useAppContext } from '../context/AppContext';
 import type { SurveyPoint, RealtimeData } from '../types';
 import { clsx } from 'clsx';
+import { httpBase } from '../utils/backendUrl';
 
 type MappingMode = 'rtk_manual' | 'rtk_csv';
 
@@ -43,7 +44,7 @@ export default function Mapping({ liveData: _liveData }: MappingProps) {
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const baseUrl = `http://${backendConfig.host}:${backendConfig.port}`;
+  const baseUrl = httpBase(backendConfig);
 
   // 加载历史打点记录
   const loadHistory = useCallback(() => {

@@ -396,7 +396,7 @@ python tests\test_protocol.py
 | MQTT 遥测 | 定位结果推前端 | `RTGSystem._bus.subscribe(TOPIC_POSITION_RESULT, _on_position_result)` → `MqttClient.publish_telemetry` |
 | 云端同步配置 | 静态参数覆盖本地 YAML | `RTGSystem._sync_config_from_cloud` → `ApiClient.get_vehicle_config` → `SolverNode.apply_vehicle_config` |
 | 云端同步校准 | 各堆场 M + 参考车 delta 表 | `RTGSystem._sync_calibration_from_cloud` → `SolverNode.reload_calibration` → `CalibrationContextManager.load_yard` + `YardManager.save_b_matrix` |
-| MQTT 控制指令 | 身份初始化、配置刷新、校准重载 | `MqttClient.set_control_callback` → `RTGSystem._on_mqtt_control` 分发至 `_handle_init_identity` / `_handle_update_config` / `_handle_start_svd` / `_handle_calibration_finalized` |
+| MQTT 控制指令 | 身份初始化、配置刷新、校准重载 | `MqttClient.set_control_callback` → `RTGSystem._on_mqtt_control` 分发至 `_handle_init_identity` / `_handle_update_config` / `_handle_start_svd` / `_handle_calibration_finalized` / `_handle_set_trolley_origin`（**采点走 Web API，无 RECORD_POINT**） |
 | 启停顺序 | 容错启动、优雅退出 | `RTGSystem.start`：MQTT → 同步 → `driver.start` → `bridge.start`；`stop`：bridge → driver → MQTT；`run_forever` + `_signal_handler` |
 
 **EventBus 主题链**（`src/core/event_bus.py`）：
@@ -454,7 +454,7 @@ TOPIC_POSITION_RESULT solver (SolverNode)     → bridge + main(MQTT)
 | 5.9 校准上下文 | API 拉取并缓存 | `CalibrationContextManager.load_yard` → `ApiClient.get_yard_map` + `get_transform_list`；`YardCalibrationState` 存 `mode`/`source_vehicle_id`/anchors |
 | 5.10 刷新校准 | 启动或 MQTT 触发 | `SolverNode.reload_calibration` → `load_yard` + `YardManager.save_b_matrix` |
 | 5.11 云端杆臂覆盖 | Web 录入静态参数 | `SolverNode.apply_vehicle_config` → `LPointSolver.update_l_arm`、更新 `_w_span` |
-| 5.12 本地 3 点标定（可选） | 调试/SVD 求 M | `SolverNode.add_calibration_point` → `BVehicleCalibrator.add_point` / `compute_transform`（`calibration.py`）→ `YardManager.save_b_matrix` |
+| 5.12 本地 3 点标定（仅调试） | 不用于生产采点 | `SolverNode.add_calibration_point` → `BVehicleCalibrator`（单元/离线调试）；**生产采点**见 Web `POST /api/survey/confirm` + `finalize` |
 
 **作业链（代码路径）**：
 
