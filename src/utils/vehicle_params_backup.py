@@ -71,6 +71,10 @@ def persist_vehicle_params(
         if isinstance(recv_layout, dict) and recv_layout:
             data["receiver_layout"] = recv_layout
 
+        ntrip_cfg = block.get("ntrip")
+        if isinstance(ntrip_cfg, dict) and ntrip_cfg:
+            data["ntrip"] = ntrip_cfg
+
         trolley_cfg = block.get("trolley")
         if isinstance(trolley_cfg, dict) and trolley_cfg:
             data["trolley"] = trolley_cfg

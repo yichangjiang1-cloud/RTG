@@ -40,8 +40,8 @@ def _build_receivers(g, t, fix_quality: int, imu_coasting: bool) -> list:
         }
 
     return [
-        _entry("gantry_a1", "左接收机 9001 (GGA0=电气 GGA1=柴油)", g.recv1_live),
-        _entry("gantry_a2", "右接收机 9002 (GGA0=电气 GGA1=柴油)", g.recv2_live),
+        _entry("gantry_a1", "左 EVK 主 GGA → 电气侧作业点", g.recv1_live),
+        _entry("gantry_a2", "右 EVK 主 GGA → 动力侧作业点", g.recv2_live),
         _entry("trolley", "小车接收机 9003", t.is_valid),
     ]
 

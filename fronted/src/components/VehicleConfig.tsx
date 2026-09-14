@@ -3,7 +3,7 @@ import { Settings2, Plus, Save, FolderOpen, Car, Radio, RefreshCw, X, Loader2, A
 import { SectionHeader, showToast } from './common';
 import { useAppContext } from '../context/AppContext';
 import type { ConnStatus, PendingDevice } from '../context/AppContext';
-import type { VehicleProfile, RealtimeData, LArmCalibrationRecord, GpsCoord, GantryAttitudeConfig, GantryAntennaBody, ReceiverLayout, GantryAntennaPoint, TrolleyOriginConfig } from '../types';
+import type { VehicleProfile, RealtimeData, LArmCalibrationRecord, GpsCoord, GantryAttitudeConfig, GantryAntennaBody, ReceiverLayout, GantryAntennaPoint, TrolleyOriginConfig, NtripConfig } from '../types';
 import { clsx } from 'clsx';
 import { logger } from '../utils/logger';
 import { httpBase } from '../utils/backendUrl';
@@ -188,16 +188,34 @@ const DEFAULT_RECEIVER_LAYOUT: ReceiverLayout = {
   left: 'gantry_a1',
   right: 'gantry_a2',
   trolley: 'trolley',
-  left_port: 9001,
-  right_port: 9002,
+  left_transport: 'tcp',
+  left_host: '192.168.0.101',
+  left_port: 30001,
+  right_transport: 'tcp',
+  right_host: '192.168.0.102',
+  right_port: 30001,
+  trolley_transport: 'udp',
+  trolley_host: '0.0.0.0',
   trolley_port: 9003,
   gga_order: ['elec', 'diesel'],
 };
 
-function defaultGantryAttitude(span: number, baseline = 20): GantryAttitudeConfig {
+const DEFAULT_NTRIP: NtripConfig = {
+  enabled: false,
+  caster_host: '',
+  caster_port: 2101,
+  mountpoint: '',
+  username: '',
+  password: '',
+  gga_interval_s: 10,
+};
+
+function defaultGantryAttitude(span: number, baseline = 1): GantryAttitudeConfig {
   return {
-    mode: 'dual_receiver',
+    mode: 'hdt_tra_height_roll',
     baseline_m: baseline,
+    roll_span_m: span,
+    roll_alt0_m: 0,
     antenna_body: {
       a1: [0, 0, 0],
       a2: [baseline, 0, 0],
@@ -268,6 +286,7 @@ function mergeVehicleConfig(
     l_arm_calibration?: VehicleProfile['l_arm_calibration'];
     gantry_attitude?: GantryAttitudeConfig;
     receiver_layout?: ReceiverLayout;
+    ntrip?: NtripConfig;
     trolley?: TrolleyOriginConfig;
   } | null,
 ): VehicleProfile {
@@ -283,6 +302,7 @@ function mergeVehicleConfig(
     l_arm_calibration: data?.l_arm_calibration ?? local.l_arm_calibration,
     gantry_attitude: data?.gantry_attitude ?? local.gantry_attitude ?? defaultGantryAttitude(span),
     receiver_layout: data?.receiver_layout ?? local.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT,
+    ntrip: data?.ntrip ?? local.ntrip ?? DEFAULT_NTRIP,
     trolley: data?.trolley ?? local.trolley ?? { origin_mode: 'auto' },
   };
 }
@@ -385,7 +405,7 @@ function LArmSmartCalibration({
     if (!gnssOk) return 'GNSS 非固定解，请等待 RTK FIX';
     if (!stationary) return `车辆未静止（速度 ${liveData.speed.toFixed(3)} m/s），请停车后标定`;
     if (!a2Ok) {
-      return '副天线 A2 无有效坐标：请确认接收机1(9001) 已输出双天线 GGA，并重启中控使遥测包含 antenna2';
+      return '柴油侧天线坐标无效：请确认右接收机（EVK）主 GGA 已接入，遥测 antenna2 有效';
     }
     return '条件满足：可输入 RTK 作业点坐标并计算杆臂';
   }, [cfg, useMock, isMock, connStatus, gnssOk, stationary, liveData.speed, a2Ok]);
@@ -414,7 +434,7 @@ function LArmSmartCalibration({
     const antennaSrc = side === 'elec' ? liveData.ref_antenna : liveData.antenna2;
     const antennaEcef = pickAntennaEcef(antennaSrc);
     if (side === 'diesel' && !a2Ok) {
-      showToast('副天线 A2 无有效坐标，请确认双 GGA 已接入', 'error');
+      showToast('柴油侧天线无效：请确认右接收机主 GGA 已接入', 'error');
       return;
     }
     const attitude = { roll: liveData.roll, pitch: liveData.pitch, heading: liveData.heading };
@@ -639,101 +659,154 @@ function bodyListsToTuples(body: Record<string, number[]>): GantryAntennaBody {
 
 function ReceiverLayoutPanel({
   layout,
+  ntrip,
   onChange,
+  onNtripChange,
 }: {
   layout: ReceiverLayout;
+  ntrip: NtripConfig;
   onChange: (layout: ReceiverLayout) => void;
+  onNtripChange: (ntrip: NtripConfig) => void;
 }) {
   const swapSides = () => {
     onChange({
       ...layout,
       left: layout.right,
       right: layout.left,
+      left_host: layout.right_host,
+      right_host: layout.left_host,
       left_port: layout.right_port,
       right_port: layout.left_port,
+      left_transport: layout.right_transport,
+      right_transport: layout.left_transport,
     });
-    showToast('已交换左右接收机映射（若现场接线相反请保存并下发）');
+    showToast('已交换左右 EVK 映射');
   };
 
-  const rows = [
-    {
-      key: 'left',
-      side: '左列门腿',
-      id: layout.left,
-      port: layout.left_port,
-      gga0: '电气房 (a1)',
-      gga1: '柴油机 (a2)',
-    },
-    {
-      key: 'right',
-      side: '右列门腿',
-      id: layout.right,
-      port: layout.right_port,
-      gga0: '电气房 (b1)',
-      gga1: '柴油机 (b2)',
-    },
-    {
-      key: 'trolley',
-      side: '小车',
-      id: layout.trolley,
-      port: layout.trolley_port,
-      gga0: 'C1 (GGA[0])',
-      gga1: 'C2 (GGA[1])',
-    },
-  ];
+  const patch = (partial: Partial<ReceiverLayout>) => onChange({ ...layout, ...partial });
 
   return (
-    <div className="lg:col-span-2 config-panel">
-      <div className="flex items-center justify-between pb-4 border-b border-slate-700/60">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/25 flex items-center justify-center shrink-0">
-            <Radio className="w-4 h-4 text-blue-400" />
+    <div className="lg:col-span-2 space-y-4">
+      <div className="config-panel">
+        <div className="flex items-center justify-between pb-4 border-b border-slate-700/60">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/25 flex items-center justify-center shrink-0">
+              <Radio className="w-4 h-4 text-blue-400" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-200">GNSS EVK 连接（大车）</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                EVK 为 TCP 服务端；中控主动连接。左右各一台，主天线 GGA → 该侧作业点；定向天线前后摆。
+              </p>
+            </div>
           </div>
-          <div>
-            <h3 className="text-sm font-bold text-slate-200">接收机布局</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              同包 GGA 顺序固定：GGA[0]=电气房，GGA[1]=柴油机；四天线 a1/a2=左列，b1/b2=右列
-            </p>
-          </div>
+          <button type="button" onClick={swapSides} className="btn-outline flex items-center gap-2 shrink-0">
+            <ArrowLeftRight className="w-4 h-4" />
+            交换左右
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={swapSides}
-          className="btn-outline flex items-center gap-2 shrink-0"
-        >
-          <ArrowLeftRight className="w-4 h-4" />
-          交换左右
-        </button>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {[
+            {
+              title: '电气侧（左）',
+              host: layout.left_host ?? '',
+              port: layout.left_port,
+              onHost: (v: string) => patch({ left_host: v }),
+              onPort: (v: number) => patch({ left_port: v }),
+            },
+            {
+              title: '动力侧（右）',
+              host: layout.right_host ?? '',
+              port: layout.right_port,
+              onHost: (v: string) => patch({ right_host: v }),
+              onPort: (v: number) => patch({ right_port: v }),
+            },
+          ].map((side) => (
+            <div key={side.title} className="rounded-xl border border-slate-700/60 p-4 space-y-3">
+              <p className="text-xs font-bold text-slate-300">{side.title} · TCP</p>
+              <label className="block text-[11px] text-slate-500">
+                EVK IP
+                <input
+                  className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono"
+                  value={side.host}
+                  onChange={(e) => side.onHost(e.target.value)}
+                  placeholder="192.168.0.101"
+                />
+              </label>
+              <label className="block text-[11px] text-slate-500">
+                端口
+                <input
+                  type="number"
+                  className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono"
+                  value={side.port}
+                  onChange={(e) => side.onPort(parseInt(e.target.value, 10) || 0)}
+                />
+              </label>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-4 rounded-xl border border-slate-700/60 p-4 space-y-2">
+          <p className="text-xs font-bold text-slate-300">小车（UDP 监听，双 GGA 不变）</p>
+          <p className="text-[11px] text-slate-500 font-mono">
+            bind {layout.trolley_host ?? '0.0.0.0'}:{layout.trolley_port} · role={layout.trolley}
+          </p>
+        </div>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-slate-500 border-b border-slate-700">
-              <th className="text-left py-2 pr-3">物理位置</th>
-              <th className="text-left py-2 px-2">接收机 ID</th>
-              <th className="text-left py-2 px-2">UDP 端口</th>
-              <th className="text-left py-2 px-2">GGA[0]</th>
-              <th className="text-left py-2 pl-2">GGA[1]</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.key} className="border-b border-slate-800/60 font-mono">
-                <td className="py-2.5 pr-3 text-slate-300">{r.side}</td>
-                <td className="py-2.5 px-2 text-blue-300">{r.id}</td>
-                <td className="py-2.5 px-2 text-slate-400">{r.port}</td>
-                <td className="py-2.5 px-2 text-slate-300">{r.gga0}</td>
-                <td className="py-2.5 pl-2 text-slate-300">{r.gga1}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="config-panel space-y-3">
+        <div className="flex items-center gap-3 pb-3 border-b border-slate-700/60">
+          <h3 className="text-sm font-bold text-slate-200">NTRIP 差分（全局一份 → 两台 EVK）</h3>
+          <label className="ml-auto flex items-center gap-2 text-xs text-slate-400">
+            <input
+              type="checkbox"
+              checked={!!ntrip.enabled}
+              onChange={(e) => onNtripChange({ ...ntrip, enabled: e.target.checked })}
+            />
+            启用
+          </label>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {(
+            [
+              ['caster_host', 'Caster 地址', ntrip.caster_host],
+              ['mountpoint', '挂载点', ntrip.mountpoint],
+              ['username', '用户名', ntrip.username],
+              ['password', '密码', ntrip.password],
+            ] as const
+          ).map(([key, label, val]) => (
+            <label key={key} className="block text-[11px] text-slate-500">
+              {label}
+              <input
+                type={key === 'password' ? 'password' : 'text'}
+                className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono"
+                value={val}
+                disabled={!ntrip.enabled}
+                onChange={(e) => onNtripChange({ ...ntrip, [key]: e.target.value })}
+              />
+            </label>
+          ))}
+          <label className="block text-[11px] text-slate-500">
+            端口
+            <input
+              type="number"
+              className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono"
+              value={ntrip.caster_port}
+              disabled={!ntrip.enabled}
+              onChange={(e) =>
+                onNtripChange({ ...ntrip, caster_port: parseInt(e.target.value, 10) || 2101 })
+              }
+            />
+          </label>
+        </div>
+        <p className="text-[10px] text-slate-500">
+          中控拉 RTCM 后经与 NMEA 相同的 TCP 口写入两台 EVK；保存并下发后热重连。
+        </p>
       </div>
 
       <div className="config-data-block text-xs text-slate-500 leading-relaxed space-y-1">
-        <p>左接收机（{layout.left_port}）双 GGA 对应 a1/a2；右接收机（{layout.right_port}）对应 b1/b2。</p>
-        <p>姿态解算与杆臂标定均按此顺序，无需再维护 ant1–ant6 天线标识。若现场左右接线与默认相反，点「交换左右」后保存。</p>
+        <p>默认姿态模式为两主点（hdt_tra_height_roll）。四天线 GGA 相关 UI 仍保留在姿态分页，供后续机型切换 dual_receiver / four_antenna。</p>
       </div>
     </div>
   );
@@ -1051,12 +1124,13 @@ function GantryAttitudePanel({
             value={att.mode}
             onChange={(e) => updateAtt({ mode: e.target.value as GantryAttitudeConfig['mode'] })}
           >
-            <option value="dual_receiver">双接收机（平均 hdg/pitch + 四点 roll）</option>
-            <option value="four_antenna">四天线刚体定姿（完整 hdg/pitch/roll）</option>
+            <option value="hdt_tra_height_roll">两主点 UB482（HDT/TRA + 高差横滚）</option>
+            <option value="dual_receiver">双接收机四 GGA（备用）</option>
+            <option value="four_antenna">四天线刚体定姿（备用）</option>
           </select>
         </div>
         <div>
-          <label className="section-title block mb-1.5">同机基线长度 (m)</label>
+          <label className="section-title block mb-1.5">前后定向基线长 (m)</label>
           <input
             type="number"
             step="0.01"
@@ -1065,10 +1139,30 @@ function GantryAttitudePanel({
             onChange={(e) => updateAtt({ baseline_m: parseFloat(e.target.value) || 0 })}
           />
         </div>
+        <div>
+          <label className="section-title block mb-1.5">左右主点间距 roll_span (m)</label>
+          <input
+            type="number"
+            step="0.01"
+            className="input-field font-mono"
+            value={att.roll_span_m ?? cfg.span}
+            onChange={(e) => updateAtt({ roll_span_m: parseFloat(e.target.value) || 0 })}
+          />
+        </div>
+        <div>
+          <label className="section-title block mb-1.5">水平时高差零点 roll_alt0 (m)</label>
+          <input
+            type="number"
+            step="0.001"
+            className="input-field font-mono"
+            value={att.roll_alt0_m ?? 0}
+            onChange={(e) => updateAtt({ roll_alt0_m: parseFloat(e.target.value) || 0 })}
+          />
+        </div>
       </div>
 
       <div className="flex items-center justify-between">
-        <p className="section-title">天线安装坐标（车体系，米）</p>
+        <p className="section-title">天线安装坐标（车体系，米 · 四 GGA 备用）</p>
         <button type="button" onClick={applyDefaults} className="btn-outline text-xs py-2 px-3">
           按 W_span 生成参考值
         </button>
@@ -1255,6 +1349,7 @@ export default function VehicleConfig({
         l_arm_calibration: cfg.l_arm_calibration,
         gantry_attitude: cfg.gantry_attitude,
         receiver_layout: cfg.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT,
+        ntrip: cfg.ntrip ?? DEFAULT_NTRIP,
         trolley: cfg.trolley,
       };
       const res = await fetch(`${baseUrl}/api/vehicle/config`, {
@@ -1498,7 +1593,9 @@ export default function VehicleConfig({
 
             <ReceiverLayoutPanel
               layout={cfg.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT}
+              ntrip={cfg.ntrip ?? DEFAULT_NTRIP}
               onChange={(layout) => setCfg((p) => p ? { ...p, receiver_layout: layout } : null)}
+              onNtripChange={(ntrip) => setCfg((p) => p ? { ...p, ntrip } : null)}
             />
           </div>
           )}

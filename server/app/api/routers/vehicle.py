@@ -49,6 +49,7 @@ def _publish_vehicle_config_update(vehicle_id: str, config: VehicleConfig) -> No
             "l_arm_calibration": config.l_arm_calibration,
             "gantry_attitude": config.gantry_attitude,
             "receiver_layout": config.receiver_layout,
+            "ntrip": getattr(config, "ntrip", None),
             "trolley": config.trolley,
         },
     }
@@ -390,6 +391,7 @@ async def save_vehicle_config(
             config.l_arm_calibration = req.l_arm_calibration
             config.gantry_attitude = req.gantry_attitude
             config.receiver_layout = req.receiver_layout
+            config.ntrip = req.ntrip
             config.trolley = req.trolley
         else:
             config = VehicleConfig(**req.dict())
@@ -442,6 +444,7 @@ async def get_vehicle_config(vehicle_id: str, db: Session = Depends(get_db)):
                 "l_arm_calibration": config.l_arm_calibration,
                 "gantry_attitude": config.gantry_attitude,
                 "receiver_layout": config.receiver_layout,
+                "ntrip": getattr(config, "ntrip", None),
                 "trolley": config.trolley,
                 "created_at": config.created_at.isoformat(),
                 "updated_at": config.updated_at.isoformat()

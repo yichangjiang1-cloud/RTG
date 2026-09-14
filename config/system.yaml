@@ -9,18 +9,35 @@ gnss:
     echo_console: false
     enabled: true
     session_gap_s: 2.0
+  # 大车 EVK：中控 TCP 客户端连接板卡服务端（可被车辆配置热更新覆盖）
   receiver_a1:
-    host: 0.0.0.0
-    port: 9001
+    transport: tcp
+    host: 192.168.0.101
+    port: 30001
     role: gantry_a1
+    reconnect_interval_s: 3
   receiver_a2:
-    host: 0.0.0.0
-    port: 9002
+    transport: tcp
+    host: 192.168.0.102
+    port: 30001
     role: gantry_a2
+    reconnect_interval_s: 3
+  # 小车：仍为 UDP 监听（双 GGA 设备主动推送）
   receiver_b:
+    transport: udp
     host: 0.0.0.0
     port: 9003
     role: trolley
+# 全局一份 NTRIP，RTCM 同口转发给两台大车 EVK
+ntrip:
+  enabled: false
+  caster_host: ""
+  caster_port: 2101
+  mountpoint: ""
+  username: ""
+  password: ""
+  gga_interval_s: 10
+  reconnect_interval_s: 5
 imu:
   host: 0.0.0.0
   port: 9010

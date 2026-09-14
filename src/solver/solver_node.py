@@ -258,13 +258,33 @@ class SolverNode:
             ref_ecef_y=float(ref.get("ecef_y", 0.0)),
             ref_ecef_z=float(ref.get("ecef_z", 0.0)),
             ref_receiver_id=ref_rid,
-            antenna2_latitude=float(ga1.get("antenna2_lat", 0.0)),
-            antenna2_longitude=float(ga1.get("antenna2_lon", 0.0)),
-            antenna2_altitude=float(ga1.get("antenna2_alt", 0.0)),
-            antenna2_ecef_x=float(ga1.get("antenna2_ecef_x", 0.0)),
-            antenna2_ecef_y=float(ga1.get("antenna2_ecef_y", 0.0)),
-            antenna2_ecef_z=float(ga1.get("antenna2_ecef_z", 0.0)),
-            antenna2_valid=bool(ga1.get("has_antenna2")),
+            # 遥测/杆臂 UI 的 antenna2 = 柴油侧参考天线：
+            # 优先右接收机主点；否则回退左机副 GGA（旧双 GGA 布局）
+            antenna2_latitude=(
+                float(ga2.get("lat", 0.0)) if recv2_live
+                else float(ga1.get("antenna2_lat", 0.0))
+            ),
+            antenna2_longitude=(
+                float(ga2.get("lon", 0.0)) if recv2_live
+                else float(ga1.get("antenna2_lon", 0.0))
+            ),
+            antenna2_altitude=(
+                float(ga2.get("alt", 0.0)) if recv2_live
+                else float(ga1.get("antenna2_alt", 0.0))
+            ),
+            antenna2_ecef_x=(
+                float(ga2.get("ecef_x", 0.0)) if recv2_live
+                else float(ga1.get("antenna2_ecef_x", 0.0))
+            ),
+            antenna2_ecef_y=(
+                float(ga2.get("ecef_y", 0.0)) if recv2_live
+                else float(ga1.get("antenna2_ecef_y", 0.0))
+            ),
+            antenna2_ecef_z=(
+                float(ga2.get("ecef_z", 0.0)) if recv2_live
+                else float(ga1.get("antenna2_ecef_z", 0.0))
+            ),
+            antenna2_valid=bool(recv2_live or ga1.get("has_antenna2")),
             lpoint_latitude=lp_lat,
             lpoint_longitude=lp_lon,
             lpoint_altitude=lp_alt,
@@ -302,10 +322,11 @@ class SolverNode:
         recv2_live: bool,
     ) -> GantryResult:
         """
-        大车定位：接收机1 (gantry_a1) 双天线 → 两个作业点。
-          A1 主天线 GGA + l_arm_elec  → 电气房侧 L-Point
-          A2 副天线 GGA + l_arm_diesel → 柴油机侧 L-Point
-        不再用跨距推算另一侧作业点；接收机2 仅标记在线状态。
+        大车定位（UB482 / 两主点布局）：
+          左接收机 gantry_a1 主 GGA + l_arm_elec   → 电气房侧 L-Point
+          右接收机 gantry_a2 主 GGA + l_arm_diesel → 柴油机侧 L-Point
+        兼容旧布局：若右机不在线但左机有副 GGA，仍可用左机副点作柴油侧。
+        姿态优先取融合写入 gantry_a1 的 heading/pitch/roll（HDT/TRA + 高差横滚等）。
         """
         gantry = GantryResult(timestamp=now)
         gantry.recv1_live = recv1_live
@@ -321,7 +342,12 @@ class SolverNode:
             roll = ga1.get("roll", 0.0)
             pitch = ga1.get("pitch", 0.0)
             heading = ga1.get("heading", 0.0)
+        elif recv2_live:
+            roll = ga2.get("roll", 0.0)
+            pitch = ga2.get("pitch", 0.0)
+            heading = ga2.get("heading", 0.0)
 
+        if recv1_live:
             gps_a1 = np.array([ga1["ecef_x"], ga1["ecef_y"], ga1["ecef_z"]])
             lp_elec_ecef = self._solver_elec.solve(gps_a1, roll, pitch, heading)
             lx_elec, ly_elec, lz_elec = transform.ecef_to_lycs(*lp_elec_ecef)
@@ -329,17 +355,25 @@ class SolverNode:
             gantry.center_elec_y = ly_elec
             gantry.a1_valid = True
 
-            if ga1.get("has_antenna2"):
-                gps_a2 = np.array([
-                    ga1["antenna2_ecef_x"],
-                    ga1["antenna2_ecef_y"],
-                    ga1["antenna2_ecef_z"],
-                ])
-                lp_diesel_ecef = self._solver_diesel.solve(gps_a2, roll, pitch, heading)
-                lx_diesel, ly_diesel, lz_diesel = transform.ecef_to_lycs(*lp_diesel_ecef)
-                gantry.center_engine_side = lx_diesel
-                gantry.center_engine_y = ly_diesel
-                gantry.a2_valid = True
+        if recv2_live:
+            gps_right = np.array([ga2["ecef_x"], ga2["ecef_y"], ga2["ecef_z"]])
+            lp_diesel_ecef = self._solver_diesel.solve(gps_right, roll, pitch, heading)
+            lx_diesel, ly_diesel, lz_diesel = transform.ecef_to_lycs(*lp_diesel_ecef)
+            gantry.center_engine_side = lx_diesel
+            gantry.center_engine_y = ly_diesel
+            gantry.a2_valid = True
+        elif recv1_live and ga1.get("has_antenna2"):
+            # 兼容：旧双 GGA 同机布局（左机副天线 = 柴油侧）
+            gps_a2 = np.array([
+                ga1["antenna2_ecef_x"],
+                ga1["antenna2_ecef_y"],
+                ga1["antenna2_ecef_z"],
+            ])
+            lp_diesel_ecef = self._solver_diesel.solve(gps_a2, roll, pitch, heading)
+            lx_diesel, ly_diesel, lz_diesel = transform.ecef_to_lycs(*lp_diesel_ecef)
+            gantry.center_engine_side = lx_diesel
+            gantry.center_engine_y = ly_diesel
+            gantry.a2_valid = True
 
         raw_xs, raw_ys, raw_zs = [], [], []
         if gantry.a1_valid:

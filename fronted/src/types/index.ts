@@ -131,16 +131,34 @@ export interface GantryAntennaPoint {
   receiver?: 'left' | 'right';
 }
 
-/** 接收机布局（替代原 ant1–ant6 天线标识） */
+/** 接收机布局（大车 EVK TCP + 小车 UDP） */
 export interface ReceiverLayout {
   left: string;
   right: string;
   trolley: string;
+  /** 大车左 EVK：中控作为 TCP 客户端连接 */
+  left_transport?: 'tcp' | 'udp';
+  left_host?: string;
   left_port: number;
+  right_transport?: 'tcp' | 'udp';
+  right_host?: string;
   right_port: number;
+  trolley_transport?: 'tcp' | 'udp';
+  trolley_host?: string;
   trolley_port: number;
-  /** 同包 GGA 顺序，固定 [电气房, 柴油机] */
+  /** 同包双 GGA 顺序（小车 / 备用四 GGA 机型仍可用） */
   gga_order: ['elec', 'diesel'];
+}
+
+/** 全局 NTRIP（一份差分转发给两台大车 EVK） */
+export interface NtripConfig {
+  enabled: boolean;
+  caster_host: string;
+  caster_port: number;
+  mountpoint: string;
+  username: string;
+  password: string;
+  gga_interval_s?: number;
 }
 
 /** 车辆物理几何参数（与场地角色无关，角色由场地是否建图决定） */
@@ -163,7 +181,9 @@ export interface VehicleProfile {
   /** @deprecated 仅兼容旧 API，请使用 receiver_layout */
   antennas?: AntennaLabel[];
   receiver_layout?: ReceiverLayout;
-  /** 四天线 / 双接收机姿态解算配置 */
+  /** 全局 NTRIP，中控拉取后同口转发给两台 EVK */
+  ntrip?: NtripConfig;
+  /** 姿态解算配置（含 UB482 两主点 / 备用四 GGA） */
   gantry_attitude?: GantryAttitudeConfig;
   /** 小车零点（大车车体系） */
   trolley?: TrolleyOriginConfig;
@@ -184,11 +204,19 @@ export interface GantryAntennaBody {
 }
 
 export interface GantryAttitudeConfig {
-  /** dual_receiver: A/B 双基线平均 + 四点求 roll；four_antenna: 四点完整定姿 */
-  mode: 'dual_receiver' | 'four_antenna';
+  /**
+   * hdt_tra_height_roll: UB482 两主点（HDT/TRA + 高差横滚）
+   * dual_receiver / four_antenna: 旧四 GGA 备用
+   */
+  mode: 'hdt_tra_height_roll' | 'dual_receiver' | 'four_antenna';
+  /** 前后定向基线长 (m) */
   baseline_m: number;
+  /** 左右主天线间距，用于高差估横滚 (m) */
+  roll_span_m?: number;
+  /** 车体水平时 (alt_left - alt_right) 零点 (m) */
+  roll_alt0_m?: number;
   antenna_body: GantryAntennaBody;
-  /** 最近一次四天线安装坐标标定 */
+  /** 最近一次四天线安装坐标标定（备用模式） */
   body_calibration?: {
     measured_at: string;
     baseline_m: number;

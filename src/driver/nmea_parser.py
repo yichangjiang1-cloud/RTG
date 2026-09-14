@@ -256,9 +256,10 @@ def parse_attitude(sentence: str) -> Optional[dict]:
                 "heading_accuracy": 0.1,    # 默认精度（°）
             }
 
-        # ---- GPTRA 格式: $GPTRA,hhmmss.ss,heading,pitch,roll,... ----
-        if sentence_upper.startswith("$GPTRA"):
-            if len(parts) < 6:
+        # ---- GxTRA: $GPTRA / $GNTRA,time,heading,pitch,roll?... ----
+        # UB482: $GNTRA,time,heading,pitch,roll?,quality,sats,...
+        if "TRA" in sentence_upper[:8]:
+            if len(parts) < 5:
                 return None
             heading = float(parts[2]) if parts[2] else 0.0
             pitch = float(parts[3]) if parts[3] else 0.0
@@ -316,7 +317,11 @@ def parse_sentence(sentence: str) -> Optional[dict]:
         return parse_vtg(sentence)
     if "HDT" in upper[:10]:
         return parse_hdt(sentence)
-    if any(kw in upper[:12] for kw in ("PASHR", "GPTRA", "PTNLA")) or "HPR" in upper[:8]:
+    if (
+        any(kw in upper[:12] for kw in ("PASHR", "GPTRA", "GNTRA", "PTNLA"))
+        or "HPR" in upper[:8]
+        or "TRA" in upper[:8]
+    ):
         return parse_attitude(sentence)
 
     return None

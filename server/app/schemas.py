@@ -70,8 +70,9 @@ class VehicleConfigBase(BaseModel):
     w_span: Optional[float] = None            # 门腿跨距 W_span (m)，参考/展示
     antennas: Optional[Dict[str, Any]] = None # 天线标识 {"ant1": {"label": "大车左前"}, ...}
     l_arm_calibration: Optional[Dict[str, Any]] = None  # 杆臂标定记录 {elec?, diesel?}
-    gantry_attitude: Optional[Dict[str, Any]] = None  # 四天线姿态 {mode, baseline_m, antenna_body}
-    receiver_layout: Optional[Dict[str, Any]] = None  # 接收机布局 {left, right, trolley, gga_order, ports}
+    gantry_attitude: Optional[Dict[str, Any]] = None  # 姿态 {mode, baseline_m, roll_span_m, antenna_body}
+    receiver_layout: Optional[Dict[str, Any]] = None  # EVK host/port/transport + 备用 gga_order
+    ntrip: Optional[Dict[str, Any]] = None  # 全局 NTRIP，转发给两台大车 EVK
     trolley: Optional[Dict[str, Any]] = None  # 小车零点 {origin_mode, origin_body}
 
 

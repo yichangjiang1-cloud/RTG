@@ -3,32 +3,50 @@ receiver_layout:
   left: gantry_a1
   right: gantry_a2
   trolley: trolley
-  left_port: 9001
-  right_port: 9002
+  left_transport: tcp
+  right_transport: tcp
+  trolley_transport: udp
+  left_host: 192.168.0.101
+  left_port: 30001
+  right_host: 192.168.0.102
+  right_port: 30001
+  trolley_host: 0.0.0.0
   trolley_port: 9003
+  # 旧双 GGA 顺序保留（小车 / 备用四 GGA 机型）
   gga_order:
   - elec
   - diesel
+ntrip:
+  enabled: false
+  caster_host: ""
+  caster_port: 2101
+  mountpoint: ""
+  username: ""
+  password: ""
+  gga_interval_s: 10
 gantry:
   attitude:
-    mode: dual_receiver
-    baseline_m: 20.0
+    # UB482 两主点：HDT/TRA + 左右高差横滚；dual_receiver/four_antenna 仍可用作备用
+    mode: hdt_tra_height_roll
+    baseline_m: 1.0
+    roll_span_m: 10.0
+    roll_alt0_m: 0.0
     antenna_body:
       a1:
       - 0
       - 0
       - 0
       a2:
-      - 20
+      - 1.0
       - 0
       - 0
       b1:
       - 0
-      - -50.0
+      - -10.0
       - 0
       b2:
-      - 20
-      - -50.0
+      - 1.0
+      - -10.0
       - 0
   l_arm_elec:
   - 0.0

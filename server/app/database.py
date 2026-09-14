@@ -52,6 +52,7 @@ def _sqlite_migrate():
         ("vehicle_configs", "gantry_attitude", "JSON"),
         ("vehicle_configs", "receiver_layout", "JSON"),
         ("vehicle_configs", "trolley", "JSON"),
+        ("vehicle_configs", "ntrip", "JSON"),
     ]
     conn = sqlite3.connect(db_path)
     try:

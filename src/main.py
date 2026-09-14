@@ -326,6 +326,15 @@ class RTGSystem:
         """应用车辆参数到解算器，并回写 vehicle_params.yaml 本地备份。"""
         self._solver_node.apply_vehicle_config(config)
         self._fusion_node.update_gantry_attitude_config(config)
+        # EVK TCP / NTRIP 热更新
+        block = config.get("config") if isinstance(config.get("config"), dict) else config
+        layout = block.get("receiver_layout") if isinstance(block, dict) else None
+        ntrip = block.get("ntrip") if isinstance(block, dict) else None
+        if layout or ntrip:
+            try:
+                self._driver_node.apply_gnss_layout(layout or {}, ntrip)
+            except Exception as e:
+                logger.warning("GNSS 布局/NTRIP 热更新失败: %s", e)
         persist_vehicle_params(config, self._vehicle_params_path)
 
     def _handle_start_svd(self, cmd: dict) -> None:

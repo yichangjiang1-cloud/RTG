@@ -1,10 +1,10 @@
 """
-大车四天线 / 双接收机姿态解算。
+大车姿态解算。
 
-策略（与 fusion_node 配合）：
-  - 仅接收机 A（gantry_a1）在线：heading/pitch 来自 A 的双 GGA；roll 仅 NMEA 有则采用，否则 0。
-  - A + B 同时在线：A/B 各自双 GGA 求 heading/pitch 后取平均；roll 由四天线刚体定姿（Kabsch）解算。
-  - mode=four_antenna 且配置了 antenna_body：四点定姿同时输出 heading/pitch/roll（覆盖双基线平均）。
+模式：
+  - hdt_tra_height_roll（UB482 两主点）：航向/俯仰来自 HDT/TRA(NMEA)；
+    横滚由左右主天线高差 + roll_span_m 估算。保留 dual_gga 作兼容回退。
+  - dual_receiver / four_antenna（旧四 GGA）：双基线 + Kabsch，保留备用。
 """
 
 from __future__ import annotations
@@ -21,28 +21,45 @@ from src.solver.coordinate_transform import ecef_to_enu
 
 # 双 GGA 基线低于此水平长度时不解算航向/俯仰，回退 NMEA（PASHR/HDT）
 MIN_DUAL_GGA_BASELINE_M = 0.5
+# 两主点估横滚时，左右间距过小则放弃
+MIN_ROLL_SPAN_M = 1.0
 
 
 @dataclass
 class GantryAttitudeConfig:
     """来自 vehicle_params.yaml → gantry.attitude"""
 
-    mode: str = "dual_receiver"  # dual_receiver | four_antenna
-    baseline_m: float = 20.0
+    # hdt_tra_height_roll | dual_receiver | four_antenna
+    mode: str = "hdt_tra_height_roll"
+    baseline_m: float = 1.0  # 前后定向基线长（安装信息）
+    roll_span_m: float = 23.47  # 左右主天线间距，用于 Δh→roll
+    roll_alt0_m: float = 0.0  # 车体水平时 (alt_left - alt_right) 零点
     antenna_body: Dict[str, List[float]] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, block: Optional[dict], w_span: float = 23.47) -> "GantryAttitudeConfig":
         if not isinstance(block, dict):
             block = {}
-        mode = str(block.get("mode", "dual_receiver"))
-        baseline_m = float(block.get("baseline_m", 20.0))
+        mode = str(block.get("mode", "hdt_tra_height_roll"))
+        baseline_m = float(block.get("baseline_m", 1.0))
+        roll_span_m = float(block.get("roll_span_m", w_span if w_span > 0 else 23.47))
+        roll_alt0_m = float(block.get("roll_alt0_m", 0.0))
         body = block.get("antenna_body")
         if not isinstance(body, dict) or len(body) < 4:
-            body = default_antenna_body(w_span, baseline_m)
+            body = default_antenna_body(w_span, max(baseline_m, 1.0))
         else:
-            body = {k: [float(x) for x in v[:3]] for k, v in body.items() if isinstance(v, (list, tuple))}
-        return cls(mode=mode, baseline_m=baseline_m, antenna_body=body)
+            body = {
+                k: [float(x) for x in v[:3]]
+                for k, v in body.items()
+                if isinstance(v, (list, tuple))
+            }
+        return cls(
+            mode=mode,
+            baseline_m=baseline_m,
+            roll_span_m=roll_span_m,
+            roll_alt0_m=roll_alt0_m,
+            antenna_body=body,
+        )
 
 
 @dataclass
@@ -118,63 +135,63 @@ def derive_heading_pitch_from_dual_gga(
     heading = _resolve_baseline_heading(
         math.degrees(math.atan2(e2, n2)), ref_hdg
     )
-    pitch = math.degrees(math.atan2(u2, max(horiz, 1e-9)))
+    pitch = math.degrees(math.atan2(u2, horiz))
     return heading, pitch
 
 
-def _circular_mean_deg(a: float, b: float) -> float:
-    """仅当两角接近时取均值；相差过大时返回第一路（左列参考）。"""
-    if abs(_circular_diff_deg(a, b)) > 45.0:
-        return normalize_heading_deg(a)
-    x = math.cos(math.radians(a)) + math.cos(math.radians(b))
-    y = math.sin(math.radians(a)) + math.sin(math.radians(b))
-    if abs(x) < 1e-12 and abs(y) < 1e-12:
-        return normalize_heading_deg(a)
-    return normalize_heading_deg(math.degrees(math.atan2(y, x)))
-
-
-def _pick_gantry_heading(hp_a: Tuple[float, float], hp_b: Optional[Tuple[float, float]]) -> float:
-    """大车航向以左列 gantry_a1 双 GGA 为准，右列仅作一致性校验。"""
-    h_a = normalize_heading_deg(hp_a[0])
-    if hp_b is None:
-        return h_a
-    h_b = normalize_heading_deg(hp_b[0])
-    if abs(_circular_diff_deg(h_a, h_b)) > 45.0:
-        return h_a
-    return _circular_mean_deg(h_a, h_b)
-
-
-def _gnss_primary_ecef(gnss: GnssRaw) -> Tuple[float, float, float]:
-    return float(gnss.ecef_x), float(gnss.ecef_y), float(gnss.ecef_z)
-
-
-def _gnss_secondary_ecef(gnss: GnssRaw) -> Optional[Tuple[float, float, float]]:
-    if not gnss.has_antenna2:
+def derive_roll_from_dual_master_height(
+    ga1: GnssRaw,
+    ga2: GnssRaw,
+    roll_span_m: float,
+    roll_alt0_m: float = 0.0,
+) -> Optional[float]:
+    """
+    左右主天线椭球高差 → 横滚（度）。
+    约定：左高右低为正横滚（符号需现场核对）。
+    roll ≈ atan((alt_L - alt_R - alt0) / D)
+    """
+    if roll_span_m < MIN_ROLL_SPAN_M:
         return None
-    return (
-        float(gnss.antenna2_ecef_x),
-        float(gnss.antenna2_ecef_y),
-        float(gnss.antenna2_ecef_z),
-    )
+    if ga1.altitude is None or ga2.altitude is None:
+        return None
+    dh = float(ga1.altitude) - float(ga2.altitude) - float(roll_alt0_m)
+    return math.degrees(math.atan2(dh, float(roll_span_m)))
+
+
+def _pick_nmea_heading_pitch(
+    ga1: Optional[GnssRaw],
+    ga2: Optional[GnssRaw],
+    ga1_live: bool,
+    ga2_live: bool,
+) -> Optional[Tuple[float, float, str]]:
+    """优先左机 HDT/TRA，其次右机。"""
+    for live, g, tag in (
+        (ga1_live, ga1, "nmea_a1"),
+        (ga2_live, ga2, "nmea_a2"),
+    ):
+        if not live or g is None or g.heading is None:
+            continue
+        return (
+            normalize_heading_deg(float(g.heading)),
+            float(g.pitch or 0.0),
+            tag,
+        )
+    return None
 
 
 def _collect_four_ecef(
     ga1: Optional[GnssRaw],
     ga2: Optional[GnssRaw],
 ) -> Optional[Dict[str, Tuple[float, float, float]]]:
-    """左列 a1/a2（电气/柴油），右列 b1/b2。"""
-    if ga1 is None or ga2 is None:
+    if ga1 is None or not ga1.has_antenna2:
         return None
-    a2 = _gnss_secondary_ecef(ga1)
-    b1 = _gnss_primary_ecef(ga2)
-    b2 = _gnss_secondary_ecef(ga2)
-    if a2 is None or b2 is None:
+    if ga2 is None or not ga2.has_antenna2:
         return None
     return {
-        "a1": _gnss_primary_ecef(ga1),
-        "a2": a2,
-        "b1": b1,
-        "b2": b2,
+        "a1": (ga1.ecef_x, ga1.ecef_y, ga1.ecef_z),
+        "a2": (ga1.antenna2_ecef_x, ga1.antenna2_ecef_y, ga1.antenna2_ecef_z),
+        "b1": (ga2.ecef_x, ga2.ecef_y, ga2.ecef_z),
+        "b2": (ga2.antenna2_ecef_x, ga2.antenna2_ecef_y, ga2.antenna2_ecef_z),
     }
 
 
@@ -183,27 +200,26 @@ def build_gantry_antennas_payload(
     ga2: Optional[dict],
 ) -> Optional[Dict[str, dict]]:
     """
-    从融合状态 dict 组装四天线 WGS84/ECEF（供遥测与标定）。
-    ga1=左接收机，ga2=右接收机；主天线=电气房 GGA[0]，副天线=柴油机 GGA[1]。
+    组装天线点供遥测/标定。
+    - 两主点布局：a1=左主(电气)，柴油参考用右主 b1；a2/b2 仅在有副 GGA 时填充。
+    - 旧四 GGA：左右各主+副。
     """
-    if not ga1 or not ga2:
-        return None
-    if not ga1.get("is_live") or not ga2.get("is_live"):
-        return None
-    if not ga1.get("has_antenna2") or not ga2.get("has_antenna2"):
+    if not ga1 or not ga1.get("is_live"):
         return None
 
-    def _pt(primary: bool, g: dict) -> dict:
-        if primary:
-            return {
-                "lat": float(g.get("lat", 0.0)),
-                "lon": float(g.get("lon", 0.0)),
-                "alt": float(g.get("alt", 0.0)),
-                "ecef_x": float(g.get("ecef_x", 0.0)),
-                "ecef_y": float(g.get("ecef_y", 0.0)),
-                "ecef_z": float(g.get("ecef_z", 0.0)),
-                "valid": True,
-            }
+    def _primary(g: dict) -> dict:
+        return {
+            "lat": float(g.get("lat", 0.0)),
+            "lon": float(g.get("lon", 0.0)),
+            "alt": float(g.get("alt", 0.0)),
+            "ecef_x": float(g.get("ecef_x", 0.0)),
+            "ecef_y": float(g.get("ecef_y", 0.0)),
+            "ecef_z": float(g.get("ecef_z", 0.0)),
+            "valid": True,
+        }
+
+    def _secondary(g: dict) -> dict:
+        ok = bool(g.get("has_antenna2"))
         return {
             "lat": float(g.get("antenna2_lat", 0.0)),
             "lon": float(g.get("antenna2_lon", 0.0)),
@@ -211,15 +227,24 @@ def build_gantry_antennas_payload(
             "ecef_x": float(g.get("antenna2_ecef_x", 0.0)),
             "ecef_y": float(g.get("antenna2_ecef_y", 0.0)),
             "ecef_z": float(g.get("antenna2_ecef_z", 0.0)),
-            "valid": True,
+            "valid": ok,
         }
 
-    return {
-        "a1": {**_pt(True, ga1), "role": "elec", "receiver": "left"},
-        "a2": {**_pt(False, ga1), "role": "diesel", "receiver": "left"},
-        "b1": {**_pt(True, ga2), "role": "elec", "receiver": "right"},
-        "b2": {**_pt(False, ga2), "role": "diesel", "receiver": "right"},
+    out: Dict[str, dict] = {
+        "a1": {**_primary(ga1), "role": "elec", "receiver": "left"},
+        "a2": {**_secondary(ga1), "role": "diesel", "receiver": "left"},
     }
+    if ga2 and ga2.get("is_live"):
+        out["b1"] = {**_primary(ga2), "role": "diesel", "receiver": "right"}
+        out["b2"] = {**_secondary(ga2), "role": "diesel", "receiver": "right"}
+        if not ga1.get("has_antenna2"):
+            out["a2"] = {
+                **_primary(ga2),
+                "role": "diesel",
+                "receiver": "right",
+                "valid": True,
+            }
+    return out
 
 
 def _kabsch_rotation(body_pts: np.ndarray, enu_pts: np.ndarray) -> Optional[np.ndarray]:
@@ -246,7 +271,6 @@ def solve_four_antenna_attitude(
     ref_lon: float,
     ref_alt: float,
 ) -> Optional[GantryAttitudeResult]:
-    """四天线 ECEF + 车体系安装坐标 → 完整欧拉角。"""
     order = ("a1", "a2", "b1", "b2")
     body_rows, enu_rows = [], []
     for key in order:
@@ -278,6 +302,16 @@ def _nmea_roll(gnss: Optional[GnssRaw]) -> Optional[float]:
     return float(gnss.roll)
 
 
+def _pick_gantry_heading(
+    hp_a: Tuple[float, float],
+    hp_b: Tuple[float, float],
+) -> float:
+    """两机双 GGA 航向平均（最短弧）。"""
+    a, b = hp_a[0], hp_b[0]
+    mid = a + 0.5 * _circular_diff_deg(a, b)
+    return normalize_heading_deg(mid)
+
+
 def compute_gantry_attitude(
     ga1: Optional[GnssRaw],
     ga2: Optional[GnssRaw],
@@ -288,9 +322,28 @@ def compute_gantry_attitude(
     ref_lon: float,
     ref_alt: float,
 ) -> Optional[GantryAttitudeResult]:
-    """
-    大车级姿态（供 solver 使用的 gantry_a1 通道）。
-    """
+    """大车级姿态（写入 gantry_a1 通道供 solver 使用）。"""
+    mode = (cfg.mode or "hdt_tra_height_roll").strip().lower()
+
+    # ---- UB482：HDT/TRA + 两主点高差横滚 ----
+    if mode in ("hdt_tra_height_roll", "two_master", "evk"):
+        hp = _pick_nmea_heading_pitch(ga1, ga2, ga1_live, ga2_live)
+        if hp is None:
+            return None
+        heading, pitch, src = hp
+        roll = 0.0
+        roll_src = "0"
+        if ga1_live and ga2_live and ga1 is not None and ga2 is not None:
+            r = derive_roll_from_dual_master_height(
+                ga1, ga2, cfg.roll_span_m, cfg.roll_alt0_m
+            )
+            if r is not None:
+                roll = r
+                roll_src = "height"
+        return GantryAttitudeResult(
+            heading, pitch, roll, f"{src}+roll_{roll_src}"
+        )
+
     if not ga1_live or ga1 is None:
         return None
 
@@ -304,7 +357,7 @@ def compute_gantry_attitude(
 
     four_ecef = _collect_four_ecef(ga1, ga2 if ga2_live else None)
 
-    if cfg.mode == "four_antenna" and four_ecef is not None:
+    if mode == "four_antenna" and four_ecef is not None:
         full = solve_four_antenna_attitude(
             four_ecef, cfg.antenna_body, ref_lat, ref_lon, ref_alt
         )
@@ -329,7 +382,6 @@ def compute_gantry_attitude(
             normalize_heading_deg(heading), pitch, roll, source
         )
 
-    # 仅接收机 A
     if hp_a is not None:
         roll = _nmea_roll(ga1)
         return GantryAttitudeResult(
@@ -339,7 +391,6 @@ def compute_gantry_attitude(
             "nmea" if roll is not None else "dual_gga",
         )
 
-    # 无双 GGA：NMEA 回退
     if ga1.heading is not None:
         return GantryAttitudeResult(
             normalize_heading_deg(float(ga1.heading or 0.0)),

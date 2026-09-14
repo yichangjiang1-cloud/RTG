@@ -268,7 +268,7 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
             </div>
             <div className="bg-slate-900/50 rounded-lg p-3">
               <p className="section-title mb-2">柴油机侧作业点 (A2)</p>
-              <p className="text-[9px] text-slate-600 mb-1">接收机1 副天线 · gantry_a1 双 GGA</p>
+              <p className="text-[9px] text-slate-600 mb-1">右接收机主天线 · gantry_a2</p>
               <div className="space-y-1">
                 <div className="flex justify-between items-baseline">
                   <span className="text-[10px] text-slate-500">X</span>
