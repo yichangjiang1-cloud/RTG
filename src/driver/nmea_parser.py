@@ -1,7 +1,8 @@
 """
 驱动模块：NMEA 语句解析器
 支持标准 NMEA 0183 句型：GGA、RMC、VTG、HDT
-以及双天线接收机专有语句：$PSAT,GGA2（副天线 GGA）、PASHR、GPTRA、GNHPR 等。
+以及双天线接收机专有语句：$PSAT,GGA2（副天线 GGA）、#BESTPOS2A（和芯副天线位置）、
+PASHR、GPTRA、GNHPR 等。
 """
 
 import logging
@@ -13,6 +14,44 @@ logger = logging.getLogger(__name__)
 # WGS84 椭球参数（用于验证，实际坐标转换在 coordinate_transform 中）
 _WGS84_A = 6378137.0
 _WGS84_B = 6356752.3142
+
+
+# 和芯 ASCII 日志 position type → NMEA GGA fix quality
+_UNICORE_POS_TYPE_TO_FIX: dict[str, int] = {
+    "NONE": 0,
+    "FIXEDPOS": 1,
+    "FIXEDHEIGHT": 1,
+    "SINGLE": 1,
+    "PSRDIFF": 2,
+    "DGPS": 2,
+    "WAAS": 2,
+    "PROPAGATED": 1,
+    "L1_FLOAT": 5,
+    "NARROW_FLOAT": 5,
+    "IONOFREE_FLOAT": 5,
+    "L1_INT": 4,
+    "WIDE_INT": 4,
+    "NARROW_INT": 4,
+    "RTK_FIXED": 4,
+    "RTK_FLOAT": 5,
+    "PPP_CONVERGING": 1,
+    "PPP": 6,
+}
+
+
+def _unicore_pos_type_to_fix(pos_type: str, sol_status: str) -> int:
+    if sol_status.upper() != "SOL_COMPUTED":
+        return 0
+    return _UNICORE_POS_TYPE_TO_FIX.get(pos_type.upper(), 1)
+
+
+def _strip_unicore_tag_block(line: str) -> str:
+    """和芯 TAG 前缀：\\s:1*78$GNGGA,... → $GNGGA,..."""
+    if line.startswith("\\") and "$" in line:
+        idx = line.find("$")
+        if idx >= 0:
+            return line[idx:]
+    return line
 
 
 def verify_checksum(sentence: str) -> bool:
@@ -49,6 +88,58 @@ def _lat_lon_to_decimal(value: str, direction: str) -> float:
     if direction in ("S", "W"):
         decimal = -decimal
     return decimal
+
+
+def parse_unicore_bestpos2a(sentence: str) -> Optional[dict]:
+    """
+    解析和芯 UB482/UM 系列副天线位置 #BESTPOS2A ASCII 日志。
+
+    例::
+        #BESTPOS2A,COM1,...;SOL_COMPUTED,SINGLE,lat,lon,hgt,undulation,WGS84,...*crc
+
+    分号后为十进制度 WGS84 坐标，等价于副天线 GGA。
+    """
+    line = sentence.strip()
+    upper = line.upper()
+    if not line.startswith("#") or "BESTPOS2" not in upper[:12]:
+        return None
+    if ";" not in line:
+        return None
+
+    body = line.split(";", 1)[1]
+    if "*" in body:
+        body = body.rsplit("*", 1)[0]
+
+    fields = body.split(",")
+    if len(fields) < 5:
+        return None
+
+    sol_status = fields[0].strip()
+    pos_type = fields[1].strip()
+
+    try:
+        lat = float(fields[2])
+        lon = float(fields[3])
+        hgt = float(fields[4])
+        num_sats = 0
+        if len(fields) > 14 and fields[14]:
+            num_sats = int(float(fields[14]))
+        elif len(fields) > 13 and fields[13]:
+            num_sats = int(float(fields[13]))
+
+        return {
+            "type": "GGA2",
+            "timestamp": time.time(),
+            "lat": lat,
+            "lon": lon,
+            "alt": hgt,
+            "fix_quality": _unicore_pos_type_to_fix(pos_type, sol_status),
+            "num_sats": num_sats,
+            "hdop": 99.9,
+        }
+    except (ValueError, IndexError) as e:
+        logger.debug("BESTPOS2A 解析失败: %s | 错误: %s", sentence[:60], e)
+        return None
 
 
 def parse_psat_gga2(sentence: str) -> Optional[dict]:
@@ -121,6 +212,7 @@ def parse_gga(sentence: str) -> Optional[dict]:
             "fix_quality": fix_quality,
             "num_sats": num_sats,
             "hdop": hdop,
+            "raw": sentence.strip(),
         }
     except (ValueError, IndexError) as e:
         logger.debug("GGA 解析失败: %s | 错误: %s", sentence[:60], e)
@@ -297,12 +389,17 @@ def parse_attitude(sentence: str) -> Optional[dict]:
 
 def parse_sentence(sentence: str) -> Optional[dict]:
     """
-    自动识别并解析任意 NMEA 语句的统一入口。
+    自动识别并解析任意 NMEA / 和芯 ASCII 语句的统一入口。
 
-    :param sentence: 原始 NMEA 字符串
+    :param sentence: 原始 NMEA 或 #BESTPOS2A 字符串
     :return: 解析结果字典，或 None（未知/校验失败）
     """
-    sentence = sentence.strip()
+    sentence = _strip_unicore_tag_block(sentence.strip())
+    if sentence.startswith("#"):
+        if "BESTPOS2" in sentence.upper()[:12]:
+            return parse_unicore_bestpos2a(sentence)
+        return None
+
     if not sentence.startswith("$"):
         return None
 

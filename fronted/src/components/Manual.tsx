@@ -97,7 +97,7 @@ export default function Manual() {
                 subtitle: '动态残差修正',
                 color: 'emerald',
                 items: [
-                  'VehicleConfig 录入各车 L_arm、跨距等静态参数',
+                  'VehicleConfig 录入各车 L_arm、EVK 连接、姿态等静态参数',
                   '首车 Calibration 全场逐贝采点',
                   '对比 RTK 与车载解算，写入 vehicle_bay_transforms',
                   'delta = measured − ref（含平面与高程）',

@@ -29,6 +29,7 @@ class DriverNode:
         self._imu_receiver = None
         self._ntrip: Optional[NtripClient] = None
         self._by_role: dict = {}
+        self._running = False
 
         for key in ("receiver_a1", "receiver_a2", "receiver_b"):
             host = cfg.get(f"gnss.{key}.host", "0.0.0.0")
@@ -66,7 +67,15 @@ class DriverNode:
             reconnect_interval_s=float(cfg.get("ntrip.reconnect_interval_s", 5)),
             gga_interval_s=float(cfg.get("ntrip.gga_interval_s", 10)),
             on_rtcm=self._fanout_rtcm,
+            gga_provider=self._provide_ntrip_gga,
         )
+
+    def _provide_ntrip_gga(self) -> Optional[str]:
+        """电气侧（左）主天线 GGA，供 NTRIP/VRS 上报。"""
+        left = self._by_role.get("gantry_a1")
+        if left is None:
+            return None
+        return left.get_latest_gga_nmea()
 
     def _fanout_rtcm(self, data: bytes) -> None:
         """全局一份差分 → 两台大车 EVK TCP。"""
@@ -74,13 +83,6 @@ class DriverNode:
             rcv = self._by_role.get(role)
             if rcv is not None:
                 rcv.inject_rtcm(data)
-        # 顺带把左机 GGA 喂给 NTRIP（若需要）
-        if self._ntrip is not None:
-            left = self._by_role.get("gantry_a1")
-            if left is not None:
-                gga = left.get_latest_gga_nmea()
-                if gga:
-                    self._ntrip.update_gga(gga)
 
     def apply_gnss_layout(self, layout: dict, ntrip: Optional[dict] = None) -> None:
         """
@@ -128,11 +130,16 @@ class DriverNode:
                         mountpoint=str(ntrip.get("mountpoint", "")),
                         username=str(ntrip.get("username", "")),
                         password=str(ntrip.get("password", "")),
+                        gga_interval_s=float(ntrip.get("gga_interval_s", 10) or 10),
                         on_rtcm=self._fanout_rtcm,
+                        gga_provider=self._provide_ntrip_gga,
                     )
-                    self._ntrip.start()
-                    logger.info("NTRIP 已按云端配置启动")
+                    if self._running:
+                        self._start_ntrip()
+                    else:
+                        logger.info("NTRIP 已按云端配置创建（待 DriverNode.start）")
                 else:
+                    self._ntrip.set_gga_provider(self._provide_ntrip_gga)
                     self._ntrip.reconfigure(
                         host=ntrip.get("caster_host"),
                         port=ntrip.get("caster_port"),
@@ -147,8 +154,22 @@ class DriverNode:
                 self._ntrip = None
                 logger.info("NTRIP 已按配置关闭")
 
+    def _start_ntrip(self) -> None:
+        """启动 NTRIP；已在跑则跳过（线程不可二次 start）。"""
+        if self._ntrip is None:
+            return
+        if self._ntrip.is_alive():
+            return
+        # 已 start 过且已退出：需新建实例（Python 线程只能 start 一次）
+        if self._ntrip.ident is not None:
+            logger.warning("NTRIP 线程已结束，跳过二次 start（请热更新重建）")
+            return
+        self._ntrip.start()
+        logger.info("  → NTRIP 全局差分转发已启动")
+
     def start(self) -> None:
         """启动所有接收机线程。"""
+        self._running = True
         logger.info(
             f"DriverNode 启动，共 {len(self._receivers)} 台 GNSS 接收机 + 1 台 IMU"
         )
@@ -160,13 +181,12 @@ class DriverNode:
             rcv.start()
         if self._imu_receiver:
             self._imu_receiver.start()
-        if self._ntrip is not None:
-            self._ntrip.start()
-            logger.info("  → NTRIP 全局差分转发已启动")
+        self._start_ntrip()
 
     def stop(self) -> None:
         """停止所有接收机线程。"""
         logger.info("DriverNode 停止中...")
+        self._running = False
         if self._ntrip is not None:
             self._ntrip.stop()
         for rcv in self._receivers:

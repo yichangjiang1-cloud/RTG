@@ -24,7 +24,7 @@ function getTabFromHash(): TabId {
 // 内층组件（可使用 context）
 function AppInner() {
   const [activeTab, setActiveTab] = useState<TabId>(getTabFromHash);
-  const { selectedVehicleId, useMock, setConnStatus, setIsMock, backendConfig } = useAppContext();
+  const { selectedVehicleId, useMock, setConnStatus, setIsMock, backendConfig, addPendingDevice } = useAppContext();
   const historyRef = useRef<RealtimeData[]>([]);
 
   // 切换 tab 时同步写入 URL hash
@@ -53,7 +53,15 @@ function AppInner() {
     ? buildWsUrl(backendConfig, `/ws/realtime?vehicle_id=${selectedVehicleId}`)
     : null;
 
-  const { data, isMock, connStatus } = useWebSocket({ url: realtimeWsUrl, forceMock: useMock });
+  const onDiscovery = useCallback((dev: { temp_id: string; sn: string }) => {
+    addPendingDevice(dev);
+  }, [addPendingDevice]);
+
+  const { data, isMock, connStatus } = useWebSocket({
+    url: realtimeWsUrl,
+    forceMock: useMock,
+    onDiscovery,
+  });
 
   // 同步 WS 状态到 context，让 Settings 等页面可以读到
   useEffect(() => { setConnStatus(connStatus); }, [connStatus, setConnStatus]);

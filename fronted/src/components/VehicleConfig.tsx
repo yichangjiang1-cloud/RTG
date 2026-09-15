@@ -18,8 +18,6 @@ function InitDeviceModal({ device, backendBase, onClose, onDone }: {
   const { initDevice, vehicles } = useAppContext();
   const [newId, setNewId] = useState('RTG-');
   const [label, setLabel] = useState('');
-  const [h, setH] = useState('22.5');
-  const [wSpan, setWSpan] = useState('23.47');
   const [saving, setSaving] = useState(false);
   const [clonedArms, setClonedArms] = useState<{
     l_arm_elec: [number, number, number];
@@ -40,16 +38,14 @@ function InitDeviceModal({ device, backendBase, onClose, onDone }: {
     try {
       const res = await fetch(`${backendBase}/api/vehicle/config/${sourceId}`, { signal: AbortSignal.timeout(5000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const resp = await res.json() as { code: number; data: { l_arm?: number[]; l_arm_elec?: number[]; l_arm_diesel?: number[]; height?: number; w_span?: number } | null };
+      const resp = await res.json() as { code: number; data: { l_arm?: number[]; l_arm_elec?: number[]; l_arm_diesel?: number[] } | null };
       if (resp.code === 200 && resp.data) {
         const d = resp.data;
         const legacy = d.l_arm ?? [0, 0, 0];
         const elec = (d.l_arm_elec ?? legacy).slice(0, 3) as [number, number, number];
         const diesel = (d.l_arm_diesel ?? legacy).slice(0, 3) as [number, number, number];
         setClonedArms({ l_arm_elec: elec, l_arm_diesel: diesel });
-        if (d.height != null) setH(String(d.height));
-        if (d.w_span != null) setWSpan(String(d.w_span));
-        showToast(`已从 ${sourceId} 复制 H/W 与杆臂（杆臂请上线后用智能标定复核）`);
+        showToast(`已从 ${sourceId} 复制杆臂（请上线后用智能标定复核）`);
       } else {
         showToast('该车型暂无参数配置', 'error');
         setCloneSourceId(null);
@@ -78,8 +74,8 @@ function InitDeviceModal({ device, backendBase, onClose, onDone }: {
         l_arm: elec,
         l_arm_elec: elec,
         l_arm_diesel: diesel,
-        h: parseFloat(h),
-        w_span: parseFloat(wSpan),
+        h: 0,
+        w_span: 0,
       });
 
       if (cloneSourceId) {
@@ -150,26 +146,15 @@ function InitDeviceModal({ device, backendBase, onClose, onDone }: {
               </div>
               {cloneSourceId && !loadingClone && (
                 <p className="text-[10px] text-blue-400 mt-1">
-                  已复制 H/W；杆臂上线后请用智能标定重新计算
+                  已复制杆臂；上线后请用智能标定重新计算
                 </p>
               )}
             </div>
           )}
 
           <p className="text-[10px] text-slate-500 leading-relaxed">
-            杆臂 L_arm 不在此录入，初始化后于「智能杆臂标定」中一键计算。
+            杆臂在「智能杆臂标定」中一键计算；左右间距在「姿态」页填 roll_span。
           </p>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="section-title block mb-1">吊具基准高度 H (m)</label>
-              <input type="number" step="0.1" className="input-field font-mono" value={h} onChange={e => setH(e.target.value)} />
-            </div>
-            <div>
-              <label className="section-title block mb-1">跨距 W_span (m)</label>
-              <input type="number" step="0.01" className="input-field font-mono" value={wSpan} onChange={e => setWSpan(e.target.value)} />
-            </div>
-          </div>
         </div>
 
         <div className="flex gap-3 pt-2">
@@ -189,10 +174,10 @@ const DEFAULT_RECEIVER_LAYOUT: ReceiverLayout = {
   right: 'gantry_a2',
   trolley: 'trolley',
   left_transport: 'tcp',
-  left_host: '192.168.0.101',
+  left_host: '192.168.8.172',
   left_port: 30001,
   right_transport: 'tcp',
-  right_host: '192.168.0.102',
+  right_host: '',
   right_port: 30001,
   trolley_transport: 'udp',
   trolley_host: '0.0.0.0',
@@ -291,11 +276,11 @@ function mergeVehicleConfig(
   } | null,
 ): VehicleProfile {
   const legacy = data?.l_arm ?? local.l_arm ?? DEFAULT_ARM;
-  const span = data?.w_span ?? local.span;
+  const span = data?.w_span ?? local.span ?? 10;
   return {
     ...local,
-    height: data?.height ?? local.height,
-    span,
+    height: 0,
+    span: 0,
     l_arm: legacy,
     l_arm_elec: data?.l_arm_elec ?? local.l_arm_elec ?? legacy,
     l_arm_diesel: data?.l_arm_diesel ?? local.l_arm_diesel ?? legacy,
@@ -680,7 +665,7 @@ function ReceiverLayoutPanel({
       left_transport: layout.right_transport,
       right_transport: layout.left_transport,
     });
-    showToast('已交换左右 EVK 映射');
+    showToast('已交换电气侧 ↔ 动力侧 EVK');
   };
 
   const patch = (partial: Partial<ReceiverLayout>) => onChange({ ...layout, ...partial });
@@ -696,13 +681,15 @@ function ReceiverLayoutPanel({
             <div>
               <h3 className="text-sm font-bold text-slate-200">GNSS EVK 连接（大车）</h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                EVK 为 TCP 服务端；中控主动连接。左右各一台，主天线 GGA → 该侧作业点；定向天线前后摆。
+                「左」=电气侧，「右」=动力侧。各连一台 EVK，主天线 GGA → 该侧作业点。
+                暂无某一侧时，将该侧 IP 留空。接反了点「交换电气/动力」。
+                调试时请关掉 UCENTER 等占用 30001 的软件（EVK 通常只允许 1 个 TCP 客户端）。
               </p>
             </div>
           </div>
           <button type="button" onClick={swapSides} className="btn-outline flex items-center gap-2 shrink-0">
             <ArrowLeftRight className="w-4 h-4" />
-            交换左右
+            交换电气/动力
           </button>
         </div>
 
@@ -963,7 +950,7 @@ function GantryAttitudePanel({
   isMock: boolean;
   baseUrl: string;
 }) {
-  const att = cfg.gantry_attitude ?? defaultGantryAttitude(cfg.span);
+  const att = cfg.gantry_attitude ?? defaultGantryAttitude(10);
   const [capturing, setCapturing] = useState(false);
 
   const fourReady = areGantryAntennasReady(liveData.gantry_antennas);
@@ -999,8 +986,9 @@ function GantryAttitudePanel({
   };
 
   const applyDefaults = () => {
-    updateAtt(defaultGantryAttitude(cfg.span, att.baseline_m));
-    showToast('已按 W_span / baseline 生成参考安装坐标（建议上线后用一键采集覆盖）');
+    const span = att.roll_span_m && att.roll_span_m > 0 ? att.roll_span_m : 10;
+    updateAtt(defaultGantryAttitude(span, att.baseline_m));
+    showToast('已按 roll_span / baseline 生成参考安装坐标（建议上线后用一键采集覆盖）');
   };
 
   async function captureFromLive() {
@@ -1032,13 +1020,13 @@ function GantryAttitudePanel({
 
       setCfg((p) => {
         if (!p) return null;
-        const prev = p.gantry_attitude ?? defaultGantryAttitude(p.span);
+        const prev = p.gantry_attitude ?? defaultGantryAttitude(10);
         return {
           ...p,
-          span: span_m > 1 ? span_m : p.span,
           gantry_attitude: {
             ...prev,
             baseline_m,
+            roll_span_m: span_m > 1 ? span_m : (prev.roll_span_m ?? 10),
             antenna_body: body,
             body_calibration: {
               measured_at: measuredAt,
@@ -1145,7 +1133,7 @@ function GantryAttitudePanel({
             type="number"
             step="0.01"
             className="input-field font-mono"
-            value={att.roll_span_m ?? cfg.span}
+            value={att.roll_span_m ?? 10}
             onChange={(e) => updateAtt({ roll_span_m: parseFloat(e.target.value) || 0 })}
           />
         </div>
@@ -1164,7 +1152,7 @@ function GantryAttitudePanel({
       <div className="flex items-center justify-between">
         <p className="section-title">天线安装坐标（车体系，米 · 四 GGA 备用）</p>
         <button type="button" onClick={applyDefaults} className="btn-outline text-xs py-2 px-3">
-          按 W_span 生成参考值
+          按 roll_span 生成参考值
         </button>
       </div>
 
@@ -1344,8 +1332,8 @@ export default function VehicleConfig({
         l_arm: cfg.l_arm_elec,
         l_arm_elec: cfg.l_arm_elec,
         l_arm_diesel: cfg.l_arm_diesel,
-        height: cfg.height,
-        w_span: cfg.span,
+        height: 0,
+        w_span: 0,
         l_arm_calibration: cfg.l_arm_calibration,
         gantry_attitude: cfg.gantry_attitude,
         receiver_layout: cfg.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT,
@@ -1359,7 +1347,9 @@ export default function VehicleConfig({
       });
       if (res.ok) {
         logger.info('VehicleConfig', `参数保存成功 vehicle_id=${cfg.vehicle_id}`);
-        showToast(`${cfg.label} 参数已保存至后端数据库`);
+        const left = cfg.receiver_layout?.left_host || '(空)';
+        const right = cfg.receiver_layout?.right_host || '(空)';
+        showToast(`已保存并下发：电气 ${left} / 动力 ${right}`);
       } else {
         logger.warn('VehicleConfig', `保存返回 HTTP ${res.status}`);
         showToast('保存失败，请检查后端连接', 'error');
@@ -1386,7 +1376,7 @@ export default function VehicleConfig({
 
       <SectionHeader
         title="车辆管理"
-        subtitle="管理设备初始化与物理几何参数（杆臂值、跨距、高度），用于 L-Point 刚体变换。新设备上线后在此完成初始化和参数配置。"
+        subtitle="管理设备初始化与物理几何参数（杆臂、EVK 连接、姿态），用于 L-Point 刚体变换。新设备上线后在此完成初始化和参数配置。"
       />
 
       {/* ── 待初始化设备 ── */}
@@ -1555,29 +1545,8 @@ export default function VehicleConfig({
                     placeholder="如：RTG 01号机"
                   />
                 </div>
-                <div>
-                  <label className="section-title block mb-1.5">标称高度 H (m)</label>
-                  <input
-                    type="number"
-                    step="0.001"
-                    className="input-field font-mono text-lg"
-                    value={cfg.height}
-                    onChange={(e) => setCfg((p) => p ? { ...p, height: parseFloat(e.target.value) || 0 } : null)}
-                  />
-                </div>
-                <div>
-                  <label className="section-title block mb-1.5">门腿跨距 W_span (m)</label>
-                  <p className="text-[10px] text-slate-500 mb-1">参考尺寸，不再用于推算另一侧作业点</p>
-                  <input
-                    type="number"
-                    step="0.001"
-                    className="input-field font-mono text-lg"
-                    value={cfg.span}
-                    onChange={(e) => setCfg((p) => p ? { ...p, span: parseFloat(e.target.value) || 0 } : null)}
-                  />
-                </div>
                 <p className="text-[10px] text-slate-500 pt-1">
-                  杆臂在「智能杆臂标定」页配置；四天线姿态在对应分页。保存时将一并写入后端。
+                  左右间距在「姿态」页填 roll_span（估横滚）；杆臂在「智能杆臂标定」页配置。
                 </p>
               </div>
 

@@ -4,8 +4,25 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="1、docker打包&#10;2、bug处理">
+    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="兼容482板卡">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/system.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/system.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/vehicle_params.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/vehicle_params.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/App.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/App.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Calibration.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Calibration.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Dashboard.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Dashboard.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Manual.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Manual.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Settings.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Settings.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/VehicleConfig.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/VehicleConfig.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/common.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/common.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/context/AppContext.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/context/AppContext.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/hooks/useWebSocket.ts" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/hooks/useWebSocket.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/types/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/types/index.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/bridge/telemetry.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/telemetry.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/driver/driver_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/driver_node.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/driver/gnss_receiver.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/gnss_receiver.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/driver/nmea_parser.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/nmea_parser.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/utils/enhanced_logger.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/enhanced_logger.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -192,7 +209,15 @@
       <option name="project" value="LOCAL" />
       <updated>1789025333093</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="兼容482板卡">
+      <option name="closed" value="true" />
+      <created>1789372803673</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1789372803673</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -216,7 +241,8 @@
     <MESSAGE value="接收机设备接入、小车数据管理" />
     <MESSAGE value="1、ui修改&#10;2、作业点参考位置变更&#10;3、MQTT Broker部署&#10;4、中控机 -&gt; PLC交互等" />
     <MESSAGE value="1、docker打包&#10;2、bug处理" />
-    <option name="LAST_COMMIT_MESSAGE" value="1、docker打包&#10;2、bug处理" />
+    <MESSAGE value="兼容482板卡" />
+    <option name="LAST_COMMIT_MESSAGE" value="兼容482板卡" />
   </component>
   <component name="github-copilot-workspace">
     <instructionFileLocations>

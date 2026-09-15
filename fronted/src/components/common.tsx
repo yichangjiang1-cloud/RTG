@@ -14,13 +14,15 @@ export function StatusDot({ status, pulse = true }: StatusDotProps) {
   const colors: Record<GnssStatus, string> = {
     fix: 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]',
     float: 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)]',
+    dgps: 'bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.8)]',
+    single: 'bg-slate-400 shadow-[0_0_8px_rgba(148,163,184,0.6)]',
     no_signal: 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]',
   };
   return (
     <span
       className={clsx(
         'inline-block w-2.5 h-2.5 rounded-full',
-        colors[status],
+        colors[status] ?? colors.no_signal,
         pulse && status !== 'no_signal' && 'animate-pulse',
       )}
     />
@@ -37,9 +39,11 @@ export function StatusBadge({ status }: StatusBadgeProps) {
   const cfg: Record<GnssStatus, { label: string; cls: string }> = {
     fix: { label: 'RTK FIXED', cls: 'badge-fix' },
     float: { label: 'RTK FLOAT', cls: 'badge-float' },
+    dgps: { label: 'DGPS', cls: 'badge-float' },
+    single: { label: '单点 GPS', cls: 'badge-no-signal' },
     no_signal: { label: 'NO SIGNAL', cls: 'badge-no-signal' },
   };
-  const { label, cls } = cfg[status];
+  const { label, cls } = cfg[status] ?? cfg.no_signal;
   return (
     <span className={clsx('badge', cls)}>
       <StatusDot status={status} pulse={false} />

@@ -68,6 +68,8 @@ class EnhancedLogger:
 
         return None, 'unknown', 0
 
+    _FORMAT_KW = frozenset({"class_name", "method_name", "line_no"})
+
     def _format_message(self, msg: str, class_name: str = None,
                        method_name: str = None, line_no: int = None) -> str:
         """格式化日志消息：[类名] [方法名] (行号) 消息"""
@@ -85,29 +87,35 @@ class EnhancedLogger:
         prefix = " ".join(parts)
         return f"{prefix} {msg}" if prefix else msg
 
-    def debug(self, msg: str, **kwargs):
-        formatted = self._format_message(msg, **kwargs)
-        self._logger.debug(formatted)
+    def _emit(self, level: str, msg: str, *args, **kwargs) -> None:
+        """兼容标准 logging 的 msg % args 写法，并保留调用者前缀。"""
+        format_kw = {k: kwargs.pop(k) for k in list(kwargs) if k in self._FORMAT_KW}
+        if args:
+            try:
+                msg = msg % args
+            except Exception:
+                msg = f"{msg} {' '.join(str(a) for a in args)}"
+        formatted = self._format_message(msg, **format_kw)
+        getattr(self._logger, level)(formatted, **kwargs)
 
-    def info(self, msg: str, **kwargs):
-        formatted = self._format_message(msg, **kwargs)
-        self._logger.info(formatted)
+    def debug(self, msg: str, *args, **kwargs):
+        self._emit("debug", msg, *args, **kwargs)
 
-    def warning(self, msg: str, **kwargs):
-        formatted = self._format_message(msg, **kwargs)
-        self._logger.warning(formatted)
+    def info(self, msg: str, *args, **kwargs):
+        self._emit("info", msg, *args, **kwargs)
 
-    def error(self, msg: str, **kwargs):
-        formatted = self._format_message(msg, **kwargs)
-        self._logger.error(formatted)
+    def warning(self, msg: str, *args, **kwargs):
+        self._emit("warning", msg, *args, **kwargs)
 
-    def critical(self, msg: str, **kwargs):
-        formatted = self._format_message(msg, **kwargs)
-        self._logger.critical(formatted)
+    def error(self, msg: str, *args, **kwargs):
+        self._emit("error", msg, *args, **kwargs)
 
-    def exception(self, msg: str, **kwargs):
-        formatted = self._format_message(msg, **kwargs)
-        self._logger.exception(formatted)
+    def critical(self, msg: str, *args, **kwargs):
+        self._emit("critical", msg, *args, **kwargs)
+
+    def exception(self, msg: str, *args, **kwargs):
+        kwargs.setdefault("exc_info", True)
+        self._emit("error", msg, *args, **kwargs)
 
 
 def log_method_call(logger: Optional[EnhancedLogger] = None):

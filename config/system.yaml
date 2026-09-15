@@ -10,15 +10,16 @@ gnss:
     enabled: true
     session_gap_s: 2.0
   # 大车 EVK：中控 TCP 客户端连接板卡服务端（可被车辆配置热更新覆盖）
+  # 注意：此处仅为启动默认值；正式地址以后端 vehicle_configs.receiver_layout 为准
   receiver_a1:
     transport: tcp
-    host: 192.168.0.101
+    host: 192.168.8.172
     port: 30001
     role: gantry_a1
     reconnect_interval_s: 3
   receiver_a2:
     transport: tcp
-    host: 192.168.0.102
+    host: ""   # 暂无动力侧 EVK 时留空，避免错误重连
     port: 30001
     role: gantry_a2
     reconnect_interval_s: 3
@@ -60,7 +61,7 @@ plc:
   base_station_mode: yard_origin
   cross_yard_deviation: 1
   cross_yard_flag: 1
-  enabled: true
+  enabled: false
   frame_rate_hz: 10
   host: 127.0.0.1
   port: 5000

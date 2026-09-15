@@ -1,5 +1,5 @@
 // ===== WebSocket 推送数据类型 =====
-export type GnssStatus = 'fix' | 'float' | 'no_signal';
+export type GnssStatus = 'fix' | 'float' | 'dgps' | 'single' | 'no_signal';
 
 export interface GpsCoord {
   lat: number;
@@ -165,8 +165,8 @@ export interface NtripConfig {
 export interface VehicleProfile {
   vehicle_id: string;
   label: string;       // 用户可读名称，如 "RTG 01号机"
-  height: number;
-  span: number;        // 门腿跨距 W_span (m)，参考尺寸
+  height?: number;     // 已废弃，保留兼容
+  span?: number;       // 已废弃，保留兼容；横滚用 gantry_attitude.roll_span_m
   /** @deprecated 兼容单杆臂；请使用 l_arm_elec / l_arm_diesel */
   l_arm: [number, number, number];
   /** 电气房侧作业点杆臂（天线 A1 → L-Point） */

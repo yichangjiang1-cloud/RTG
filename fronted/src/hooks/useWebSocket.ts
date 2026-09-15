@@ -122,6 +122,8 @@ interface UseWebSocketOptions {
   url: string | null;
   /** 强制使用模拟数据，忽略 url */
   forceMock: boolean;
+  /** 收到新设备 discovery 时回调 */
+  onDiscovery?: (dev: { temp_id: string; sn: string }) => void;
 }
 
 interface UseWebSocketReturn {
@@ -134,12 +136,14 @@ interface UseWebSocketReturn {
   connStatus: 'connecting' | 'connected' | 'disconnected';
 }
 
-export function useWebSocket({ url, forceMock }: UseWebSocketOptions): UseWebSocketReturn {
+export function useWebSocket({ url, forceMock, onDiscovery }: UseWebSocketOptions): UseWebSocketReturn {
   const [data, setData] = useState<RealtimeData>(BLANK_DATA);
   const [connected, setConnected] = useState(false);
   const [connStatus, setConnStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
   const wsRef = useRef<WebSocket | null>(null);
   const mockTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const onDiscoveryRef = useRef(onDiscovery);
+  onDiscoveryRef.current = onDiscovery;
 
   const startMock = useCallback(() => {
     if (mockTimerRef.current) return;
@@ -238,6 +242,19 @@ export function useWebSocket({ url, forceMock }: UseWebSocketOptions): UseWebSoc
             // 后端 WebSocket 会推送多种消息类型：telemetry / status / discovery / connected
             if (msg.type === 'connected') {
               logger.info('WebSocket', '后端 WS 就绪', { vehicle_id: msg.vehicle_id });
+              return;
+            }
+            if (msg.type === 'discovery') {
+              const d = msg.data ?? {};
+              const tempId = d.temp_id as string | undefined;
+              if (tempId) {
+                logger.info('WebSocket', '发现新设备', { temp_id: tempId, sn: d.sn });
+                onDiscoveryRef.current?.({ temp_id: tempId, sn: String(d.sn ?? '') });
+              }
+              return;
+            }
+            if (msg.type === 'status') {
+              logger.debug('WebSocket', '设备状态', msg.data);
               return;
             }
             if (msg.type && msg.type !== 'telemetry') {

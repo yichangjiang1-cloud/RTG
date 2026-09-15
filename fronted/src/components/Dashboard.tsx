@@ -53,8 +53,6 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
     [history],
   );
 
-  const statusLabel = data.status === 'fix' ? '固定解' : data.status === 'float' ? '浮动解' : '失锁';
-
   // 非模拟模式且未真实连接时，显示遮罩
   const showOverlay = !isMock && connStatus !== 'connected';
 
@@ -224,8 +222,16 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
                         <span>HDOP {r.hdop}</span>
                         <span className={
                           r.status === 'fix' ? 'text-emerald-400' :
-                          r.status === 'float' ? 'text-amber-400' : 'text-red-400'
-                        }>{statusLabel}</span>
+                          r.status === 'float' ? 'text-amber-400' :
+                          r.status === 'dgps' || r.status === 'single' ? 'text-sky-400' :
+                          'text-red-400'
+                        }>{
+                          r.status === 'fix' ? '固定解'
+                            : r.status === 'float' ? '浮动解'
+                            : r.status === 'dgps' ? 'DGPS'
+                            : r.status === 'single' ? '单点'
+                            : '失锁'
+                        }</span>
                       </>
                     )}
                   </div>

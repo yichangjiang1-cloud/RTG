@@ -361,7 +361,7 @@ export default function Settings() {
               </p>
               {selectedVehicle && (
                 <p className="text-[10px] text-slate-500 font-mono mt-0.5">
-                  {selectedVehicle.vehicle_id} · H={selectedVehicle.height}m · W={selectedVehicle.span}m
+                  {selectedVehicle.vehicle_id}
                 </p>
               )}
             </div>
@@ -487,7 +487,7 @@ export default function Settings() {
                         {v.label}
                       </p>
                       <p className="text-[10px] text-slate-500 font-mono mt-0.5">
-                        {v.vehicle_id} · H={v.height}m · W={v.span}m
+                        {v.vehicle_id}
                       </p>
                     </div>
                     {isSelected && <CheckCircle2 className="w-5 h-5 text-blue-400 shrink-0" />}

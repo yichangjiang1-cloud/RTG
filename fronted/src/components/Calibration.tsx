@@ -436,7 +436,17 @@ export default function Calibration({ liveData }: CalibrationProps) {
           <div className="card p-5 space-y-3">
             <InfoRow label="L-Point LAT" value={(liveData.lpoint_geo ?? liveData.gps_coord ?? { lat: 0 }).lat.toFixed(7)} />
             <InfoRow label="L-Point LON" value={(liveData.lpoint_geo ?? liveData.gps_coord ?? { lon: 0 }).lon.toFixed(7)} />
-            <InfoRow label="GNSS" value={liveData.status === 'fix' ? 'RTK FIXED' : 'FLOAT'} mono={false} />
+            <InfoRow
+              label="GNSS"
+              value={
+                liveData.status === 'fix' ? 'RTK FIXED'
+                  : liveData.status === 'float' ? 'RTK FLOAT'
+                  : liveData.status === 'dgps' ? 'DGPS'
+                  : liveData.status === 'single' ? '单点 GPS'
+                  : 'NO SIGNAL'
+              }
+              mono={false}
+            />
           </div>
 
           <button

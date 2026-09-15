@@ -49,6 +49,8 @@ interface AppState {
   addVehicle: (v: VehicleProfile) => void;
   updateVehicle: (v: VehicleProfile) => void;
   deleteVehicle: (vehicleId: string) => void;
+  /** 新中控 discovery 上线时加入待初始化列表 */
+  addPendingDevice: (dev: PendingDevice) => void;
   /** 将场地标记为"已建图"（建图完成后调用） */
   markYardMapped: (yardId: string) => void;
   /** 从后端 API 刷新车辆列表（非模拟模式下调用） */
@@ -86,10 +88,10 @@ const DEFAULT_RECEIVER_LAYOUT = {
   right: 'gantry_a2',
   trolley: 'trolley',
   left_transport: 'tcp' as const,
-  left_host: '192.168.0.101',
+  left_host: '192.168.8.172',
   left_port: 30001,
   right_transport: 'tcp' as const,
-  right_host: '192.168.0.102',
+  right_host: '',
   right_port: 30001,
   trolley_transport: 'udp' as const,
   trolley_host: '0.0.0.0',
@@ -101,8 +103,6 @@ const DEFAULT_VEHICLES: VehicleProfile[] = [
   {
     vehicle_id: 'RTG-001',
     label: 'RTG 01号机',
-    height: 30.0,
-    span: 23.475,
     l_arm: [0.12, 0.08, -29.8],
     l_arm_elec: [0.12, 0.08, -29.8],
     l_arm_diesel: [0.12, 0.08, -29.8],
@@ -111,8 +111,6 @@ const DEFAULT_VEHICLES: VehicleProfile[] = [
   {
     vehicle_id: 'RTG-002',
     label: 'RTG 02号机',
-    height: 30.0,
-    span: 23.475,
     l_arm: [0.12, 0.08, -29.8],
     l_arm_elec: [0.12, 0.08, -29.8],
     l_arm_diesel: [0.12, 0.08, -29.8],
@@ -121,8 +119,6 @@ const DEFAULT_VEHICLES: VehicleProfile[] = [
   {
     vehicle_id: 'RTG-003',
     label: 'RTG 03号机',
-    height: 30.5,
-    span: 23.475,
     l_arm: [0.12, 0.08, -30.3],
     l_arm_elec: [0.12, 0.08, -30.3],
     l_arm_diesel: [0.12, 0.08, -30.3],
@@ -185,6 +181,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setVehicles(prev => prev.filter(x => x.vehicle_id !== vehicleId));
     if (selectedVehicleId === vehicleId) setSelectedVehicleId(null);
   };
+
+  /** MQTT discovery → 后端 WS 广播后，把未初始化设备加入待分配列表 */
+  const addPendingDevice = useCallback((dev: PendingDevice) => {
+    setPendingDevices((prev) => {
+      if (prev.some((d) => d.temp_id === dev.temp_id)) return prev;
+      return [...prev, dev];
+    });
+  }, []);
 
   const markYardMapped = useCallback((yardId: string) => {
     setYards(prev => {
@@ -254,8 +258,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
           .map(d => ({
             vehicle_id: d.vehicle_id,
             label: d.label ?? d.vehicle_id,
-            height: d.height ?? 30.0,
-            span: d.span ?? 23.475,
             l_arm: zeroArm,
             l_arm_elec: zeroArm,
             l_arm_diesel: zeroArm,
@@ -348,8 +350,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     addVehicle({
       vehicle_id: params.new_vehicle_id,
       label: params.label,
-      height: params.h,
-      span: params.w_span,
       l_arm: params.l_arm,
       l_arm_elec: params.l_arm_elec,
       l_arm_diesel: params.l_arm_diesel,
@@ -367,6 +367,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       connStatus, setConnStatus,
       isMock, setIsMock,
       addVehicle, updateVehicle, deleteVehicle,
+      addPendingDevice,
       markYardMapped,
       fetchVehicles,
       fetchYards,

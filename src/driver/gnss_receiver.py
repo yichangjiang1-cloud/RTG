@@ -53,6 +53,10 @@ def _summarize_nmea_types(text: str) -> str:
     types = []
     for line in text.splitlines():
         line = line.strip()
+        if line.startswith("#"):
+            if "BESTPOS2" in line.upper()[:12]:
+                types.append("BESTPOS2A")
+            continue
         if not line.startswith("$"):
             continue
         head = line[1:].split(",", 1)[0].upper()
@@ -149,6 +153,9 @@ class GnssReceiver(threading.Thread):
         self._tcp_send_lock = threading.Lock()
         self._tcp_line_buf = ""
         self._tcp_connected = False
+        # 最近一次有效主天线 GGA（发布后 _frame 会清空，NTRIP 必须读这里）
+        self._last_ntrip_gga: Optional[str] = None
+        self._ntrip_gga_lock = threading.Lock()
 
     @property
     def is_tcp_connected(self) -> bool:
@@ -162,17 +169,30 @@ class GnssReceiver(threading.Thread):
         transport: Optional[str] = None,
         reconnect_interval_s: Optional[float] = None,
     ) -> None:
-        """热更新对端；TCP 下次重连生效，UDP 需重启线程（由 DriverNode 处理）。"""
+        """热更新对端；仅当地址/协议变化时断开 TCP，避免无意义重连。"""
+        changed = False
         with self._endpoint_lock:
-            if host is not None:
+            if host is not None and str(host) != self.host:
                 self.host = str(host)
-            if port is not None:
+                changed = True
+            if port is not None and int(port) != self.port:
                 self.port = int(port)
+                changed = True
             if transport is not None:
-                self.transport = str(transport).strip().lower()
+                t = str(transport).strip().lower()
+                if t != self.transport:
+                    self.transport = t
+                    changed = True
             if reconnect_interval_s is not None:
                 self._reconnect_interval_s = max(1.0, float(reconnect_interval_s))
-        self._close_tcp()
+        if changed:
+            self._close_tcp()
+
+    @staticmethod
+    def _tcp_host_disabled(host: str) -> bool:
+        """未接该侧 EVK 时：host 留空或填 disabled/none/-，不发起连接。"""
+        h = (host or "").strip().lower()
+        return (not h) or h in ("0.0.0.0", "-", "none", "disabled", "n/a")
 
     def inject_rtcm(self, data: bytes) -> bool:
         """经当前 TCP 连接向 EVK 灌入 RTCM（同口）。UDP 模式忽略。"""
@@ -201,41 +221,59 @@ class GnssReceiver(threading.Thread):
                 pass
 
     def get_latest_gga_nmea(self) -> Optional[str]:
-        """构造简化 GGA 供 NTRIP 上报（仅需位置；无校验亦可被多数 caster 接受）。"""
-        f = self._frame
-        if f.latitude is None or f.longitude is None:
-            return None
-        # 使用最近一帧；完整 NMEA 重建较繁琐，这里用最小可用 GGA
-        lat = abs(f.latitude)
-        lon = abs(f.longitude)
-        lat_d = int(lat)
-        lon_d = int(lon)
-        lat_m = (lat - lat_d) * 60.0
-        lon_m = (lon - lon_d) * 60.0
-        ns = "N" if f.latitude >= 0 else "S"
-        ew = "E" if f.longitude >= 0 else "W"
-        body = (
-            f"GNGGA,000000.00,{lat_d:02d}{lat_m:011.8f},{ns},"
-            f"{lon_d:03d}{lon_m:011.8f},{ew},"
-            f"{int(f.fix_quality)},{f.num_satellites},{f.hdop:.1f},"
-            f"{f.altitude:.3f},M,0.0,M,,"
-        )
+        """返回最近一次有效主天线 GGA，供 NTRIP/VRS 上报。
+
+        注意：``_publish_frame`` 后会重置 ``_frame``，不能从当前帧拼 GGA，
+        否则会得到 lat/lon=0 的无效句，caster 表现为「已连接但未上传 GGA」。
+        """
+        with self._ntrip_gga_lock:
+            return self._last_ntrip_gga
+
+    @staticmethod
+    def _nmea_for_ntrip(raw: str) -> str:
+        """部分国内 caster 只认 $GPGGA，将 $GNxGA 归一为 $GPGGA 并重算校验。"""
+        line = (raw or "").strip()
+        if not line.startswith("$") or "*" not in line:
+            return line
+        body, _, _ = line[1:].partition("*")
+        upper = body.upper()
+        if upper.startswith("GN") and "GGA" in upper[:6]:
+            body = "GP" + body[2:]
         csum = 0
         for ch in body:
             csum ^= ord(ch)
         return f"${body}*{csum:02X}"
+
+    def _cache_ntrip_gga(self, parsed: dict) -> None:
+        """缓存有效主天线 GGA；无定位质量则不提供给 NTRIP。"""
+        if int(parsed.get("fix_quality", 0)) <= 0:
+            return
+        lat = parsed.get("lat")
+        lon = parsed.get("lon")
+        if lat is None or lon is None:
+            return
+        if abs(float(lat)) < 1e-8 and abs(float(lon)) < 1e-8:
+            return
+        raw = (parsed.get("raw") or "").strip()
+        if not raw.startswith("$"):
+            return
+        line = self._nmea_for_ntrip(raw)
+        with self._ntrip_gga_lock:
+            self._last_ntrip_gga = line
 
     def _log_raw_packet(self, data: bytes, addr: tuple, text: str) -> None:
         """DEBUG：单行摘要；echo_console 时逐条 NMEA 打印到控制台。"""
         host, port = addr[0], addr[1]
         if self._peer_addr != addr:
             self._peer_addr = addr
+            mode = self.transport.upper()
             logger.info(
-                f"[{self.receiver_id}] UDP 数据源 {host}:{port} → 本机 :{self.port}"
+                f"[{self.receiver_id}] {mode} 数据源 {host}:{port}"
             )
         summary = _summarize_nmea_types(text)
         logger.debug(
-            f"[{self.receiver_id}] UDP {len(data)}B from {host}:{port} | {summary}"
+            f"[{self.receiver_id}] {self.transport.upper()} {len(data)}B "
+            f"from {host}:{port} | {summary}"
         )
         if self._echo_nmea_console:
             for line in _iter_nmea_lines(text):
@@ -355,6 +393,17 @@ class GnssReceiver(threading.Thread):
             while not self._stop_event.is_set():
                 with self._endpoint_lock:
                     host, port = self.host, self.port
+                if self._tcp_host_disabled(host):
+                    logger.info(
+                        "[%s] TCP 未配置有效 EVK 地址（host=%r），暂停连接；"
+                        "接好设备后在前端填写 IP",
+                        self.receiver_id,
+                        host,
+                    )
+                    # 长等待，避免刷屏；热更新 host 时 reconfigure 会 close 并唤醒循环
+                    if self._stop_event.wait(30.0):
+                        break
+                    continue
                 try:
                     sock = socket.create_connection(
                         (host, port), timeout=self._connect_timeout_s
@@ -376,11 +425,23 @@ class GnssReceiver(threading.Thread):
                 self._tcp_sock = sock
                 self._tcp_connected = True
                 self._tcp_line_buf = ""
+                self._tcp_session_rx = 0
+                t0 = time.time()
                 logger.info("[%s] ✓ TCP 已连接 EVK %s:%s", self.receiver_id, host, port)
                 try:
                     self._tcp_recv_loop(sock, host, port)
                 except Exception as e:
-                    logger.warning("[%s] TCP 会话异常: %s", self.receiver_id, e)
+                    dt = time.time() - t0
+                    if self._tcp_session_rx == 0:
+                        logger.warning(
+                            "[%s] TCP 会话异常（%.1fs 内未收到任何数据）: %s — "
+                            "多为 UCENTER/其它软件占用唯一 TCP，或该口未开 NMEA 输出",
+                            self.receiver_id,
+                            dt,
+                            e,
+                        )
+                    else:
+                        logger.warning("[%s] TCP 会话异常: %s", self.receiver_id, e)
                 finally:
                     self._close_tcp()
                     logger.info("[%s] TCP 已断开 %s:%s", self.receiver_id, host, port)
@@ -393,6 +454,7 @@ class GnssReceiver(threading.Thread):
             self._close_tcp()
 
     def _tcp_recv_loop(self, sock: socket.socket, host: str, port: int) -> None:
+        """收包循环。"""
         while not self._stop_event.is_set():
             try:
                 data = sock.recv(_UDP_BUFFER_SIZE)
@@ -411,6 +473,7 @@ class GnssReceiver(threading.Thread):
             if not data:
                 raise ConnectionError("对端关闭连接")
 
+            self._tcp_session_rx = getattr(self, "_tcp_session_rx", 0) + len(data)
             self._ever_received = True
             self._last_data_time = time.time()
             addr = (host, port)
@@ -432,7 +495,8 @@ class GnssReceiver(threading.Thread):
                         line, _, rest = self._tcp_line_buf.partition(sep)
                         self._tcp_line_buf = rest
                         line = line.strip()
-                        if line.startswith("$"):
+                        # $NMEA 与和芯 #BESTPOS2A
+                        if line.startswith("$") or line.startswith("#"):
                             self._process_packet(line)
                         break
                 else:
@@ -479,7 +543,7 @@ class GnssReceiver(threading.Thread):
         else:
             text = data
 
-        sentences = [s.strip() for s in text.splitlines() if s.strip()]
+        sentences = list(_iter_nmea_lines(text))
         parsed = [parse_sentence(s) for s in sentences]
         parsed = [r for r in parsed if r is not None]
         gga_total = sum(1 for r in parsed if r.get("type") == "GGA")
@@ -535,6 +599,7 @@ class GnssReceiver(threading.Thread):
         self._frame.num_satellites = parsed["num_sats"]
         self._frame.hdop = parsed["hdop"]
         self._expect_secondary_gga = True
+        self._cache_ntrip_gga(parsed)
 
     def _apply_secondary_gga(self, parsed: dict) -> None:
         self._frame.antenna2_latitude = parsed["lat"]

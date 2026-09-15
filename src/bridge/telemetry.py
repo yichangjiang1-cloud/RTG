@@ -14,14 +14,21 @@ CST = timezone(timedelta(hours=8))
 
 
 def _gnss_status(fix_quality: int, imu_coasting: bool) -> str:
+    """映射 NMEA GGA quality → 前端状态字。
+
+    1/2/3 = 单点/差分/PPS（非 RTK），不得标成 float（前端曾误显示为 RTK FLOAT）。
+    4 = RTK 固定，5 = RTK 浮动。
+    """
     if imu_coasting or fix_quality <= 0:
         return "no_signal"
+    if fix_quality == int(FixQuality.RTK_FIXED):
+        return "fix"
     if fix_quality == int(FixQuality.RTK_FLOAT):
         return "float"
-    if fix_quality >= int(FixQuality.RTK_FIXED):
-        return "fix"
+    if fix_quality == int(FixQuality.DGPS_FIX):
+        return "dgps"
     if fix_quality >= int(FixQuality.GPS_FIX):
-        return "float"
+        return "single"
     return "no_signal"
 
 
