@@ -15,6 +15,7 @@ from src.core.event_bus import get_bus, EventBus
 from src.models.gnss_data import GnssRaw, FixQuality
 from src.driver.nmea_parser import parse_sentence
 from src.driver.gnss_raw_file_logger import create_gnss_raw_file_logger
+from src.driver.rtcm_inject import RtcmOutQueue, RtcmPacer, flush_rtcm_drain
 from src.solver.coordinate_transform import wgs84_to_ecef
 from src.utils.enhanced_logger import EnhancedLogger
 
@@ -22,8 +23,8 @@ logger = EnhancedLogger.get_logger(__name__)
 
 # UDP 接收缓冲区大小
 _UDP_BUFFER_SIZE = 4096
-# 接收机数据超时告警阈值（秒）
-_DATA_TIMEOUT_S = 2.0
+# 接收机数据超时告警默认阈值（秒）；可被 gnss.offline_timeout_s 覆盖
+_DEFAULT_DATA_TIMEOUT_S = 0.5
 # 未接设备通道：超时提示最小间隔（秒，DEBUG）
 _IDLE_CHANNEL_WARN_INTERVAL_S = 60.0
 # 曾在线后断流：WARNING 最小间隔（秒）
@@ -113,6 +114,7 @@ class GnssReceiver(threading.Thread):
         transport: str = "udp",
         reconnect_interval_s: float = 3.0,
         connect_timeout_s: float = 5.0,
+        offline_timeout_s: float = _DEFAULT_DATA_TIMEOUT_S,
     ):
         """
         :param receiver_id: 接收机标识，如 "gantry_a1"
@@ -120,6 +122,7 @@ class GnssReceiver(threading.Thread):
         :param port:        UDP=监听端口；TCP=EVK 服务端口
         :param transport:   "udp" | "tcp"
         :param bus:         事件总线（默认使用全局单例）
+        :param offline_timeout_s: 无数据超过该秒数打超时告警
         """
         super().__init__(name=f"GnssReceiver-{receiver_id}", daemon=True)
         self.receiver_id = receiver_id
@@ -128,6 +131,7 @@ class GnssReceiver(threading.Thread):
         self.transport = (transport or "udp").strip().lower()
         self._reconnect_interval_s = max(1.0, float(reconnect_interval_s))
         self._connect_timeout_s = max(1.0, float(connect_timeout_s))
+        self._data_timeout_s = max(0.1, float(offline_timeout_s))
         self._bus = bus or get_bus()
         self._stop_event = threading.Event()
         self._endpoint_lock = threading.Lock()
@@ -148,11 +152,16 @@ class GnssReceiver(threading.Thread):
         self._echo_nmea_console = _gnss_raw_log_echo_console()
         self._raw_file_logger = create_gnss_raw_file_logger(receiver_id, port)
 
-        # TCP：活动套接字 + RTCM 发送锁；NMEA 粘包缓冲
+        # TCP：活动套接字；RTCM 只入队，由收包循环点写
         self._tcp_sock: Optional[socket.socket] = None
         self._tcp_send_lock = threading.Lock()
+        self._rtcm_q = RtcmOutQueue()
+        self._rtcm_pacer = RtcmPacer()
         self._tcp_line_buf = ""
         self._tcp_connected = False
+        self._udp_sock: Optional[socket.socket] = None
+        # 地址/协议变更世代号：UDP/TCP 循环检测后换绑或切模式
+        self._endpoint_gen: int = 0
         # 最近一次有效主天线 GGA（发布后 _frame 会清空，NTRIP 必须读这里）
         self._last_ntrip_gga: Optional[str] = None
         self._ntrip_gga_lock = threading.Lock()
@@ -168,8 +177,8 @@ class GnssReceiver(threading.Thread):
         port: Optional[int] = None,
         transport: Optional[str] = None,
         reconnect_interval_s: Optional[float] = None,
-    ) -> None:
-        """热更新对端；仅当地址/协议变化时断开 TCP，避免无意义重连。"""
+    ) -> bool:
+        """热更新对端；地址/协议变化时断开 TCP 或关闭 UDP 以换绑。未变化返回 False。"""
         changed = False
         with self._endpoint_lock:
             if host is not None and str(host) != self.host:
@@ -185,8 +194,12 @@ class GnssReceiver(threading.Thread):
                     changed = True
             if reconnect_interval_s is not None:
                 self._reconnect_interval_s = max(1.0, float(reconnect_interval_s))
+            if changed:
+                self._endpoint_gen += 1
         if changed:
             self._close_tcp()
+            self._close_udp()
+        return changed
 
     @staticmethod
     def _tcp_host_disabled(host: str) -> bool:
@@ -195,25 +208,40 @@ class GnssReceiver(threading.Thread):
         return (not h) or h in ("0.0.0.0", "-", "none", "disabled", "n/a")
 
     def inject_rtcm(self, data: bytes) -> bool:
-        """经当前 TCP 连接向 EVK 灌入 RTCM（同口）。UDP 模式忽略。"""
+        """RTCM 入队，由 TCP 收包线程在可写时点写。NTRIP 线程不得 sendall。"""
         if self.transport != "tcp" or not data:
             return False
-        sock = self._tcp_sock
-        if sock is None or not self._tcp_connected:
+        if getattr(self, "_tcp_session_rx", 0) <= 0:
             return False
-        with self._tcp_send_lock:
-            try:
-                sock.sendall(data)
-                return True
-            except OSError as e:
-                logger.debug("[%s] RTCM 发送失败: %s", self.receiver_id, e)
-                self._close_tcp()
-                return False
+        if self._tcp_sock is None or not self._tcp_connected:
+            return False
+        self._rtcm_q.put(data)
+        return True
+
+    def _flush_rtcm(self, sock: socket.socket) -> None:
+        try:
+            flush_rtcm_drain(sock, self._rtcm_q, self._rtcm_pacer)
+        except OSError as e:
+            logger.debug("[%s] RTCM 点写失败: %s", self.receiver_id, e)
+            raise ConnectionError(str(e)) from e
 
     def _close_tcp(self) -> None:
         self._tcp_connected = False
         sock = self._tcp_sock
         self._tcp_sock = None
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+    def _close_udp(self) -> None:
+        sock = self._udp_sock
+        self._udp_sock = None
         if sock is not None:
             try:
                 sock.close()
@@ -318,70 +346,106 @@ class GnssReceiver(threading.Thread):
         """通知接收线程停止。"""
         self._stop_event.set()
         self._close_tcp()
+        self._close_udp()
 
     def run(self) -> None:
-        """线程主循环：UDP 监听或 TCP 客户端。"""
-        if self.transport == "tcp":
-            self._run_tcp_client()
-        else:
-            self._run_udp_listen()
-
-    def _run_udp_listen(self) -> None:
-        """持续监听 UDP 并解析数据。"""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        _configure_udp_listen_socket(sock)
-        sock.settimeout(1.0)
-
+        """线程主循环：可在 TCP / UDP 间热切换（由 reconfigure 改 transport）。"""
         try:
-            sock.bind((self.host, self.port))
-            logger.info(
-                f"[{self.receiver_id}] UDP 监听 {self.host}:{self.port}"
-            )
-            if self._echo_nmea_console:
-                logger.info(
-                    f"[{self.receiver_id}] NMEA 实时回显已开启 "
-                    f"(gnss.raw_log.echo_console=true)"
-                )
-
             while not self._stop_event.is_set():
-                try:
-                    data, addr = sock.recvfrom(_UDP_BUFFER_SIZE)
-                except socket.timeout:
-                    now = time.time()
-                    if (self._last_data_time > 0
-                            and now - self._last_data_time > _DATA_TIMEOUT_S):
-                        self._log_timeout_if_needed()
-                        if self._raw_file_logger:
-                            self._raw_file_logger.end_session_if_idle(now)
-                    continue
-                except OSError as e:
-                    logger.error(f"[{self.receiver_id}] Socket 错误: {e}")
+                if self.transport == "tcp":
+                    self._run_tcp_client()
+                else:
+                    self._run_udp_listen()
+                if self._stop_event.is_set():
                     break
-
-                self._ever_received = True
-                self._last_data_time = time.time()
-                try:
-                    packet_text = data.decode("ascii", errors="ignore")
-                except UnicodeDecodeError:
-                    logger.warning(
-                        f"[{self.receiver_id}] UDP 非 ASCII，{len(data)}B hex={data.hex()}"
-                    )
-                    if self._raw_file_logger:
-                        self._raw_file_logger.write_packet(data, addr, time.time())
-                    continue
-                if self._raw_file_logger:
-                    self._raw_file_logger.write_packet(data, addr, time.time())
-                self._log_raw_packet(data, addr, packet_text)
-                self._process_packet(packet_text)
-
+                # 协议已切换：短暂休眠后进入另一模式
+                self._stop_event.wait(0.2)
         finally:
             if self._raw_file_logger:
                 self._raw_file_logger.close()
-            sock.close()
-            logger.info(f"[{self.receiver_id}] UDP 监听已关闭")
+            self._close_tcp()
+            self._close_udp()
+
+    def _run_udp_listen(self) -> None:
+        """UDP 监听；host/port/transport 变更时换绑并返回。"""
+        while not self._stop_event.is_set():
+            if self.transport != "udp":
+                return
+            with self._endpoint_lock:
+                host, port, gen = self.host, self.port, self._endpoint_gen
+
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            _configure_udp_listen_socket(sock)
+            sock.settimeout(1.0)
+            self._udp_sock = sock
+            try:
+                sock.bind((host, port))
+                logger.info("[%s] UDP 监听 %s:%s", self.receiver_id, host, port)
+                if self._echo_nmea_console:
+                    logger.info(
+                        "[%s] NMEA 实时回显已开启 (gnss.raw_log.echo_console=true)",
+                        self.receiver_id,
+                    )
+
+                while not self._stop_event.is_set():
+                    if self.transport != "udp" or self._endpoint_gen != gen:
+                        break
+                    try:
+                        data, addr = sock.recvfrom(_UDP_BUFFER_SIZE)
+                    except socket.timeout:
+                        now = time.time()
+                        if (
+                            self._last_data_time > 0
+                            and now - self._last_data_time > self._data_timeout_s
+                        ):
+                            self._log_timeout_if_needed()
+                            if self._raw_file_logger:
+                                self._raw_file_logger.end_session_if_idle(now)
+                        continue
+                    except OSError as e:
+                        if self._stop_event.is_set() or self._endpoint_gen != gen:
+                            break
+                        logger.error("[%s] Socket 错误: %s", self.receiver_id, e)
+                        break
+
+                    self._ever_received = True
+                    self._last_data_time = time.time()
+                    try:
+                        packet_text = data.decode("ascii", errors="ignore")
+                    except UnicodeDecodeError:
+                        logger.warning(
+                            "[%s] UDP 非 ASCII，%sB hex=%s",
+                            self.receiver_id,
+                            len(data),
+                            data.hex(),
+                        )
+                        if self._raw_file_logger:
+                            self._raw_file_logger.write_packet(data, addr, time.time())
+                        continue
+                    if self._raw_file_logger:
+                        self._raw_file_logger.write_packet(data, addr, time.time())
+                    self._log_raw_packet(data, addr, packet_text)
+                    self._process_packet(packet_text)
+            except OSError as e:
+                logger.error(
+                    "[%s] UDP bind %s:%s 失败: %s", self.receiver_id, host, port, e
+                )
+                if self._stop_event.wait(self._reconnect_interval_s):
+                    return
+            finally:
+                if self._udp_sock is sock:
+                    self._udp_sock = None
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+                logger.info("[%s] UDP 监听已关闭 %s:%s", self.receiver_id, host, port)
+
+            if self.transport != "udp" or self._stop_event.is_set():
+                return
 
     def _run_tcp_client(self) -> None:
-        """作为客户端连接 EVK TCP 服务端，断线自动重连。"""
+        """作为客户端连接 EVK TCP 服务端，断线自动重连；transport 切走则返回。"""
         logger.info(
             "[%s] TCP 客户端模式 → %s:%s（断线每 %.0fs 重试）",
             self.receiver_id,
@@ -389,69 +453,78 @@ class GnssReceiver(threading.Thread):
             self.port,
             self._reconnect_interval_s,
         )
-        try:
-            while not self._stop_event.is_set():
-                with self._endpoint_lock:
-                    host, port = self.host, self.port
-                if self._tcp_host_disabled(host):
-                    logger.info(
-                        "[%s] TCP 未配置有效 EVK 地址（host=%r），暂停连接；"
-                        "接好设备后在前端填写 IP",
-                        self.receiver_id,
-                        host,
-                    )
-                    # 长等待，避免刷屏；热更新 host 时 reconfigure 会 close 并唤醒循环
-                    if self._stop_event.wait(30.0):
-                        break
-                    continue
-                try:
-                    sock = socket.create_connection(
-                        (host, port), timeout=self._connect_timeout_s
-                    )
-                except OSError as e:
-                    logger.warning(
-                        "[%s] TCP 连接 %s:%s 失败: %s，%.0fs 后重试",
-                        self.receiver_id,
-                        host,
-                        port,
-                        e,
-                        self._reconnect_interval_s,
-                    )
-                    if self._stop_event.wait(self._reconnect_interval_s):
-                        break
-                    continue
-
-                sock.settimeout(1.0)
-                self._tcp_sock = sock
-                self._tcp_connected = True
-                self._tcp_line_buf = ""
-                self._tcp_session_rx = 0
-                t0 = time.time()
-                logger.info("[%s] ✓ TCP 已连接 EVK %s:%s", self.receiver_id, host, port)
-                try:
-                    self._tcp_recv_loop(sock, host, port)
-                except Exception as e:
-                    dt = time.time() - t0
-                    if self._tcp_session_rx == 0:
-                        logger.warning(
-                            "[%s] TCP 会话异常（%.1fs 内未收到任何数据）: %s — "
-                            "多为 UCENTER/其它软件占用唯一 TCP，或该口未开 NMEA 输出",
-                            self.receiver_id,
-                            dt,
-                            e,
-                        )
-                    else:
-                        logger.warning("[%s] TCP 会话异常: %s", self.receiver_id, e)
-                finally:
-                    self._close_tcp()
-                    logger.info("[%s] TCP 已断开 %s:%s", self.receiver_id, host, port)
-
+        while not self._stop_event.is_set():
+            if self.transport != "tcp":
+                return
+            with self._endpoint_lock:
+                host, port = self.host, self.port
+            if self._tcp_host_disabled(host):
+                logger.info(
+                    "[%s] TCP 未配置有效 EVK 地址（host=%r），暂停连接；"
+                    "接好设备后在前端填写 IP",
+                    self.receiver_id,
+                    host,
+                )
+                if self._stop_event.wait(30.0):
+                    return
+                continue
+            try:
+                sock = socket.create_connection(
+                    (host, port), timeout=self._connect_timeout_s
+                )
+            except OSError as e:
+                logger.warning(
+                    "[%s] TCP 连接 %s:%s 失败: %s，%.0fs 后重试",
+                    self.receiver_id,
+                    host,
+                    port,
+                    e,
+                    self._reconnect_interval_s,
+                )
                 if self._stop_event.wait(self._reconnect_interval_s):
-                    break
-        finally:
-            if self._raw_file_logger:
-                self._raw_file_logger.close()
-            self._close_tcp()
+                    return
+                continue
+
+            sock.settimeout(1.0)
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 256 * 1024)
+            except OSError:
+                pass
+            self._tcp_sock = sock
+            self._tcp_connected = True
+            self._tcp_line_buf = ""
+            self._tcp_session_rx = 0
+            self._rtcm_q.clear()
+            t0 = time.time()
+            logger.info("[%s] ✓ TCP 已连接 EVK %s:%s", self.receiver_id, host, port)
+            empty_rst = False
+            try:
+                self._tcp_recv_loop(sock, host, port)
+            except Exception as e:
+                dt = time.time() - t0
+                empty_rst = self._tcp_session_rx == 0
+                if empty_rst:
+                    logger.warning(
+                        "[%s] TCP 会话异常（连接仅维持 %.1fs 且未收到任何字节）: %s — "
+                        "对端主动 RST：上一连接未释放、或刚写入的 RTCM 被 NMEA 口拒绝。"
+                        "将拉长重连间隔，避免把接收机打满",
+                        self.receiver_id,
+                        dt,
+                        e,
+                    )
+                else:
+                    logger.warning("[%s] TCP 会话异常: %s", self.receiver_id, e)
+            finally:
+                self._close_tcp()
+                logger.info("[%s] TCP 已断开 %s:%s", self.receiver_id, host, port)
+
+            if self.transport != "tcp":
+                return
+            wait_s = self._reconnect_interval_s
+            if empty_rst:
+                wait_s = max(wait_s, 15.0)
+            if self._stop_event.wait(wait_s):
+                return
 
     def _tcp_recv_loop(self, sock: socket.socket, host: str, port: int) -> None:
         """收包循环。"""
@@ -462,11 +535,12 @@ class GnssReceiver(threading.Thread):
                 now = time.time()
                 if (
                     self._last_data_time > 0
-                    and now - self._last_data_time > _DATA_TIMEOUT_S
+                    and now - self._last_data_time > self._data_timeout_s
                 ):
                     self._log_timeout_if_needed()
                     if self._raw_file_logger:
                         self._raw_file_logger.end_session_if_idle(now)
+                self._flush_rtcm(sock)
                 continue
             except OSError as e:
                 raise ConnectionError(str(e)) from e
@@ -484,8 +558,10 @@ class GnssReceiver(threading.Thread):
             try:
                 text = data.decode("ascii", errors="ignore")
             except UnicodeDecodeError:
+                self._flush_rtcm(sock)
                 continue
             if not text:
+                self._flush_rtcm(sock)
                 continue
             self._log_raw_packet(data, addr, text)
             self._tcp_line_buf += text
@@ -504,6 +580,7 @@ class GnssReceiver(threading.Thread):
             # 防止缓冲无限增长
             if len(self._tcp_line_buf) > 8192:
                 self._tcp_line_buf = self._tcp_line_buf[-2048:]
+            self._flush_rtcm(sock)
 
     def _log_timeout_if_needed(self) -> None:
         now = time.time()
@@ -522,7 +599,7 @@ class GnssReceiver(threading.Thread):
             else f"监听 :{self.port}"
         )
         msg = (
-            f"[{self.receiver_id}] {_DATA_TIMEOUT_S:.0f}s 无 {mode} 数据 "
+            f"[{self.receiver_id}] {self._data_timeout_s:g}s 无 {mode} 数据 "
             f"({endpoint})"
         )
         if self._ever_received:

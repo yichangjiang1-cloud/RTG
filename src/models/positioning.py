@@ -171,6 +171,15 @@ class PositionResult:
     fix_quality_right_ant2: int = 0
     fix_quality_trolley: int = 0
     fix_quality_trolley_ant2: int = 0
+    satellites_left: int = 0
+    satellites_right: int = 0
+    satellites_trolley: int = 0
+    hdop_left: float = 99.9
+    hdop_right: float = 99.9
+    hdop_trolley: float = 99.9
     trolley_antenna_primary: dict = field(default_factory=dict)
     trolley_antenna_secondary: dict = field(default_factory=dict)
+
+    # 大车双路姿态对比：primary=NMEA+高差，four_antenna=四 GGA 刚体
+    gantry_attitude_compare: dict = field(default_factory=dict)
 

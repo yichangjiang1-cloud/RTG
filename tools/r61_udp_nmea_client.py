@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--port",
         type=int,
-        default=9001,
+        default=9002,
         help="本机监听端口，须与设备 Socket 目标端口一致",
     )
     p.add_argument(

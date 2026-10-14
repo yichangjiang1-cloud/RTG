@@ -31,7 +31,7 @@ from src.solver.attitude import euler_to_rotation_matrix
 from src.fusion.gantry_attitude import (
     GantryAttitudeConfig,
     build_gantry_antennas_payload,
-    compute_gantry_attitude,
+    compute_gantry_attitude_compare,
     derive_heading_pitch_from_dual_gga,
     normalize_heading_deg,
 )
@@ -108,6 +108,9 @@ class FusionNode:
         # 丢星补偿策略参数
         self._gnss_outage_max   = cfg.get("ekf.gnss_outage_max_s",       10.0)
         self._coasting_pos_limit = cfg.get("ekf.imu_coasting_pos_limit", 0.25)
+        self._offline_timeout_s = max(
+            0.1, float(cfg.get("gnss.offline_timeout_s", 0.5))
+        )
 
         # 三台接收机各自的状态
         self._states: Dict[str, ReceiverState] = {
@@ -411,7 +414,7 @@ class FusionNode:
                 now_ts = time.time()
                 is_live = (
                     s.last_gnss_time > 0
-                    and (now_ts - s.last_gnss_time) < 2.0
+                    and (now_ts - s.last_gnss_time) < self._offline_timeout_s
                     and s.fix_quality > int(FixQuality.INVALID)
                 )
                 has_antenna2 = False
@@ -479,7 +482,7 @@ class FusionNode:
         d_a1 = _state_dict(s_a1)
         d_a2 = _state_dict(s_a2)
         d_tly = _state_dict(s_tly)
-        self._apply_gantry_attitude(s_a1, s_a2, d_a1, d_a2)
+        att_compare = self._apply_gantry_attitude(s_a1, s_a2, d_a1, d_a2)
         if d_a1.get("is_live"):
             ref = d_a1
         elif d_a2.get("is_live"):
@@ -495,6 +498,7 @@ class FusionNode:
             "gantry_a2": d_a2,
             "trolley":   d_tly,
             "gantry_antennas": gantry_antennas,
+            "gantry_attitude_compare": att_compare or {},
             "fix_quality":          ref.get("fix_quality", 0),
             "imu_coasting":         ref.get("is_coasting", False),
             "imu_coasting_duration": ref.get("coasting_duration", 0.0),
@@ -521,45 +525,88 @@ class FusionNode:
         s_a2: ReceiverState,
         d_a1: dict,
         d_a2: dict,
-    ) -> None:
-        """双接收机联合姿态 → 写入 gantry_a1（solver 主通道）。"""
+    ) -> Optional[dict]:
+        """
+        双接收机联合姿态 → 优先写入 gantry_a1；仅右机在线时写入 gantry_a2。
+        主通道跟随配置 mode（four_antenna / dual_receiver）；另一路并行对比。
+        """
         ga1 = s_a1.last_gnss
         ga2 = s_a2.last_gnss
-        if ga1 is None or s_a1.ref_lat is None:
-            return
+        ga1_live = bool(d_a1.get("is_live"))
+        ga2_live = bool(d_a2.get("is_live"))
 
-        att = compute_gantry_attitude(
+        # 参考点：优先左机 NED 原点；仅右机有定位时用右机
+        if s_a1.ref_lat is not None and ga1 is not None:
+            ref_lat, ref_lon, ref_alt = s_a1.ref_lat, s_a1.ref_lon, s_a1.ref_alt
+        elif s_a2.ref_lat is not None and ga2 is not None:
+            ref_lat, ref_lon, ref_alt = s_a2.ref_lat, s_a2.ref_lon, s_a2.ref_alt
+        else:
+            return None
+
+        compare = compute_gantry_attitude_compare(
             ga1,
             ga2,
-            bool(d_a1.get("is_live")),
-            bool(d_a2.get("is_live")),
+            ga1_live,
+            ga2_live,
             self._gantry_att_cfg,
-            s_a1.ref_lat,
-            s_a1.ref_lon,
-            s_a1.ref_alt,
+            ref_lat,
+            ref_lon,
+            ref_alt,
         )
+        att = compare.primary
         if att is None:
-            return
+            return compare.to_dict()
 
-        d_a1["heading"] = att.heading_deg
-        d_a1["pitch"] = att.pitch_deg
-        d_a1["roll"] = att.roll_deg
-        d_a1["attitude_source"] = att.source
+        for d in (d_a1, d_a2):
+            d["heading"] = att.heading_deg
+            d["pitch"] = att.pitch_deg
+            d["roll"] = att.roll_deg
+            d["attitude_source"] = att.source
+            d["attitude_primary_method"] = compare.primary_method
 
         with s_a1._lock:
             s_a1.heading_deg = att.heading_deg
             s_a1.pitch_deg = att.pitch_deg
             s_a1.roll_deg = att.roll_deg
+        with s_a2._lock:
+            s_a2.heading_deg = att.heading_deg
+            s_a2.pitch_deg = att.pitch_deg
+            s_a2.roll_deg = att.roll_deg
 
+        compare_dict = compare.to_dict()
         if att.source != self._last_gantry_att_source:
             self._last_gantry_att_source = att.source
-            logger.info(
-                "[gantry] 联合姿态 | 来源=%s | hdg=%.2f° pitch=%.2f° roll=%.2f° | "
-                "a1_live=%s a2_live=%s",
-                att.source,
-                att.heading_deg,
-                att.pitch_deg,
-                att.roll_deg,
-                d_a1.get("is_live"),
-                d_a2.get("is_live"),
-            )
+            four = compare.four_antenna
+            dual = compare.dual_receiver
+            delta = compare.delta
+            if four is not None and dual is not None and delta is not None:
+                logger.info(
+                    "[gantry] 姿态主用=%s | 四GGA hdg=%.2f pitch=%.2f roll=%.2f | "
+                    "双接收机(%s) hdg=%.2f pitch=%.2f roll=%.2f | "
+                    "Δ(对比−主) hdg=%.2f pitch=%.2f roll=%.2f",
+                    compare.primary_method,
+                    four.heading_deg,
+                    four.pitch_deg,
+                    four.roll_deg,
+                    dual.source,
+                    dual.heading_deg,
+                    dual.pitch_deg,
+                    dual.roll_deg,
+                    delta["heading_deg"],
+                    delta["pitch_deg"],
+                    delta["roll_deg"],
+                )
+            else:
+                logger.info(
+                    "[gantry] 联合姿态 | 主用=%s 来源=%s | hdg=%.2f° pitch=%.2f° roll=%.2f° | "
+                    "a1_live=%s a2_live=%s four_ready=%s",
+                    compare.primary_method,
+                    att.source,
+                    att.heading_deg,
+                    att.pitch_deg,
+                    att.roll_deg,
+                    ga1_live,
+                    ga2_live,
+                    compare.four_ready,
+                )
+        return compare_dict

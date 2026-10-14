@@ -95,9 +95,11 @@ def parse_unicore_bestpos2a(sentence: str) -> Optional[dict]:
     解析和芯 UB482/UM 系列副天线位置 #BESTPOS2A ASCII 日志。
 
     例::
-        #BESTPOS2A,COM1,...;SOL_COMPUTED,SINGLE,lat,lon,hgt,undulation,WGS84,...*crc
+        #BESTPOS2A,COM1,...;SOL_COMPUTED,NARROW_INT,lat,lon,hgt,undulation,WGS84,...*crc
 
-    分号后为十进制度 WGS84 坐标，等价于副天线 GGA。
+    分号后为十进制度 WGS84。hgt 与主天线 GGA 第 9 字段同为**正高/海拔**
+   （和芯/诺瓦泰 BESTPOS 惯例）；undulation 为高程异常，仅作参考，
+    不可再与 hgt 相加（固定解下 hgt 已与 GGA 对齐，再加会低约 |N|≈14 m）。
     """
     line = sentence.strip()
     upper = line.upper()
@@ -121,6 +123,9 @@ def parse_unicore_bestpos2a(sentence: str) -> Optional[dict]:
         lat = float(fields[2])
         lon = float(fields[3])
         hgt = float(fields[4])
+        undulation = 0.0
+        if len(fields) > 5 and fields[5].strip():
+            undulation = float(fields[5])
         num_sats = 0
         if len(fields) > 14 and fields[14]:
             num_sats = int(float(fields[14]))
@@ -133,6 +138,7 @@ def parse_unicore_bestpos2a(sentence: str) -> Optional[dict]:
             "lat": lat,
             "lon": lon,
             "alt": hgt,
+            "undulation": undulation,
             "fix_quality": _unicore_pos_type_to_fix(pos_type, sol_status),
             "num_sats": num_sats,
             "hdop": 99.9,

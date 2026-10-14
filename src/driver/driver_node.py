@@ -1,8 +1,9 @@
 ﻿"""
 驱动节点：driver_node
 负责编排所有接收机线程（GNSS x 3 + IMU x 1）的生命周期管理。
-大车可为 TCP 客户端连 EVK；小车保持 UDP 监听。
-全局一份 NTRIP，RTCM 同口转发给两台大车 EVK。
+大车：一侧 EVK(TCP) + 一侧双 GGA(UDP)，谁是 EVK 由 layout.transport 决定；
+小车保持 UDP 监听。
+全局一份 NTRIP，RTCM 仅转发给大车 EVK(TCP) 侧。
 """
 from typing import List, Optional
 
@@ -31,6 +32,7 @@ class DriverNode:
         self._by_role: dict = {}
         self._running = False
 
+        offline_timeout = max(0.1, float(cfg.get("gnss.offline_timeout_s", 0.5)))
         for key in ("receiver_a1", "receiver_a2", "receiver_b"):
             host = cfg.get(f"gnss.{key}.host", "0.0.0.0")
             port = cfg.get(f"gnss.{key}.port", 9001)
@@ -43,6 +45,7 @@ class DriverNode:
                 port=port,
                 transport=transport,
                 reconnect_interval_s=reconnect,
+                offline_timeout_s=offline_timeout,
             )
             self._receivers.append(rcv)
             self._by_role[role] = rcv
@@ -52,6 +55,15 @@ class DriverNode:
         self._imu_receiver = ImuReceiver(host=imu_host, port=imu_port)
 
         self._init_ntrip_from_cfg(cfg)
+
+    def _gantry_evk_receivers(self) -> List[GnssReceiver]:
+        """大车当前为 TCP（EVK）的接收机。"""
+        out: List[GnssReceiver] = []
+        for role in ("gantry_a1", "gantry_a2"):
+            rcv = self._by_role.get(role)
+            if rcv is not None and rcv.transport == "tcp":
+                out.append(rcv)
+        return out
 
     def _init_ntrip_from_cfg(self, cfg) -> None:
         enabled = bool(cfg.get("ntrip.enabled", False))
@@ -71,23 +83,22 @@ class DriverNode:
         )
 
     def _provide_ntrip_gga(self) -> Optional[str]:
-        """电气侧（左）主天线 GGA，供 NTRIP/VRS 上报。"""
-        left = self._by_role.get("gantry_a1")
-        if left is None:
-            return None
-        return left.get_latest_gga_nmea()
+        """从大车 EVK(TCP) 侧取主天线 GGA，供 NTRIP/VRS 上报。"""
+        for rcv in self._gantry_evk_receivers():
+            gga = rcv.get_latest_gga_nmea()
+            if gga:
+                return gga
+        return None
 
     def _fanout_rtcm(self, data: bytes) -> None:
-        """全局一份差分 → 两台大车 EVK TCP。"""
-        for role in ("gantry_a1", "gantry_a2"):
-            rcv = self._by_role.get(role)
-            if rcv is not None:
-                rcv.inject_rtcm(data)
+        """全局一份差分 → 仅转发给大车 EVK(TCP)。"""
+        for rcv in self._gantry_evk_receivers():
+            rcv.inject_rtcm(data)
 
     def apply_gnss_layout(self, layout: dict, ntrip: Optional[dict] = None) -> None:
         """
-        热更新 EVK 地址 / NTRIP（来自车辆配置 MQTT）。
-        TCP 接收机会断线重连到新地址；UDP 仅更新字段（端口变更需重启中控）。
+        热更新大车/小车地址与 NTRIP（来自车辆配置 MQTT）。
+        TCP/UDP 地址与协议变化时接收机自动重连或换绑。
         """
         if not isinstance(layout, dict):
             layout = {}
@@ -106,8 +117,7 @@ class DriverNode:
                 kwargs["port"] = int(port)
             if transport is not None:
                 kwargs["transport"] = str(transport)
-            if kwargs:
-                rcv.reconfigure(**kwargs)
+            if kwargs and rcv.reconfigure(**kwargs):
                 logger.info(
                     "GNSS [%s] 热更新 → transport=%s %s:%s",
                     role,
@@ -140,15 +150,15 @@ class DriverNode:
                         logger.info("NTRIP 已按云端配置创建（待 DriverNode.start）")
                 else:
                     self._ntrip.set_gga_provider(self._provide_ntrip_gga)
-                    self._ntrip.reconfigure(
+                    if self._ntrip.reconfigure(
                         host=ntrip.get("caster_host"),
                         port=ntrip.get("caster_port"),
                         mountpoint=ntrip.get("mountpoint"),
                         username=ntrip.get("username"),
                         password=ntrip.get("password"),
                         gga_interval_s=ntrip.get("gga_interval_s"),
-                    )
-                    logger.info("NTRIP 参数已热更新并重连")
+                    ):
+                        logger.info("NTRIP 参数已变化，将重连差分")
             elif self._ntrip is not None:
                 self._ntrip.stop()
                 self._ntrip = None
@@ -160,12 +170,11 @@ class DriverNode:
             return
         if self._ntrip.is_alive():
             return
-        # 已 start 过且已退出：需新建实例（Python 线程只能 start 一次）
         if self._ntrip.ident is not None:
             logger.warning("NTRIP 线程已结束，跳过二次 start（请热更新重建）")
             return
         self._ntrip.start()
-        logger.info("  → NTRIP 全局差分转发已启动")
+        logger.info("  → NTRIP 全局差分（仅 EVK TCP 侧）已启动")
 
     def start(self) -> None:
         """启动所有接收机线程。"""

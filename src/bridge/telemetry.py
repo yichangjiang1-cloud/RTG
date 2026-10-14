@@ -32,24 +32,55 @@ def _gnss_status(fix_quality: int, imu_coasting: bool) -> str:
     return "no_signal"
 
 
-def _build_receivers(g, t, fix_quality: int, imu_coasting: bool) -> list:
-    status = _gnss_status(fix_quality, imu_coasting)
+def _build_receivers(result: PositionResult) -> list:
+    """按各接收机实时 live + 本机 fix_quality / 星数 组装，互不串用总质量。"""
+    g = result.gantry
+    t = result.trolley
+    coast = result.imu_coasting_active
 
-    def _entry(rid: str, label: str, live: bool) -> dict:
+    def _entry(
+        rid: str,
+        label: str,
+        live: bool,
+        fix_q: int,
+        sats: int,
+        hdop: float,
+    ) -> dict:
         return {
             "id": rid,
             "label": label,
             "position": label,
-            "status": status if live else "no_signal",
-            "satellites": 0,
-            "hdop": 0.0,
-            "valid": live,
+            "status": _gnss_status(fix_q, coast) if live else "no_signal",
+            "satellites": int(sats) if live else 0,
+            "hdop": float(hdop) if live else 0.0,
+            "valid": bool(live),
         }
 
     return [
-        _entry("gantry_a1", "左 EVK 主 GGA → 电气侧作业点", g.recv1_live),
-        _entry("gantry_a2", "右 EVK 主 GGA → 动力侧作业点", g.recv2_live),
-        _entry("trolley", "小车接收机 9003", t.is_valid),
+        _entry(
+            "gantry_a1",
+            "左（电气）主 GGA → 作业点",
+            g.recv1_live,
+            result.fix_quality_left,
+            result.satellites_left,
+            result.hdop_left,
+        ),
+        _entry(
+            "gantry_a2",
+            "右（动力）主 GGA → 作业点",
+            g.recv2_live,
+            result.fix_quality_right,
+            result.satellites_right,
+            result.hdop_right,
+        ),
+        _entry(
+            "trolley",
+            "小车接收机 9003",
+            t.is_valid,
+            result.fix_quality_trolley,
+            result.satellites_trolley,
+            result.hdop_trolley,
+        ),
     ]
 
 
@@ -112,6 +143,10 @@ def position_result_to_realtime(result: PositionResult) -> dict:
         "heading": g.heading,
         "roll": g.roll,
         "pitch": g.pitch,
+        "attitude_source": (
+            (result.gantry_attitude_compare or {}).get("primary") or {}
+        ).get("source", ""),
+        "gantry_attitude_compare": result.gantry_attitude_compare or {},
         "speed": g.speed,
         # 接收机1 双天线 WGS84（杆臂智能标定：A1=ref_antenna，A2=antenna2）
         "antenna2": {
@@ -125,9 +160,7 @@ def position_result_to_realtime(result: PositionResult) -> dict:
         },
         "status": _gnss_status(result.gnss_fix_quality, result.imu_coasting_active),
         "gantry_antennas": result.gantry_antennas or {},
-        "receivers": _build_receivers(
-            g, t, result.gnss_fix_quality, result.imu_coasting_active
-        ),
+        "receivers": _build_receivers(result),
         "gantry": {
             "receiver_left": {
                 "x": g.center_elec_side,

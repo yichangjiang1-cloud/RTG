@@ -10,8 +10,10 @@ from __future__ import annotations
 import numpy as np
 from typing import Sequence, Tuple
 
-from src.solver.attitude import euler_to_rotation_matrix
-from src.solver.coordinate_transform import wgs84_to_ecef
+from src.solver.attitude import body_to_enu_rotation, euler_to_rotation_matrix
+from src.solver.coordinate_transform import ecef_to_enu, ecef_to_wgs84, wgs84_to_ecef
+
+_ECEF_NORM_MIN = 1.0e6
 
 
 def compute_l_arm_from_ecef(
@@ -21,10 +23,17 @@ def compute_l_arm_from_ecef(
     pitch_deg: float,
     heading_deg: float,
 ) -> np.ndarray:
-    """ECEF 下两点 + 姿态 → 车体系杆臂 [dx, dy, dz]。"""
-    R = euler_to_rotation_matrix(roll_deg, pitch_deg, heading_deg)
-    delta = np.asarray(antenna_ecef, dtype=float) - np.asarray(lpoint_ecef, dtype=float)
-    return R.T @ delta
+    """两点 + 姿态 → 车体系杆臂 [dx, dy, dz]（X 前 Y 左 Z 上）。"""
+    ant = np.asarray(antenna_ecef, dtype=float)
+    lp = np.asarray(lpoint_ecef, dtype=float)
+    if float(np.linalg.norm(ant)) > _ECEF_NORM_MIN:
+        lat, lon, alt = ecef_to_wgs84(float(lp[0]), float(lp[1]), float(lp[2]))
+        e, n, u = ecef_to_enu(float(ant[0]), float(ant[1]), float(ant[2]), lat, lon, alt)
+        delta_enu = np.array([e, n, u], dtype=float)
+        r_be = body_to_enu_rotation(roll_deg, pitch_deg, heading_deg)
+        return r_be.T @ delta_enu
+    r = euler_to_rotation_matrix(roll_deg, pitch_deg, heading_deg)
+    return r.T @ (ant - lp)
 
 
 def compute_l_arm_from_wgs84(

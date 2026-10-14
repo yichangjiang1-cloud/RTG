@@ -17,6 +17,16 @@ def test_parse_sentence_vtg():
     assert r is not None and r["type"] == "VTG"
 
 
+def test_parse_pashr_ashtech():
+    """$PASHR,time,heading,T,roll,pitch,heave,... — 横滚是第 5 字段，不是航向。"""
+    s = "$PASHR,023242.10,119.33,T,-0.15,0.56,-0.13,0.502,0.502,0.021,1*36"
+    r = parse_attitude(s)
+    assert r is not None
+    assert abs(r["heading_deg"] - 119.33) < 1e-6
+    assert abs(r["roll_deg"] - (-0.15)) < 1e-6
+    assert abs(r["pitch_deg"] - 0.56) < 1e-6
+
+
 def test_parse_gnhpr():
     s = "$GNHPR,064913.00,174.0726,16.0075,,4,25,1.00,0999*75"
     r = parse_attitude(s)

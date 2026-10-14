@@ -153,7 +153,7 @@ function InitDeviceModal({ device, backendBase, onClose, onDone }: {
           )}
 
           <p className="text-[10px] text-slate-500 leading-relaxed">
-            杆臂在「智能杆臂标定」中一键计算；左右间距在「姿态」页填 roll_span。
+            杆臂在「智能杆臂标定」中一键计算；横滚由左右主 GGA 高差自动估算。
           </p>
         </div>
 
@@ -176,9 +176,9 @@ const DEFAULT_RECEIVER_LAYOUT: ReceiverLayout = {
   left_transport: 'tcp',
   left_host: '192.168.8.172',
   left_port: 30001,
-  right_transport: 'tcp',
-  right_host: '',
-  right_port: 30001,
+  right_transport: 'udp',
+  right_host: '0.0.0.0',
+  right_port: 9002,
   trolley_transport: 'udp',
   trolley_host: '0.0.0.0',
   trolley_port: 9003,
@@ -197,7 +197,7 @@ const DEFAULT_NTRIP: NtripConfig = {
 
 function defaultGantryAttitude(span: number, baseline = 1): GantryAttitudeConfig {
   return {
-    mode: 'hdt_tra_height_roll',
+    mode: 'four_antenna',
     baseline_m: baseline,
     roll_span_m: span,
     roll_alt0_m: 0,
@@ -207,6 +207,17 @@ function defaultGantryAttitude(span: number, baseline = 1): GantryAttitudeConfig
       b1: [0, -span, 0],
       b2: [baseline, -span, 0],
     },
+  };
+}
+
+function normalizeGantryAttitude(
+  att: GantryAttitudeConfig | undefined,
+  span: number,
+): GantryAttitudeConfig {
+  const base = att ?? defaultGantryAttitude(span);
+  return {
+    ...base,
+    mode: base.mode === 'dual_receiver' ? 'dual_receiver' : 'four_antenna',
   };
 }
 
@@ -285,7 +296,10 @@ function mergeVehicleConfig(
     l_arm_elec: data?.l_arm_elec ?? local.l_arm_elec ?? legacy,
     l_arm_diesel: data?.l_arm_diesel ?? local.l_arm_diesel ?? legacy,
     l_arm_calibration: data?.l_arm_calibration ?? local.l_arm_calibration,
-    gantry_attitude: data?.gantry_attitude ?? local.gantry_attitude ?? defaultGantryAttitude(span),
+    gantry_attitude: normalizeGantryAttitude(
+      data?.gantry_attitude ?? local.gantry_attitude,
+      span,
+    ),
     receiver_layout: data?.receiver_layout ?? local.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT,
     ntrip: data?.ntrip ?? local.ntrip ?? DEFAULT_NTRIP,
     trolley: data?.trolley ?? local.trolley ?? { origin_mode: 'auto' },
@@ -298,6 +312,17 @@ const DEFAULT_ARM: [number, number, number] = [0, 0, 0];
 // 智能杆臂标定
 // ============================================================
 const MAX_CALIB_SPEED = 0.08;
+
+/** 大车左右主天线均为 RTK 固定解 */
+function isGantryRtkFixed(liveData: RealtimeData): boolean {
+  const left = liveData.receivers.find((r) => r.id === 'gantry_a1');
+  const right = liveData.receivers.find((r) => r.id === 'gantry_a2');
+  if (left && right) {
+    return left.status === 'fix' && right.status === 'fix'
+      && left.valid !== false && right.valid !== false;
+  }
+  return liveData.status === 'fix';
+}
 
 type AntennaEcefSource = { ecef_x?: number; ecef_y?: number; ecef_z?: number };
 
@@ -378,22 +403,32 @@ function LArmSmartCalibration({
   const [calibSide, setCalibSide] = useState<CalibSide>('elec');
 
   const stationary = liveData.speed <= MAX_CALIB_SPEED;
-  const gnssOk = liveData.status === 'fix';
   const wsOk = connStatus === 'connected' && !useMock && !isMock;
   const a2Ok = isAntenna2Ready(liveData);
-  const canCalib = wsOk && stationary && gnssOk && !!cfg;
+  const fourGaps = describeGantryAntennaGaps(liveData.gantry_antennas);
+  const fourReady = fourGaps.length === 0;
+  const rtkFixed = isGantryRtkFixed(liveData);
+  // 杆臂标定：四天线齐 + 静止 + RTK 固定
+  const canCalib = wsOk && stationary && fourReady && rtkFixed && !!cfg;
 
   const liveHint = useMemo(() => {
     if (!cfg) return '请先在上方选择要配置的车辆';
     if (useMock || isMock) return '请关闭模拟模式，并在工作配置中选择车辆以建立 WebSocket';
     if (connStatus !== 'connected') return 'WebSocket 未连接：请在工作配置中选择车辆';
-    if (!gnssOk) return 'GNSS 非固定解，请等待 RTK FIX';
+    if (!fourReady) {
+      return `四天线未齐，无法标定杆臂：${fourGaps.join('、')}`;
+    }
+    if (!rtkFixed) {
+      const left = liveData.receivers.find((r) => r.id === 'gantry_a1');
+      const right = liveData.receivers.find((r) => r.id === 'gantry_a2');
+      return `须 RTK 固定解：左 ${left?.status ?? liveData.status} / 右 ${right?.status ?? '—'}`;
+    }
     if (!stationary) return `车辆未静止（速度 ${liveData.speed.toFixed(3)} m/s），请停车后标定`;
     if (!a2Ok) {
-      return '柴油侧天线坐标无效：请确认右接收机（EVK）主 GGA 已接入，遥测 antenna2 有效';
+      return '柴油侧天线坐标无效：请确认右接收机主/副 GGA 已接入';
     }
-    return '条件满足：可输入 RTK 作业点坐标并计算杆臂';
-  }, [cfg, useMock, isMock, connStatus, gnssOk, stationary, liveData.speed, a2Ok]);
+    return '条件满足：四天线齐、RTK 固定且静止，可输入作业点并计算杆臂';
+  }, [cfg, useMock, isMock, connStatus, stationary, liveData.speed, liveData.status, liveData.receivers, a2Ok, fourReady, fourGaps, rtkFixed]);
 
   async function computeSide(side: CalibSide) {
     if (!cfg) return;
@@ -513,7 +548,7 @@ function LArmSmartCalibration({
       />
 
       <p className="text-sm text-slate-400 leading-relaxed">
-        车辆<strong className="text-slate-300">静止</strong>且中控<strong className="text-slate-300">实时运行</strong>时，
+        须<strong className="text-slate-300">四天线齐</strong>、<strong className="text-slate-300">RTK 固定</strong>且车辆<strong className="text-slate-300">静止</strong>、中控实时运行时，
         输入 RTK 测量的<strong className="text-slate-300">作业点 WGS84</strong>；
         系统用当前天线坐标与姿态（heading/pitch/roll）反算车体系杆臂 <code className="text-blue-300">L_arm = Rᵀ·(P_天线−P_作业点)</code>。
       </p>
@@ -624,17 +659,20 @@ function LArmSmartCalibration({
   );
 }
 
-function areGantryAntennasReady(ga?: Record<string, GantryAntennaPoint>): boolean {
-  if (!ga) return false;
+function describeGantryAntennaGaps(ga?: Record<string, GantryAntennaPoint>): string[] {
+  const missing: string[] = [];
   for (const k of ['a1', 'a2', 'b1', 'b2'] as const) {
-    const p = ga[k];
-    if (!p || p.valid === false) return false;
+    const p = ga?.[k];
+    if (!p || p.valid === false) {
+      missing.push(`${k}无效/缺失`);
+      continue;
+    }
     const hasEcef = [p.ecef_x, p.ecef_y, p.ecef_z].every(v => typeof v === 'number' && Number.isFinite(v))
       && !(p.ecef_x === 0 && p.ecef_y === 0 && p.ecef_z === 0);
     const hasLla = Math.abs(p.lat) > 1e-6 && Math.abs(p.lon) > 1e-6;
-    if (!hasEcef && !hasLla) return false;
+    if (!hasEcef && !hasLla) missing.push(`${k}无坐标`);
   }
-  return true;
+  return missing;
 }
 
 function bodyListsToTuples(body: Record<string, number[]>): GantryAntennaBody {
@@ -665,73 +703,142 @@ function ReceiverLayoutPanel({
       left_transport: layout.right_transport,
       right_transport: layout.left_transport,
     });
-    showToast('已交换电气侧 ↔ 动力侧 EVK');
+    showToast('已交换电气侧 ↔ 动力侧配置（含机型）');
   };
 
   const patch = (partial: Partial<ReceiverLayout>) => onChange({ ...layout, ...partial });
 
+  const setSideTransport = (side: 'left' | 'right', transport: 'tcp' | 'udp') => {
+    if (side === 'left') {
+      if (transport === 'udp') {
+        patch({
+          left_transport: 'udp',
+          left_host: '0.0.0.0',
+          left_port: layout.left_port === 30001 ? 9002 : layout.left_port,
+        });
+      } else {
+        patch({
+          left_transport: 'tcp',
+          left_host: layout.left_host === '0.0.0.0' ? '' : layout.left_host,
+          left_port: layout.left_port === 9002 ? 30001 : layout.left_port,
+        });
+      }
+    } else if (transport === 'udp') {
+      patch({
+        right_transport: 'udp',
+        right_host: '0.0.0.0',
+        right_port: layout.right_port === 30001 ? 9002 : layout.right_port,
+      });
+    } else {
+      patch({
+        right_transport: 'tcp',
+        right_host: layout.right_host === '0.0.0.0' ? '' : layout.right_host,
+        right_port: layout.right_port === 9002 ? 30001 : layout.right_port,
+      });
+    }
+  };
+
+  const sides = [
+    {
+      key: 'left' as const,
+      title: '电气侧（左）',
+      transport: (layout.left_transport ?? 'tcp') as 'tcp' | 'udp',
+      host: layout.left_host ?? '',
+      port: layout.left_port,
+      onHost: (v: string) => patch({ left_host: v }),
+      onPort: (v: number) => patch({ left_port: v }),
+    },
+    {
+      key: 'right' as const,
+      title: '动力侧（右）',
+      transport: (layout.right_transport ?? 'udp') as 'tcp' | 'udp',
+      host: layout.right_host ?? '',
+      port: layout.right_port,
+      onHost: (v: string) => patch({ right_host: v }),
+      onPort: (v: number) => patch({ right_port: v }),
+    },
+  ];
+
   return (
     <div className="lg:col-span-2 space-y-4">
       <div className="config-panel">
-        <div className="flex items-center justify-between pb-4 border-b border-slate-700/60">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-start gap-3 pb-4 border-b border-slate-700/60">
+          <div className="flex items-start gap-3 min-w-0 flex-1">
             <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/25 flex items-center justify-center shrink-0">
               <Radio className="w-4 h-4 text-blue-400" />
             </div>
-            <div>
-              <h3 className="text-sm font-bold text-slate-200">GNSS EVK 连接（大车）</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                「左」=电气侧，「右」=动力侧。各连一台 EVK，主天线 GGA → 该侧作业点。
-                暂无某一侧时，将该侧 IP 留空。接反了点「交换电气/动力」。
-                调试时请关掉 UCENTER 等占用 30001 的软件（EVK 通常只允许 1 个 TCP 客户端）。
+            <div className="min-w-0">
+              <h3 className="text-sm font-bold text-slate-200">大车接收机（电气 / 动力）</h3>
+              <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                一侧为 GNSS EVK（TCP），另一侧为与小车同款的双 GGA（UDP 监听，默认 9002）。
+                机型可切换；主天线 GGA → 该侧作业点。接反了点「交换电气/动力」。
               </p>
             </div>
           </div>
-          <button type="button" onClick={swapSides} className="btn-outline flex items-center gap-2 shrink-0">
+          <button type="button" onClick={swapSides} className="btn-outline flex items-center justify-center gap-2 shrink-0 self-start whitespace-nowrap">
             <ArrowLeftRight className="w-4 h-4" />
             交换电气/动力
           </button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {[
-            {
-              title: '电气侧（左）',
-              host: layout.left_host ?? '',
-              port: layout.left_port,
-              onHost: (v: string) => patch({ left_host: v }),
-              onPort: (v: number) => patch({ left_port: v }),
-            },
-            {
-              title: '动力侧（右）',
-              host: layout.right_host ?? '',
-              port: layout.right_port,
-              onHost: (v: string) => patch({ right_host: v }),
-              onPort: (v: number) => patch({ right_port: v }),
-            },
-          ].map((side) => (
-            <div key={side.title} className="rounded-xl border border-slate-700/60 p-4 space-y-3">
-              <p className="text-xs font-bold text-slate-300">{side.title} · TCP</p>
-              <label className="block text-[11px] text-slate-500">
-                EVK IP
-                <input
-                  className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono"
-                  value={side.host}
-                  onChange={(e) => side.onHost(e.target.value)}
-                  placeholder="192.168.0.101"
-                />
-              </label>
-              <label className="block text-[11px] text-slate-500">
-                端口
-                <input
-                  type="number"
-                  className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono"
-                  value={side.port}
-                  onChange={(e) => side.onPort(parseInt(e.target.value, 10) || 0)}
-                />
-              </label>
-            </div>
-          ))}
+          {sides.map((side) => {
+            const isEvk = side.transport === 'tcp';
+            return (
+              <div key={side.key} className="rounded-xl border border-slate-700/60 p-4 space-y-3">
+                <p className="text-xs font-bold text-slate-300">
+                  {side.title} · {isEvk ? 'EVK TCP' : '双GGA UDP'}
+                </p>
+                <label className="block text-[11px] text-slate-500">
+                  机型
+                  <select
+                    className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+                    value={side.transport}
+                    onChange={(e) => setSideTransport(side.key, e.target.value as 'tcp' | 'udp')}
+                  >
+                    <option value="tcp">EVK（TCP）</option>
+                    <option value="udp">双 GGA（UDP，同小车）</option>
+                  </select>
+                </label>
+                {isEvk ? (
+                  <>
+                    <label className="block text-[11px] text-slate-500">
+                      EVK IP
+                      <input
+                        className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono"
+                        value={side.host}
+                        onChange={(e) => side.onHost(e.target.value)}
+                        placeholder="192.168.8.172"
+                      />
+                    </label>
+                    <label className="block text-[11px] text-slate-500">
+                      端口
+                      <input
+                        type="number"
+                        className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono"
+                        value={side.port}
+                        onChange={(e) => side.onPort(parseInt(e.target.value, 10) || 0)}
+                      />
+                    </label>
+                    <p className="text-[10px] text-slate-600">调试时请关掉占用该 TCP 口的 UCENTER</p>
+                  </>
+                ) : (
+                  <label className="block text-[11px] text-slate-500">
+                    UDP 监听端口
+                    <input
+                      type="number"
+                      className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono"
+                      value={side.port}
+                      onChange={(e) => side.onPort(parseInt(e.target.value, 10) || 0)}
+                    />
+                    <span className="mt-1 block text-[10px] text-slate-600 font-mono">
+                      bind 0.0.0.0:{side.port}
+                    </span>
+                  </label>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         <div className="mt-4 rounded-xl border border-slate-700/60 p-4 space-y-2">
@@ -743,9 +850,9 @@ function ReceiverLayoutPanel({
       </div>
 
       <div className="config-panel space-y-3">
-        <div className="flex items-center gap-3 pb-3 border-b border-slate-700/60">
-          <h3 className="text-sm font-bold text-slate-200">NTRIP 差分（全局一份 → 两台 EVK）</h3>
-          <label className="ml-auto flex items-center gap-2 text-xs text-slate-400">
+        <div className="flex flex-wrap items-center gap-3 pb-3 border-b border-slate-700/60">
+          <h3 className="text-sm font-bold text-slate-200 min-w-0">NTRIP 差分（仅 → EVK TCP 侧）</h3>
+          <label className="ml-auto flex items-center gap-2 text-xs text-slate-400 whitespace-nowrap">
             <input
               type="checkbox"
               checked={!!ntrip.enabled}
@@ -788,12 +895,15 @@ function ReceiverLayoutPanel({
           </label>
         </div>
         <p className="text-[10px] text-slate-500">
-          中控拉 RTCM 后经与 NMEA 相同的 TCP 口写入两台 EVK；保存并下发后热重连。
+          中控拉 RTCM 后仅写入当前为 EVK(TCP) 的大车侧；UDP 双 GGA 侧不转发差分。
         </p>
       </div>
 
       <div className="config-data-block text-xs text-slate-500 leading-relaxed space-y-1">
-        <p>默认姿态模式为两主点（hdt_tra_height_roll）。四天线 GGA 相关 UI 仍保留在姿态分页，供后续机型切换 dual_receiver / four_antenna。</p>
+        <p>
+          仪表盘主姿态跟随「解算模式」：四天线刚体或双接收机四 GGA；
+          一键采集用于标定安装坐标（刚体模式必需）。
+        </p>
       </div>
     </div>
   );
@@ -953,20 +1063,31 @@ function GantryAttitudePanel({
   const att = cfg.gantry_attitude ?? defaultGantryAttitude(10);
   const [capturing, setCapturing] = useState(false);
 
-  const fourReady = areGantryAntennasReady(liveData.gantry_antennas);
+  const fourGaps = useMemo(
+    () => describeGantryAntennaGaps(liveData.gantry_antennas),
+    [liveData.gantry_antennas],
+  );
+  const fourReady = fourGaps.length === 0;
   const wsOk = connStatus === 'connected' && !useMock && !isMock;
   const stationary = liveData.speed <= MAX_CALIB_SPEED;
-  const gnssOk = liveData.status === 'fix';
-  const canCapture = wsOk && fourReady && stationary && gnssOk;
+  const rtkFixed = isGantryRtkFixed(liveData);
+  // 四天线安装坐标：须四天线齐 + RTK 固定 + 静止
+  const canCapture = wsOk && fourReady && rtkFixed && stationary;
 
   const captureHint = useMemo(() => {
     if (useMock || isMock) return '请关闭模拟模式并选择车辆以建立 WebSocket';
     if (connStatus !== 'connected') return 'WebSocket 未连接';
-    if (!fourReady) return '四天线未齐：需左/右接收机均在线且各输出双 GGA（a1/a2/b1/b2）';
-    if (!gnssOk) return 'GNSS 非固定解，请等待 RTK FIX';
+    if (!fourReady) {
+      return `四天线未齐：${fourGaps.join('、')}。左机需主GGA+副天线(BESTPOS2A)，右机需 GGA+PSAT,GGA2`;
+    }
+    if (!rtkFixed) {
+      const left = liveData.receivers.find((r) => r.id === 'gantry_a1');
+      const right = liveData.receivers.find((r) => r.id === 'gantry_a2');
+      return `须 RTK 固定解：左 ${left?.status ?? liveData.status} / 右 ${right?.status ?? '—'}`;
+    }
     if (!stationary) return `车辆未静止（${liveData.speed.toFixed(3)} m/s），请停车后采集`;
-    return '条件满足：可一键从实时四天线坐标标定安装坐标';
-  }, [useMock, isMock, connStatus, fourReady, gnssOk, stationary, liveData.speed]);
+    return '条件满足：四天线齐、RTK 固定且静止，可一键采集安装坐标';
+  }, [useMock, isMock, connStatus, fourReady, fourGaps, stationary, liveData.speed, liveData.status, liveData.receivers, rtkFixed]);
 
   const updateAtt = (patch: Partial<GantryAttitudeConfig>) => {
     setCfg((p) => p ? {
@@ -986,9 +1107,11 @@ function GantryAttitudePanel({
   };
 
   const applyDefaults = () => {
-    const span = att.roll_span_m && att.roll_span_m > 0 ? att.roll_span_m : 10;
-    updateAtt(defaultGantryAttitude(span, att.baseline_m));
-    showToast('已按 roll_span / baseline 生成参考安装坐标（建议上线后用一键采集覆盖）');
+    const baseline = Math.max(att.baseline_m || 1, 1);
+    // 仅生成参考矩形安装坐标用的默认左右间距，不再作为手填跨距配置
+    const ySpan = 10;
+    updateAtt(defaultGantryAttitude(ySpan, baseline));
+    showToast('已按 baseline 生成参考安装坐标（建议上线后用一键采集覆盖）');
   };
 
   async function captureFromLive() {
@@ -1010,11 +1133,11 @@ function GantryAttitudePanel({
       }
       const json = await res.json() as {
         code: number;
-        data?: { antenna_body: Record<string, number[]>; baseline_m: number; span_m: number };
+        data?: { antenna_body: Record<string, number[]>; baseline_m: number; span_m?: number };
       };
       if (json.code !== 200 || !json.data?.antenna_body) throw new Error('标定失败');
 
-      const { antenna_body, baseline_m, span_m } = json.data;
+      const { antenna_body, baseline_m, span_m = 0 } = json.data;
       const body = bodyListsToTuples(antenna_body);
       const measuredAt = new Date().toISOString();
 
@@ -1026,7 +1149,6 @@ function GantryAttitudePanel({
           gantry_attitude: {
             ...prev,
             baseline_m,
-            roll_span_m: span_m > 1 ? span_m : (prev.roll_span_m ?? 10),
             antenna_body: body,
             body_calibration: {
               measured_at: measuredAt,
@@ -1037,7 +1159,7 @@ function GantryAttitudePanel({
           },
         };
       });
-      showToast(`四天线安装坐标已标定：baseline ${baseline_m.toFixed(2)} m，跨距 ${span_m.toFixed(2)} m`);
+      showToast(`四天线安装坐标已标定：baseline ${baseline_m.toFixed(2)} m`);
     } catch (e) {
       showToast(e instanceof Error ? e.message : '四天线标定失败', 'error');
     } finally {
@@ -1050,9 +1172,39 @@ function GantryAttitudePanel({
       <ConfigPanelHeader icon={Radio} title="四天线姿态解算" />
 
       <p className="text-sm text-slate-400 leading-relaxed">
-        双接收机同时在线时：A/B 各自双 GGA 求航向/俯仰并取平均；<strong className="text-slate-300">roll</strong> 由四天线刚体定姿解算。
-        安装坐标应通过<strong className="text-slate-300">一键采集</strong>从现场四天线 ECEF 标定，而非长期使用默认值。车体系：X 前、Y 左、Z 上。
+        仪表盘主姿态跟随下方<strong className="text-slate-300">解算模式</strong>：
+        四天线刚体（需安装坐标）或双接收机四 GGA。两路可并行对比。
+        安装坐标请用<strong className="text-slate-300">一键采集</strong>标定。车体系：X 前、Y 左、Z 上。
       </p>
+
+      {liveData.gantry_attitude_compare?.four_antenna?.valid
+        && liveData.gantry_attitude_compare?.dual_receiver?.valid && (
+        <div className="config-data-block text-xs font-mono space-y-1">
+          <p className="section-title mb-1">
+            实时双路对比（主用：{liveData.gantry_attitude_compare.primary_method === 'dual_receiver' ? '双接收机' : '四天线刚体'}）
+          </p>
+          {liveData.gantry_attitude_compare.delta ? (
+            <p className="text-violet-300">
+              Δ(对比−主) H {liveData.gantry_attitude_compare.delta.heading_deg >= 0 ? '+' : ''}
+              {liveData.gantry_attitude_compare.delta.heading_deg.toFixed(2)}° · ΔP{' '}
+              {liveData.gantry_attitude_compare.delta.pitch_deg >= 0 ? '+' : ''}
+              {liveData.gantry_attitude_compare.delta.pitch_deg.toFixed(3)}° · ΔR{' '}
+              {liveData.gantry_attitude_compare.delta.roll_deg >= 0 ? '+' : ''}
+              {liveData.gantry_attitude_compare.delta.roll_deg.toFixed(3)}°
+            </p>
+          ) : null}
+          <p className="text-amber-300/90">
+            四GGA: H {liveData.gantry_attitude_compare.four_antenna!.heading.toFixed(2)}° P{' '}
+            {liveData.gantry_attitude_compare.four_antenna!.pitch.toFixed(3)}° R{' '}
+            {liveData.gantry_attitude_compare.four_antenna!.roll.toFixed(3)}°
+          </p>
+          <p className="text-cyan-400/90">
+            双接收机: H {liveData.gantry_attitude_compare.dual_receiver!.heading.toFixed(2)}° P{' '}
+            {liveData.gantry_attitude_compare.dual_receiver!.pitch.toFixed(3)}° R{' '}
+            {liveData.gantry_attitude_compare.dual_receiver!.roll.toFixed(3)}°
+          </p>
+        </div>
+      )}
 
       <div className={clsx(canCapture ? 'config-hint' : 'config-hint-warn')}>
         {!wsOk ? <WifiOff className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />}
@@ -1071,7 +1223,7 @@ function GantryAttitudePanel({
 
       {att.body_calibration && (
         <p className="text-[10px] text-slate-500">
-          最近标定：{att.body_calibration.measured_at.slice(0, 19)} · baseline {att.body_calibration.baseline_m.toFixed(2)} m · span {att.body_calibration.span_m.toFixed(2)} m · {att.body_calibration.source === 'live' ? '实时采集' : '手动'}
+          最近标定：{att.body_calibration.measured_at.slice(0, 19)} · baseline {att.body_calibration.baseline_m.toFixed(2)} m · {att.body_calibration.source === 'live' ? '实时采集' : '手动'}
         </p>
       )}
 
@@ -1112,9 +1264,8 @@ function GantryAttitudePanel({
             value={att.mode}
             onChange={(e) => updateAtt({ mode: e.target.value as GantryAttitudeConfig['mode'] })}
           >
-            <option value="hdt_tra_height_roll">两主点 UB482（HDT/TRA + 高差横滚）</option>
-            <option value="dual_receiver">双接收机四 GGA（备用）</option>
-            <option value="four_antenna">四天线刚体定姿（备用）</option>
+            <option value="four_antenna">四天线刚体定姿</option>
+            <option value="dual_receiver">双接收机四 GGA</option>
           </select>
         </div>
         <div>
@@ -1127,32 +1278,12 @@ function GantryAttitudePanel({
             onChange={(e) => updateAtt({ baseline_m: parseFloat(e.target.value) || 0 })}
           />
         </div>
-        <div>
-          <label className="section-title block mb-1.5">左右主点间距 roll_span (m)</label>
-          <input
-            type="number"
-            step="0.01"
-            className="input-field font-mono"
-            value={att.roll_span_m ?? 10}
-            onChange={(e) => updateAtt({ roll_span_m: parseFloat(e.target.value) || 0 })}
-          />
-        </div>
-        <div>
-          <label className="section-title block mb-1.5">水平时高差零点 roll_alt0 (m)</label>
-          <input
-            type="number"
-            step="0.001"
-            className="input-field font-mono"
-            value={att.roll_alt0_m ?? 0}
-            onChange={(e) => updateAtt({ roll_alt0_m: parseFloat(e.target.value) || 0 })}
-          />
-        </div>
       </div>
 
       <div className="flex items-center justify-between">
-        <p className="section-title">天线安装坐标（车体系，米 · 四 GGA 备用）</p>
+        <p className="section-title">天线安装坐标（车体系，米 · 刚体模式）</p>
         <button type="button" onClick={applyDefaults} className="btn-outline text-xs py-2 px-3">
-          按 roll_span 生成参考值
+          生成参考安装坐标
         </button>
       </div>
 
@@ -1546,7 +1677,7 @@ export default function VehicleConfig({
                   />
                 </div>
                 <p className="text-[10px] text-slate-500 pt-1">
-                  左右间距在「姿态」页填 roll_span（估横滚）；杆臂在「智能杆臂标定」页配置。
+                  横滚由左右主 GGA 自动估算；杆臂在「智能杆臂标定」页配置。
                 </p>
               </div>
 

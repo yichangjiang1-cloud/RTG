@@ -82,6 +82,34 @@ export interface TrolleyData {
   speed: number;
 }
 
+/** 单路姿态解算结果 */
+export interface GantryAttitudeSolution {
+  heading: number;
+  pitch: number;
+  roll: number;
+  source: string;
+  valid?: boolean;
+}
+
+/** 大车双路姿态对比 */
+export interface GantryAttitudeCompare {
+  primary?: GantryAttitudeSolution | null;
+  four_antenna?: GantryAttitudeSolution | null;
+  dual_receiver?: GantryAttitudeSolution | null;
+  /** @deprecated 已移除，恒为 null */
+  nmea_height?: GantryAttitudeSolution | null;
+  /** 接收机 PASHR/HDT 原值（未经四天线刚体） */
+  nmea?: GantryAttitudeSolution | null;
+  delta?: {
+    heading_deg: number;
+    pitch_deg: number;
+    roll_deg: number;
+  } | null;
+  four_ready?: boolean;
+  /** four_antenna | dual_receiver */
+  primary_method?: string;
+}
+
 export interface RealtimeData {
   timestamp: string;
   /** 解算输出：大车 L-Point WGS84 */
@@ -97,6 +125,10 @@ export interface RealtimeData {
   heading: number;
   roll: number;
   pitch: number;
+  /** 主通道姿态来源，如 nmea_a1+roll_height */
+  attitude_source?: string;
+  /** NMEA+高差 vs 四 GGA 刚体 对比 */
+  gantry_attitude_compare?: GantryAttitudeCompare;
   speed: number;
   status: GnssStatus;
   receivers: ReceiverStatus[];
@@ -131,12 +163,12 @@ export interface GantryAntennaPoint {
   receiver?: 'left' | 'right';
 }
 
-/** 接收机布局（大车 EVK TCP + 小车 UDP） */
+/** 接收机布局（大车：一侧 EVK TCP + 一侧双 GGA UDP，可切换；小车 UDP） */
 export interface ReceiverLayout {
   left: string;
   right: string;
   trolley: string;
-  /** 大车左 EVK：中控作为 TCP 客户端连接 */
+  /** tcp=EVK；udp=双 GGA（与小车同款） */
   left_transport?: 'tcp' | 'udp';
   left_host?: string;
   left_port: number;
@@ -146,11 +178,11 @@ export interface ReceiverLayout {
   trolley_transport?: 'tcp' | 'udp';
   trolley_host?: string;
   trolley_port: number;
-  /** 同包双 GGA 顺序（小车 / 备用四 GGA 机型仍可用） */
+  /** 同包双 GGA 顺序 */
   gga_order: ['elec', 'diesel'];
 }
 
-/** 全局 NTRIP（一份差分转发给两台大车 EVK） */
+/** 全局 NTRIP（差分仅转发给大车 EVK TCP 侧） */
 export interface NtripConfig {
   enabled: boolean;
   caster_host: string;
@@ -183,7 +215,7 @@ export interface VehicleProfile {
   receiver_layout?: ReceiverLayout;
   /** 全局 NTRIP，中控拉取后同口转发给两台 EVK */
   ntrip?: NtripConfig;
-  /** 姿态解算配置（含 UB482 两主点 / 备用四 GGA） */
+  /** 姿态解算配置（四天线刚体 / 双接收机） */
   gantry_attitude?: GantryAttitudeConfig;
   /** 小车零点（大车车体系） */
   trolley?: TrolleyOriginConfig;
@@ -205,22 +237,23 @@ export interface GantryAntennaBody {
 
 export interface GantryAttitudeConfig {
   /**
-   * hdt_tra_height_roll: UB482 两主点（HDT/TRA + 高差横滚）
-   * dual_receiver / four_antenna: 旧四 GGA 备用
+   * four_antenna: 四天线刚体 Kabsch（需安装坐标）
+   * dual_receiver: 左右双 GGA 基线航向/俯仰
    */
-  mode: 'hdt_tra_height_roll' | 'dual_receiver' | 'four_antenna';
+  mode: 'four_antenna' | 'dual_receiver';
   /** 前后定向基线长 (m) */
   baseline_m: number;
-  /** 左右主天线间距，用于高差估横滚 (m) */
+  /** @deprecated 跨距不再用于姿态；仅兼容旧配置 */
   roll_span_m?: number;
-  /** 车体水平时 (alt_left - alt_right) 零点 (m) */
+  /** @deprecated 两主点高差横滚已移除；仅兼容旧配置 */
   roll_alt0_m?: number;
   antenna_body: GantryAntennaBody;
-  /** 最近一次四天线安装坐标标定（备用模式） */
+  /** 最近一次四天线安装坐标标定 */
   body_calibration?: {
     measured_at: string;
     baseline_m: number;
-    span_m: number;
+    /** @deprecated 不再展示；后端仍可能返回 */
+    span_m?: number;
     source: 'live' | 'manual';
   };
 }

@@ -58,6 +58,49 @@ def euler_to_rotation_matrix(
     return R
 
 
+def body_to_enu_rotation(
+    roll_deg: float,
+    pitch_deg: float,
+    heading_deg: float,
+) -> np.ndarray:
+    """
+    车体 (X 前, Y 左, Z 上) → ENU。航向 0=北、顺时针（NMEA）。
+    朝北时：+X→北、+Y→西。
+    """
+    phi = math.radians(roll_deg)
+    theta = math.radians(pitch_deg)
+    psi = math.radians(heading_deg)
+    cx, sx = math.cos(phi), math.sin(phi)
+    cy, sy = math.cos(theta), math.sin(theta)
+    cz, sz = math.cos(psi), math.sin(psi)
+    Rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
+    Ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    # 航向 0：X→北 (0,1,0)，Y→西 (-1,0,0)
+    Rz = np.array([[sz, -cz, 0], [cz, sz, 0], [0, 0, 1]])
+    return Rz @ Ry @ Rx
+
+
+def body_enu_to_nmea_euler(R: np.ndarray) -> tuple:
+    """
+    从车体→ENU 旋转矩阵提取 NMEA 欧拉角（与 body_to_enu_rotation 互逆）。
+
+    heading：北 0、顺时针。roll/pitch 由 R 第三行取出，与 Rz 无关。
+    |roll|>90° 时折到 (-90, 90]：刚体 Y 与安装定义相反时 Kabsch 会给出
+    接近 ±180° 的横滚（页面上常见 -169），对近水平车体取等价小角。
+    """
+    heading = math.degrees(math.atan2(float(R[0, 0]), float(R[1, 0]))) % 360.0
+    if heading >= 359.95:
+        heading = 0.0
+    z0 = float(np.clip(-R[2, 0], -1.0, 1.0))
+    pitch = math.degrees(math.asin(z0))
+    roll = math.degrees(math.atan2(float(R[2, 1]), float(R[2, 2])))
+    if roll > 90.0:
+        roll -= 180.0
+    elif roll < -90.0:
+        roll += 180.0
+    return roll, pitch, heading
+
+
 def rotation_matrix_to_euler(R: np.ndarray) -> tuple:
     """
     从旋转矩阵（ZYX 顺序）提取欧拉角。

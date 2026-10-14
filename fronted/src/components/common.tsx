@@ -45,7 +45,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
   };
   const { label, cls } = cfg[status] ?? cfg.no_signal;
   return (
-    <span className={clsx('badge', cls)}>
+    <span className={clsx('badge whitespace-nowrap', cls)}>
       <StatusDot status={status} pulse={false} />
       {label}
     </span>
@@ -167,12 +167,12 @@ interface SectionHeaderProps {
 }
 export function SectionHeader({ title, subtitle, children }: SectionHeaderProps) {
   return (
-    <div className="flex items-start justify-between mb-6">
-      <div>
+    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-6">
+      <div className="min-w-0">
         <h2 className="text-xl font-bold text-white">{title}</h2>
-        {subtitle && <p className="text-sm text-slate-400 mt-1">{subtitle}</p>}
+        {subtitle && <p className="text-sm text-slate-400 mt-1 leading-relaxed">{subtitle}</p>}
       </div>
-      {children && <div className="flex items-center gap-3">{children}</div>}
+      {children && <div className="flex flex-wrap items-center gap-3 shrink-0">{children}</div>}
     </div>
   );
 }

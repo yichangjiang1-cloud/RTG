@@ -1,8 +1,13 @@
 /**
  * 前端统一日志工具
- * - 开发模式下：输出到浏览器 Console，同时异步 POST 到 Vite 中间件，在终端也能看到
- * - 生产模式下：只输出 info / warn / error，屏蔽 debug
- * 使用：logger.info('WebSocket', '已连接', { url })
+ * - 开发模式：Console + Vite 终端
+ * - 生产模式：默认屏蔽 debug；开启 WS 调试后 info/debug 都打 Console
+ *
+ * 排查 WebSocket：浏览器控制台执行
+ *   localStorage.setItem('rtg_ws_debug', '1'); location.reload();
+ * 关闭：
+ *   localStorage.removeItem('rtg_ws_debug'); location.reload();
+ * 或 URL 加 ?ws_debug=1
  */
 
 /// <reference types="vite/client" />
@@ -18,6 +23,16 @@ const STYLES: Record<Level, string> = {
   debug: 'color:#a78bfa;font-weight:bold',
 };
 
+function wsDebugEnabled(): boolean {
+  try {
+    if (typeof window === 'undefined') return false;
+    if (new URLSearchParams(window.location.search).get('ws_debug') === '1') return true;
+    return localStorage.getItem('rtg_ws_debug') === '1';
+  } catch {
+    return false;
+  }
+}
+
 function sendToTerminal(level: Level, module: string, time: string, msg: string, args: unknown[]) {
   fetch('/__dev_log', {
     method: 'POST',
@@ -26,7 +41,6 @@ function sendToTerminal(level: Level, module: string, time: string, msg: string,
   }).catch(() => { /* 终端转发失败时静默 */ });
 }
 
-// StrictMode 下同一条日志会连续触发两次，500ms 内去重
 const recentLogs = new Map<string, number>();
 function isDuplicate(key: string): boolean {
   const now = Date.now();
@@ -41,8 +55,9 @@ function isDuplicate(key: string): boolean {
 }
 
 function log(level: Level, module: string, msg: string, ...args: unknown[]) {
-  if (!isDev && level === 'debug') return;
-  if (isDev && isDuplicate(`${level}|${module}|${msg}`)) return;
+  const dbg = wsDebugEnabled();
+  if (!isDev && level === 'debug' && !dbg) return;
+  if ((isDev || dbg) && isDuplicate(`${level}|${module}|${msg}`)) return;
   const d = new Date();
   const time = d.toLocaleTimeString('zh-CN', { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
   const fn = level === 'error' ? console.error
@@ -57,4 +72,6 @@ export const logger = {
   warn:  (module: string, msg: string, ...args: unknown[]) => log('warn',  module, msg, ...args),
   error: (module: string, msg: string, ...args: unknown[]) => log('error', module, msg, ...args),
   debug: (module: string, msg: string, ...args: unknown[]) => log('debug', module, msg, ...args),
+  /** 当前是否开启 WebSocket 调试输出 */
+  isWsDebug: wsDebugEnabled,
 };

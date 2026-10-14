@@ -41,6 +41,13 @@ interface DashboardProps {
 export default function Dashboard({ data, history, isMock, connStatus }: DashboardProps) {
   const elecCenter = data.gantry.elec_lpoint ?? data.gantry.receiver_left ?? data.gantry.elec_center;
   const dieselCenter = data.gantry.diesel_lpoint ?? data.gantry.receiver_right ?? data.gantry.diesel_center;
+  const attCmp = data.gantry_attitude_compare;
+  const dualAtt = attCmp?.dual_receiver;
+  const dualAttOk = Boolean(dualAtt?.valid);
+  const fourGgaReady = attCmp?.four_ready === true;
+  const primaryIsFour = attCmp?.primary_method === 'four_antenna';
+  const primaryIsDual = attCmp?.primary_method === 'dual_receiver';
+  const attDelta = attCmp?.delta;
 
   const chartData = useMemo(
     () =>
@@ -65,7 +72,7 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
             ? <Loader2 className="w-10 h-10 text-amber-400 animate-spin" />
             : <WifiOff className="w-10 h-10 text-slate-500" />}
           <p className="text-sm font-bold text-slate-300">
-            {connStatus === 'connecting' ? '正在连接中控机…' : '未连接 — 请先选择车辆或开启模拟模式'}
+            {connStatus === 'connecting' ? '正在连接中控机…' : '未连接 — 请先在工作配置中选择车辆'}
           </p>
           <p className="text-[11px] text-slate-500">数据已暂停，等待 WebSocket 连接建立后自动恢复</p>
         </div>
@@ -110,21 +117,86 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
           </div>
         </div>
 
-        <div className="card p-5">
-          <p className="section-title mb-3">实时姿态</p>
-          <div className="space-y-1">
-            <div className="flex justify-between items-baseline">
-              <span className="text-[10px] text-slate-500">Heading</span>
-              <span className="font-mono text-amber-400 text-sm">{data.heading.toFixed(2)}°</span>
+        <div className="card p-5 flex flex-col max-h-[11.5rem]">
+          <p className="section-title mb-1 shrink-0">实时姿态（主通道 · L-Point）</p>
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1 space-y-3 scrollbar-thin">
+            <div>
+              <p className="text-[10px] text-slate-500 mb-2 leading-relaxed">
+                {primaryIsFour
+                  ? '四天线刚体定姿（跟随配置 mode=four_antenna）'
+                  : primaryIsDual
+                    ? '双接收机四 GGA（跟随配置 mode=dual_receiver）'
+                    : '等待姿态解算'}
+                {data.attitude_source ? ` · ${data.attitude_source}` : ''}
+              </p>
+              <div className="space-y-1">
+                <div className="flex justify-between items-baseline">
+                  <span className="text-[10px] text-slate-500">Heading</span>
+                  <span className="font-mono text-amber-400 text-sm">{data.heading.toFixed(2)}°</span>
+                </div>
+                <div className="flex justify-between items-baseline">
+                  <span className="text-[10px] text-slate-500">Roll</span>
+                  <span className="font-mono text-amber-400 text-sm">{data.roll.toFixed(3)}°</span>
+                </div>
+                <div className="flex justify-between items-baseline">
+                  <span className="text-[10px] text-slate-500">Pitch</span>
+                  <span className="font-mono text-amber-400 text-sm">{data.pitch.toFixed(3)}°</span>
+                </div>
+              </div>
             </div>
-            <div className="flex justify-between items-baseline">
-              <span className="text-[10px] text-slate-500">Roll</span>
-              <span className="font-mono text-amber-400 text-sm">{data.roll.toFixed(3)}°</span>
+
+            {attCmp?.nmea?.valid !== false && attCmp?.nmea && (
+              <div className="pt-3 border-t border-slate-700/60">
+                <p className="section-title mb-1">接收机 NMEA（PASHR/HDT）</p>
+                <p className="text-[10px] text-slate-500 mb-2">
+                  语句原值，不经四天线刚体 · {attCmp.nmea.source || 'nmea'}
+                </p>
+                <div className="flex justify-between font-mono text-sm">
+                  <span className="text-slate-500 text-[10px]">H / P / R</span>
+                  <span className="text-emerald-400">
+                    {attCmp.nmea.heading.toFixed(2)}° / {attCmp.nmea.pitch.toFixed(3)}° / {attCmp.nmea.roll.toFixed(3)}°
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="pt-3 border-t border-slate-700/60">
+              <p className="section-title mb-1">对比路（非主用）</p>
+              <p className="text-[10px] text-slate-500 mb-2">
+                {primaryIsFour ? '双接收机四 GGA' : '四天线刚体'} · 与主通道并行
+              </p>
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between font-mono">
+                  <span className="text-slate-500 text-[10px]">H / P / R</span>
+                  <span className={
+                    (primaryIsFour ? dualAttOk : Boolean(attCmp?.four_antenna?.valid))
+                      ? 'text-cyan-400' : 'text-slate-600'
+                  }>
+                    {primaryIsFour
+                      ? (dualAttOk
+                        ? `${dualAtt!.heading.toFixed(2)}° / ${dualAtt!.pitch.toFixed(3)}° / ${dualAtt!.roll.toFixed(3)}°`
+                        : '— / — / —')
+                      : (attCmp?.four_antenna?.valid
+                        ? `${attCmp.four_antenna.heading.toFixed(2)}° / ${attCmp.four_antenna.pitch.toFixed(3)}° / ${attCmp.four_antenna.roll.toFixed(3)}°`
+                        : '— / — / —')}
+                  </span>
+                </div>
+                <div className="flex justify-between font-mono">
+                  <span className="text-slate-500 text-[10px]">Δ（对比−主）</span>
+                  <span className={attDelta ? 'text-violet-300' : 'text-slate-600'}>
+                    {attDelta
+                      ? `${attDelta.heading_deg >= 0 ? '+' : ''}${attDelta.heading_deg.toFixed(2)}° / ${attDelta.pitch_deg >= 0 ? '+' : ''}${attDelta.pitch_deg.toFixed(3)}° / ${attDelta.roll_deg >= 0 ? '+' : ''}${attDelta.roll_deg.toFixed(3)}°`
+                      : '— / — / —'}
+                  </span>
+                </div>
+              </div>
             </div>
-            <div className="flex justify-between items-baseline">
-              <span className="text-[10px] text-slate-500">Pitch</span>
-              <span className="font-mono text-amber-400 text-sm">{data.pitch.toFixed(3)}°</span>
-            </div>
+
+            <p className="text-[10px] text-slate-600 pt-2 border-t border-slate-800 leading-relaxed">
+              {fourGgaReady
+                ? '四天线齐：可选四天线刚体或双接收机；主通道跟车辆配置解算模式'
+                : '四天线未齐：四天线刚体不可用时主通道回退双接收机（若有双 GGA）'}
+            </p>
           </div>
         </div>
 
@@ -205,16 +277,18 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
               {data.receivers.length === 0 ? (
                 <p className="text-xs text-slate-500 py-2">暂无接收机状态</p>
               ) : (
-                data.receivers.map((r) => (
+                data.receivers.map((r) => {
+                  const offline = r.valid !== true || r.status === 'no_signal';
+                  return (
                 <div key={r.id} className="flex items-center justify-between p-2.5 bg-slate-900/50 rounded-lg">
                   <div className="flex items-center gap-2">
-                    <StatusDot status={r.valid === false ? 'no_signal' : r.status} />
-                    <span className={`text-xs ${r.valid === false ? 'text-slate-500' : 'text-slate-300'}`}>
+                    <StatusDot status={offline ? 'no_signal' : r.status} />
+                    <span className={`text-xs ${offline ? 'text-slate-500' : 'text-slate-300'}`}>
                       {r.label}
                     </span>
                   </div>
                   <div className="flex items-center gap-3 text-[10px] text-slate-500">
-                    {r.valid === false ? (
+                    {offline ? (
                       <span className="text-slate-500">无数据</span>
                     ) : (
                       <>
@@ -236,7 +310,9 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
                     )}
                   </div>
                 </div>
-              )))}
+                  );
+                })
+              )}
             </div>
           </div>
         </div>

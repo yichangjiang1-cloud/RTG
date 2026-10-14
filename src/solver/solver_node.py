@@ -31,9 +31,12 @@ from src.solver.bay_residual import (
 from src.solver.motion_speed import (
     DEADBAND_MPS,
     MIN_DISPLACEMENT_M,
+    PAIR_DT,
     MotionSpeedState,
     hold_gnss_speed,
+    shortest_arc_deg,
     update_motion_speed,
+    use_gantry_speed_sample,
 )
 from src.solver.gantry_frame import lycs_to_gantry_body
 from src.utils.config_loader import get_config
@@ -96,6 +99,10 @@ class SolverNode:
         self._solver_elec = LPointSolver(l_arm_elec)
         self._solver_diesel = LPointSolver(l_arm_diesel)
 
+        self._offline_timeout_s = max(
+            0.1, float(cfg.get("gnss.offline_timeout_s", 0.5))
+        )
+
         # 小车零点（大车车体系，锚定 L-Point，随大车移动）
         origin_mode, origin_body = _trolley_origin_from_cfg(cfg)
         self._trolley_origin_mode = origin_mode
@@ -116,6 +123,8 @@ class SolverNode:
         self._last_raw_gantry_y: Optional[float] = None
         self._gantry_motion = MotionSpeedState()
         self._last_gantry_time: float = 0.0
+        self._last_gantry_any_time: float = 0.0
+        self._last_gantry_heading: float = 0.0
 
         # 小车速度
         self._trolley_motion = MotionSpeedState()
@@ -157,15 +166,18 @@ class SolverNode:
         ga2 = state.get("gantry_a2", {})
         tly = state.get("trolley", {})
 
-        recv1_live = _is_receiver_live(ga1, now)
-        recv2_live = _is_receiver_live(ga2, now)
-        tly_live = _is_receiver_live(tly, now)
-        # 小车相对行程依赖大车 L-Point；无大车时整帧不出解算结果
-        if not recv1_live:
+        stale = self._offline_timeout_s
+        recv1_live = _is_receiver_live(ga1, now, stale)
+        recv2_live = _is_receiver_live(ga2, now, stale)
+        tly_live = _is_receiver_live(tly, now, stale)
+        # 大车任一侧在线即可出帧（单侧作业点仍可算）；两侧皆无则不出
+        if not recv1_live and not recv2_live:
             return None
 
-        ref = ga1
-        ref_rid = "gantry_a1"
+        if recv1_live:
+            ref, ref_rid = ga1, "gantry_a1"
+        else:
+            ref, ref_rid = ga2, "gantry_a2"
 
         # ---- 1. 识别当前堆场 ----
         yard_id = self._yard_manager.detect_yard(
@@ -195,7 +207,8 @@ class SolverNode:
         )
 
         # ---- 4. 组装结果 ----
-        hdg_src = ga1
+        # 姿态优先左机（融合写入主通道）；仅右机在线时用右机
+        hdg_src = ga1 if recv1_live else ga2
 
         lp_lat, lp_lon, lp_alt = transform.lycs_to_wgs84(
             gantry_result.lpoint_x,
@@ -303,8 +316,15 @@ class SolverNode:
             fix_quality_right_ant2=fq_right_a2,
             fix_quality_trolley=fq_tly,
             fix_quality_trolley_ant2=fq_tly_a2,
+            satellites_left=int(ga1.get("num_satellites", 0)) if recv1_live else 0,
+            satellites_right=int(ga2.get("num_satellites", 0)) if recv2_live else 0,
+            satellites_trolley=int(tly.get("num_satellites", 0)) if tly_live else 0,
+            hdop_left=float(ga1.get("hdop", 99.9)) if recv1_live else 99.9,
+            hdop_right=float(ga2.get("hdop", 99.9)) if recv2_live else 99.9,
+            hdop_trolley=float(tly.get("hdop", 99.9)) if tly_live else 99.9,
             trolley_antenna_primary=_ant_dict(tly, True) if tly_live else {},
             trolley_antenna_secondary=_ant_dict(tly, False) if tly_live else {},
+            gantry_attitude_compare=state.get("gantry_attitude_compare") or {},
         )
         result.gantry.heading = float(hdg_src.get("heading", 0.0))
         result.gantry.pitch = float(hdg_src.get("pitch", 0.0))
@@ -325,8 +345,9 @@ class SolverNode:
         大车定位（UB482 / 两主点布局）：
           左接收机 gantry_a1 主 GGA + l_arm_elec   → 电气房侧 L-Point
           右接收机 gantry_a2 主 GGA + l_arm_diesel → 柴油机侧 L-Point
+        单侧在线时只填对应作业点 valid；另一侧保持无数据。
         兼容旧布局：若右机不在线但左机有副 GGA，仍可用左机副点作柴油侧。
-        姿态优先取融合写入 gantry_a1 的 heading/pitch/roll（HDT/TRA + 高差横滚等）。
+        姿态优先左机；仅右机在线时用右机 heading/pitch/roll。
         """
         gantry = GantryResult(timestamp=now)
         gantry.recv1_live = recv1_live
@@ -406,36 +427,94 @@ class SolverNode:
         gantry = self._apply_calibration_corrections(gantry, yard_id, transform)
 
         gnss_speed, course_deg = _pick_gnss_motion(ga1, ga2, recv1_live, recv2_live)
-        dx = dy = 0.0
-        dt = 0.0
-        if (
+
+        # ── 大车速度估计（位移+GNSS融合，带多重保护） ──
+        _MAX_SPEED_DT = 2.0    # 会话间隔上限：超过视为重启/跳变
+        _STATIC_DECAY = 0.90   # 静止衰减因子（每帧×0.90，约 30 帧归零）
+
+        cur_live = int(recv1_live) + int(recv2_live)
+        prev_live = getattr(self, "_last_gantry_live_count", cur_live)
+        live_changed = cur_live != prev_live
+        self._last_gantry_live_count = cur_live
+
+        since_any = (
+            now - self._last_gantry_any_time
+            if self._last_gantry_any_time > 0
+            else 1e9
+        )
+        pair_complete = since_any < PAIR_DT
+
+        ref_valid = (
             self._last_raw_gantry_x is not None
             and self._last_raw_gantry_y is not None
             and self._last_gantry_time > 0
-        ):
+        )
+        dx = dy = 0.0
+        dt = 0.0
+        if ref_valid:
             dx = raw_lpoint_x - self._last_raw_gantry_x
             dy = raw_lpoint_y - self._last_raw_gantry_y
             dt = now - self._last_gantry_time
 
-        if math.hypot(dx, dy) >= MIN_DISPLACEMENT_M and dt > 0:
-            update_motion_speed(
-                self._gantry_motion, dx, dy, dt, gnss_speed, course_deg
-            )
+        def _reset_ref():
             self._last_raw_gantry_x = raw_lpoint_x
             self._last_raw_gantry_y = raw_lpoint_y
             self._last_gantry_x = gantry.lpoint_x
             self._last_gantry_y = gantry.lpoint_y
             self._last_gantry_time = now
-        elif gnss_speed >= DEADBAND_MPS:
-            hold_gnss_speed(self._gantry_motion, gnss_speed, course_deg)
-        elif self._last_raw_gantry_x is None:
-            self._last_raw_gantry_x = raw_lpoint_x
-            self._last_raw_gantry_y = raw_lpoint_y
-            self._last_gantry_x = gantry.lpoint_x
-            self._last_gantry_y = gantry.lpoint_y
-            self._last_gantry_time = now
+            self._last_gantry_heading = heading
+
+        yaw_rate_dps = (
+            shortest_arc_deg(self._last_gantry_heading, heading) / dt
+            if dt > 1e-6 else 0.0
+        )
+
+        def _apply_speed():
+            if dt < PAIR_DT:
+                # 刚锁定参考点后的配对包，间隔太短，只改参考、不算速度
+                _reset_ref()
+                return
+            disp = math.hypot(dx, dy)
+            if disp >= MIN_DISPLACEMENT_M:
+                update_motion_speed(
+                    self._gantry_motion, dx, dy, dt, gnss_speed, course_deg,
+                    heading_deg=heading,
+                    heading_prev_deg=self._last_gantry_heading,
+                )
+            elif gnss_speed >= DEADBAND_MPS:
+                hold_gnss_speed(self._gantry_motion, gnss_speed, course_deg)
+            elif abs(self._gantry_motion.speed) >= DEADBAND_MPS:
+                self._gantry_motion.speed *= _STATIC_DECAY
+                from src.solver.motion_speed import _snap
+                self._gantry_motion.speed = _snap(
+                    self._gantry_motion.speed, DEADBAND_MPS
+                )
+            _reset_ref()
+
+        if not ref_valid:
+            _reset_ref()
+        elif dt > _MAX_SPEED_DT or live_changed:
+            _reset_ref()
+        elif not use_gantry_speed_sample(cur_live, since_any, dt):
+            # 双机第一包：一边新一边旧，作业点会偏。等配对包。
+            # dt 过短时也只改参考（见 _apply_speed）。
+            if pair_complete and dt < PAIR_DT:
+                _reset_ref()
+        else:
+            _apply_speed()
+
+        self._last_gantry_any_time = now
 
         gantry.speed = self._gantry_motion.speed
+        if abs(gantry.speed) >= DEADBAND_MPS or (hasattr(self, '_last_speed_log') and self._last_speed_log > DEADBAND_MPS):
+            logger.info(
+                "[速度] gantry.speed=%.4f m/s | gnss=%.4f course=%.1f | "
+                "dx=%.4f dy=%.4f dt=%.3f | lpoint=(%.4f, %.4f) | recv=%d live | hdg=%.2f ω=%.1f°/s",
+                gantry.speed, gnss_speed, course_deg if course_deg is not None else float("nan"),
+                dx, dy, dt, gantry.lpoint_x, gantry.lpoint_y, cur_live, heading,
+                yaw_rate_dps,
+            )
+        self._last_speed_log = abs(gantry.speed)
         gantry.data_source = ga1.get("source", DataSource.INVALID)
         gantry.heading = heading
         gantry.pitch = pitch
@@ -513,23 +592,43 @@ class SolverNode:
         trolley.travel_distance = trolley.rel_y
 
         gnss_speed = float(tly.get("speed_mps", 0.0))
+
+        # ── 小车速度估计（与大车逻辑同步的保护） ──
+        _MIN_SPEED_DT = 0.05
+        _MAX_SPEED_DT = 2.0
+        _STATIC_DECAY = 0.90
+
+        ref_valid = self._last_trolley_body_y is not None and self._last_trolley_time > 0
         dy_body = 0.0
         dt = 0.0
-        if self._last_trolley_body_y is not None and self._last_trolley_time > 0:
+        if ref_valid:
             dy_body = by - self._last_trolley_body_y
             dt = now - self._last_trolley_time
 
-        if abs(dy_body) >= MIN_DISPLACEMENT_M and dt > 0:
+        def _reset_tly_ref():
+            self._last_trolley_body_y = by
+            self._last_trolley_time = now
+
+        if not ref_valid:
+            _reset_tly_ref()
+        elif dt > _MAX_SPEED_DT:
+            _reset_tly_ref()
+        elif dt < _MIN_SPEED_DT:
+            pass
+        elif abs(dy_body) >= MIN_DISPLACEMENT_M:
             update_motion_speed(
                 self._trolley_motion, 0.0, dy_body, dt, gnss_speed, None,
             )
-            self._last_trolley_body_y = by
-            self._last_trolley_time = now
+            _reset_tly_ref()
         elif gnss_speed >= DEADBAND_MPS:
             hold_gnss_speed(self._trolley_motion, gnss_speed)
-        elif self._last_trolley_body_y is None:
-            self._last_trolley_body_y = by
-            self._last_trolley_time = now
+        else:
+            if abs(self._trolley_motion.speed) >= DEADBAND_MPS:
+                self._trolley_motion.speed *= _STATIC_DECAY
+                from src.solver.motion_speed import _snap
+                self._trolley_motion.speed = _snap(
+                    self._trolley_motion.speed, DEADBAND_MPS
+                )
 
         trolley.speed = self._trolley_motion.speed
         trolley.is_valid = True
@@ -691,7 +790,7 @@ class SolverNode:
         return gantry
 
 
-def _is_receiver_live(g: dict, now: float, stale_s: float = 2.0) -> bool:
+def _is_receiver_live(g: dict, now: float, stale_s: float = 0.5) -> bool:
     if not g:
         return False
     last = float(g.get("last_gnss_time", 0.0))

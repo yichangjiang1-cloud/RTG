@@ -1,12 +1,12 @@
 """
 大车姿态解算。
 
-模式：
-  - hdt_tra_height_roll（UB482 两主点）：航向/俯仰来自 HDT/TRA(NMEA)；
-    横滚由左右主天线高差 + roll_span_m 估算。保留 dual_gga 作兼容回退。
-  - dual_receiver / four_antenna（旧四 GGA）：双基线 + Kabsch，保留备用。
-"""
+模式（由 vehicle 配置 gantry.attitude.mode 选择，仪表盘主通道跟随）：
+  - four_antenna：四天线齐时 Kabsch 刚体定姿（需 antenna_body）
+  - dual_receiver：左右双 GGA 基线航向/俯仰合成；横滚可借四天线刚体
 
+旧模式 hdt_tra_height_roll / two_master / evk 读入时映射为 four_antenna。
+"""
 from __future__ import annotations
 
 import math
@@ -16,37 +16,55 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from src.models.gnss_data import GnssRaw
-from src.solver.attitude import rotation_matrix_to_euler
+from src.solver.attitude import body_enu_to_nmea_euler
 from src.solver.coordinate_transform import ecef_to_enu
 
-# 双 GGA 基线低于此水平长度时不解算航向/俯仰，回退 NMEA（PASHR/HDT）
+# 双 GGA 基线低于此水平长度时不解算航向/俯仰
 MIN_DUAL_GGA_BASELINE_M = 0.5
 # 两主点估横滚时，左右间距过小则放弃
 MIN_ROLL_SPAN_M = 1.0
+
+_LEGACY_TWO_MASTER_MODES = frozenset(
+    {"hdt_tra_height_roll", "two_master", "evk", "nmea_height"}
+)
+
+
+def normalize_attitude_mode(mode: Optional[str]) -> str:
+    """归一化为 four_antenna | dual_receiver。"""
+    m = (mode or "").strip().lower()
+    if m in ("dual_receiver", "dual"):
+        return "dual_receiver"
+    if m in _LEGACY_TWO_MASTER_MODES:
+        return "four_antenna"
+    if m == "four_antenna":
+        return "four_antenna"
+    return "four_antenna"
 
 
 @dataclass
 class GantryAttitudeConfig:
     """来自 vehicle_params.yaml → gantry.attitude"""
 
-    # hdt_tra_height_roll | dual_receiver | four_antenna
-    mode: str = "hdt_tra_height_roll"
-    baseline_m: float = 1.0  # 前后定向基线长（安装信息）
-    roll_span_m: float = 23.47  # 左右主天线间距，用于 Δh→roll
-    roll_alt0_m: float = 0.0  # 车体水平时 (alt_left - alt_right) 零点
+    # four_antenna | dual_receiver
+    mode: str = "four_antenna"
+    baseline_m: float = 1.0  # 前后定向基线长（四天线安装坐标参考）
+    # 已废弃：横滚间距改为由两主 GGA 实时计算；保留字段仅兼容旧配置/四天线参考布局
+    roll_span_m: float = 0.0
+    roll_alt0_m: float = 0.0  # 车体水平时左右主天线高差零点（安装高度差）
     antenna_body: Dict[str, List[float]] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, block: Optional[dict], w_span: float = 23.47) -> "GantryAttitudeConfig":
+    def from_dict(cls, block: Optional[dict], w_span: float = 0.0) -> "GantryAttitudeConfig":
         if not isinstance(block, dict):
             block = {}
-        mode = str(block.get("mode", "hdt_tra_height_roll"))
+        mode = normalize_attitude_mode(str(block.get("mode", "four_antenna")))
         baseline_m = float(block.get("baseline_m", 1.0))
-        roll_span_m = float(block.get("roll_span_m", w_span if w_span > 0 else 23.47))
+        roll_span_m = float(block.get("roll_span_m", w_span if w_span > 0 else 0.0))
         roll_alt0_m = float(block.get("roll_alt0_m", 0.0))
         body = block.get("antenna_body")
         if not isinstance(body, dict) or len(body) < 4:
-            body = default_antenna_body(w_span, max(baseline_m, 1.0))
+            span_ref = roll_span_m if roll_span_m > 1.0 else max(baseline_m, 1.0)
+            body = default_antenna_body(span_ref, max(baseline_m, 1.0))
         else:
             body = {
                 k: [float(x) for x in v[:3]]
@@ -68,6 +86,57 @@ class GantryAttitudeResult:
     pitch_deg: float
     roll_deg: float
     source: str
+
+    def to_dict(self) -> dict:
+        return {
+            "heading": self.heading_deg,
+            "pitch": self.pitch_deg,
+            "roll": self.roll_deg,
+            "source": self.source,
+            "valid": True,
+        }
+
+
+@dataclass
+class GantryAttitudeCompare:
+    """
+    大车双路姿态：
+      - primary 严格跟随配置 mode（four_antenna / dual_receiver）
+      - 所选模式无解时回退另一路
+      - four_antenna / dual_receiver 两路并行供对比
+    """
+
+    primary: Optional[GantryAttitudeResult]
+    four_antenna: Optional[GantryAttitudeResult]
+    dual_receiver: Optional[GantryAttitudeResult]
+    delta: Optional[Dict[str, float]]
+    four_ready: bool
+    primary_method: str = "four_antenna"  # four_antenna | dual_receiver
+    nmea_height: Optional[GantryAttitudeResult] = None  # 已废弃，恒 None
+    nmea: Optional[GantryAttitudeResult] = None  # 接收机 PASHR/HDT 原值
+
+    def to_dict(self) -> dict:
+        delta = self.delta
+        other = (
+            self.dual_receiver
+            if self.primary_method == "four_antenna"
+            else self.four_antenna
+        )
+        if delta is None and self.primary is not None and other is not None:
+            delta = _attitude_delta(self.primary, other)
+        return {
+            "primary": self.primary.to_dict() if self.primary else None,
+            "four_antenna": self.four_antenna.to_dict() if self.four_antenna else None,
+            "dual_receiver": (
+                self.dual_receiver.to_dict() if self.dual_receiver else None
+            ),
+            "nmea_height": None,
+            "nmea": self.nmea.to_dict() if self.nmea else None,
+            "delta": delta,
+            "four_ready": self.four_ready,
+            "primary_method": self.primary_method,
+            "configured_mode": self.primary_method,
+        }
 
 
 def default_antenna_body(w_span: float, baseline_m: float) -> Dict[str, List[float]]:
@@ -139,23 +208,61 @@ def derive_heading_pitch_from_dual_gga(
     return heading, pitch
 
 
+def horizontal_distance_master_gga(ga1: GnssRaw, ga2: GnssRaw) -> Optional[float]:
+    """左右主天线水平距离（米），由两主 GGA ECEF 直接计算。"""
+    if (
+        ga1.ecef_x == 0.0 and ga1.ecef_y == 0.0 and ga1.ecef_z == 0.0
+    ) or (
+        ga2.ecef_x == 0.0 and ga2.ecef_y == 0.0 and ga2.ecef_z == 0.0
+    ):
+        return None
+    if ga1.latitude is None or ga1.longitude is None or ga1.altitude is None:
+        return None
+    e, n, _u = ecef_to_enu(
+        ga2.ecef_x, ga2.ecef_y, ga2.ecef_z,
+        float(ga1.latitude), float(ga1.longitude), float(ga1.altitude),
+    )
+    horiz = math.hypot(e, n)
+    if horiz < MIN_ROLL_SPAN_M:
+        return None
+    return horiz
+
+
 def derive_roll_from_dual_master_height(
     ga1: GnssRaw,
     ga2: GnssRaw,
-    roll_span_m: float,
+    roll_span_m: float = 0.0,
     roll_alt0_m: float = 0.0,
 ) -> Optional[float]:
     """
-    左右主天线椭球高差 → 横滚（度）。
+    左右主 GGA → 横滚（度）。
+
+    水平间距 D 优先由两主 GGA ECEF 实时计算；仅当 GGA 间距不可用且
+    配置了 roll_span_m（兼容旧配置）时才用手填值。
+    高差用 ENU 的 U（右相对左），再减安装零点 roll_alt0。
     约定：左高右低为正横滚（符号需现场核对）。
-    roll ≈ atan((alt_L - alt_R - alt0) / D)
+    roll ≈ atan((u - alt0) / D)
     """
-    if roll_span_m < MIN_ROLL_SPAN_M:
+    if ga1.latitude is None or ga1.longitude is None or ga1.altitude is None:
         return None
-    if ga1.altitude is None or ga2.altitude is None:
+    if ga2.ecef_x == 0.0 and ga2.ecef_y == 0.0 and ga2.ecef_z == 0.0:
         return None
-    dh = float(ga1.altitude) - float(ga2.altitude) - float(roll_alt0_m)
-    return math.degrees(math.atan2(dh, float(roll_span_m)))
+
+    e, n, u = ecef_to_enu(
+        ga2.ecef_x, ga2.ecef_y, ga2.ecef_z,
+        float(ga1.latitude), float(ga1.longitude), float(ga1.altitude),
+    )
+    # 左相对右的高差：ga1 为原点时 u 为右相对左的高度 → 取 -u 得左减右
+    dh = -float(u) - float(roll_alt0_m)
+
+    horiz = math.hypot(e, n)
+    if horiz >= MIN_ROLL_SPAN_M:
+        d = horiz
+    elif float(roll_span_m) >= MIN_ROLL_SPAN_M:
+        d = float(roll_span_m)
+    else:
+        return None
+    return math.degrees(math.atan2(dh, d))
 
 
 def _pick_nmea_heading_pitch(
@@ -164,7 +271,7 @@ def _pick_nmea_heading_pitch(
     ga1_live: bool,
     ga2_live: bool,
 ) -> Optional[Tuple[float, float, str]]:
-    """优先左机 HDT/TRA，其次右机。"""
+    """从有 HDT/TRA 的一侧取航向/俯仰（不假设必在左机；混接时通常为 EVK 侧）。"""
     for live, g, tag in (
         (ga1_live, ga1, "nmea_a1"),
         (ga2_live, ga2, "nmea_a2"),
@@ -177,6 +284,30 @@ def _pick_nmea_heading_pitch(
             tag,
         )
     return None
+
+
+def _pick_nmea_attitude(
+    ga1: Optional[GnssRaw],
+    ga2: Optional[GnssRaw],
+    ga1_live: bool,
+    ga2_live: bool,
+) -> Optional[GantryAttitudeResult]:
+    """接收机 PASHR/HDT 原值，不经四天线刚体。"""
+    hp = _pick_nmea_heading_pitch(ga1, ga2, ga1_live, ga2_live)
+    if hp is None:
+        return None
+    heading, pitch, src = hp
+    roll = 0.0
+    for live, g in ((ga1_live, ga1), (ga2_live, ga2)):
+        if live and g is not None and g.roll is not None:
+            roll = float(g.roll)
+            break
+    return GantryAttitudeResult(
+        heading_deg=heading,
+        pitch_deg=pitch,
+        roll_deg=roll,
+        source=src,
+    )
 
 
 def _collect_four_ecef(
@@ -287,9 +418,9 @@ def solve_four_antenna_attitude(
     if r_be is None:
         return None
 
-    roll, pitch, heading = rotation_matrix_to_euler(r_be)
+    roll, pitch, heading = body_enu_to_nmea_euler(r_be)
     return GantryAttitudeResult(
-        heading_deg=normalize_heading_deg(float(heading)),
+        heading_deg=normalize_heading_deg(heading),
         pitch_deg=float(pitch),
         roll_deg=float(roll),
         source="four_antenna",
@@ -312,6 +443,191 @@ def _pick_gantry_heading(
     return normalize_heading_deg(mid)
 
 
+def compute_nmea_height_roll_attitude(
+    ga1: Optional[GnssRaw],
+    ga2: Optional[GnssRaw],
+    ga1_live: bool,
+    ga2_live: bool,
+    cfg: GantryAttitudeConfig,
+) -> Optional[GantryAttitudeResult]:
+    """
+    UB482 / 混接姿态对比路：
+    航向/俯仰 ← 任一侧 HDT/TRA/HPR（通常 EVK）；
+    横滚 ← 左右主 GGA 高差 / 水平间距（间距由 GGA 计算）。
+    """
+    hp = _pick_nmea_heading_pitch(ga1, ga2, ga1_live, ga2_live)
+    if hp is None:
+        return None
+    heading, pitch, src = hp
+    roll = 0.0
+    roll_src = "0"
+    if ga1_live and ga2_live and ga1 is not None and ga2 is not None:
+        r = derive_roll_from_dual_master_height(
+            ga1, ga2, cfg.roll_span_m, cfg.roll_alt0_m
+        )
+        if r is not None:
+            roll = r
+            roll_src = "gga"
+    return GantryAttitudeResult(
+        heading, pitch, roll, f"{src}+roll_{roll_src}"
+    )
+
+
+def compute_four_antenna_attitude_from_gga(
+    ga1: Optional[GnssRaw],
+    ga2: Optional[GnssRaw],
+    ga2_live: bool,
+    cfg: GantryAttitudeConfig,
+    ref_lat: float,
+    ref_lon: float,
+    ref_alt: float,
+) -> Optional[GantryAttitudeResult]:
+    """四 GGA 刚体定姿（a1/a2/b1/b2 + 安装坐标 Kabsch）。"""
+    four_ecef = _collect_four_ecef(ga1, ga2 if ga2_live else None)
+    if four_ecef is None:
+        return None
+    body = cfg.antenna_body
+    if not body or len(body) < 4:
+        return None
+    return solve_four_antenna_attitude(
+        four_ecef, body, ref_lat, ref_lon, ref_alt
+    )
+
+
+def _attitude_delta(
+    primary: GantryAttitudeResult,
+    other: GantryAttitudeResult,
+) -> Dict[str, float]:
+    """对比路 − 主通道 的角差（heading 用最短弧）。"""
+    return {
+        "heading_deg": _circular_diff_deg(primary.heading_deg, other.heading_deg),
+        "pitch_deg": other.pitch_deg - primary.pitch_deg,
+        "roll_deg": other.roll_deg - primary.roll_deg,
+    }
+
+
+
+def compute_dual_receiver_attitude(
+    ga1: Optional[GnssRaw],
+    ga2: Optional[GnssRaw],
+    ga1_live: bool,
+    ga2_live: bool,
+    cfg: GantryAttitudeConfig,
+    ref_lat: float,
+    ref_lon: float,
+    ref_alt: float,
+) -> Optional[GantryAttitudeResult]:
+    """双接收机：左右双 GGA 航向/俯仰；横滚优先四天线刚体。"""
+    if not ga1_live or ga1 is None:
+        if ga2_live and ga2 is not None:
+            hp_b = derive_heading_pitch_from_dual_gga(ga2)
+            if hp_b is not None:
+                return GantryAttitudeResult(
+                    normalize_heading_deg(hp_b[0]),
+                    hp_b[1],
+                    float(ga2.roll or 0.0),
+                    "dual_gga_a2",
+                )
+        return None
+
+    hp_a = derive_heading_pitch_from_dual_gga(ga1)
+    ref_for_b = hp_a[0] if hp_a is not None else ga1.heading
+    hp_b = (
+        derive_heading_pitch_from_dual_gga(ga2, ref_heading=ref_for_b)
+        if ga2_live and ga2
+        else None
+    )
+    four_ecef = _collect_four_ecef(ga1, ga2 if ga2_live else None)
+
+    if ga2_live and ga2 is not None and hp_a is not None and hp_b is not None:
+        heading = _pick_gantry_heading(hp_a, hp_b)
+        pitch = (hp_a[1] + hp_b[1]) / 2.0
+        roll = 0.0
+        source = "dual_receiver"
+        if four_ecef is not None:
+            rigid = solve_four_antenna_attitude(
+                four_ecef, cfg.antenna_body, ref_lat, ref_lon, ref_alt
+            )
+            if rigid is not None:
+                roll = rigid.roll_deg
+                source = "dual_receiver+4ant_roll"
+        return GantryAttitudeResult(
+            normalize_heading_deg(heading), pitch, roll, source
+        )
+
+    if hp_a is not None:
+        roll = 0.0
+        source = "dual_gga_a1"
+        if four_ecef is not None:
+            rigid = solve_four_antenna_attitude(
+                four_ecef, cfg.antenna_body, ref_lat, ref_lon, ref_alt
+            )
+            if rigid is not None:
+                roll = rigid.roll_deg
+                source = "dual_gga_a1+4ant_roll"
+        return GantryAttitudeResult(
+            normalize_heading_deg(hp_a[0]), hp_a[1], roll, source
+        )
+    return None
+
+
+def compute_gantry_attitude_compare(
+    ga1: Optional[GnssRaw],
+    ga2: Optional[GnssRaw],
+    ga1_live: bool,
+    ga2_live: bool,
+    cfg: GantryAttitudeConfig,
+    ref_lat: float,
+    ref_lon: float,
+    ref_alt: float,
+) -> GantryAttitudeCompare:
+    """并行解算两路姿态；primary 跟随 cfg.mode。"""
+    mode = normalize_attitude_mode(cfg.mode)
+    four_ready = (
+        ga1 is not None
+        and ga1.has_antenna2
+        and ga2_live
+        and ga2 is not None
+        and ga2.has_antenna2
+    )
+    four = None
+    if four_ready:
+        four = compute_four_antenna_attitude_from_gga(
+            ga1, ga2, ga2_live, cfg, ref_lat, ref_lon, ref_alt
+        )
+    dual = compute_dual_receiver_attitude(
+        ga1, ga2, ga1_live, ga2_live, cfg, ref_lat, ref_lon, ref_alt
+    )
+
+    if mode == "four_antenna":
+        if four is not None:
+            primary, primary_method = four, "four_antenna"
+        else:
+            primary, primary_method = dual, "dual_receiver"
+    else:
+        if dual is not None:
+            primary, primary_method = dual, "dual_receiver"
+        else:
+            primary, primary_method = four, "four_antenna"
+
+    other = dual if primary_method == "four_antenna" else four
+    delta = (
+        _attitude_delta(primary, other)
+        if primary is not None and other is not None
+        else None
+    )
+    return GantryAttitudeCompare(
+        primary=primary,
+        four_antenna=four,
+        dual_receiver=dual,
+        delta=delta,
+        four_ready=four_ready,
+        primary_method=primary_method or mode,
+        nmea_height=None,
+        nmea=_pick_nmea_attitude(ga1, ga2, ga1_live, ga2_live),
+    )
+
+
 def compute_gantry_attitude(
     ga1: Optional[GnssRaw],
     ga2: Optional[GnssRaw],
@@ -322,80 +638,7 @@ def compute_gantry_attitude(
     ref_lon: float,
     ref_alt: float,
 ) -> Optional[GantryAttitudeResult]:
-    """大车级姿态（写入 gantry_a1 通道供 solver 使用）。"""
-    mode = (cfg.mode or "hdt_tra_height_roll").strip().lower()
-
-    # ---- UB482：HDT/TRA + 两主点高差横滚 ----
-    if mode in ("hdt_tra_height_roll", "two_master", "evk"):
-        hp = _pick_nmea_heading_pitch(ga1, ga2, ga1_live, ga2_live)
-        if hp is None:
-            return None
-        heading, pitch, src = hp
-        roll = 0.0
-        roll_src = "0"
-        if ga1_live and ga2_live and ga1 is not None and ga2 is not None:
-            r = derive_roll_from_dual_master_height(
-                ga1, ga2, cfg.roll_span_m, cfg.roll_alt0_m
-            )
-            if r is not None:
-                roll = r
-                roll_src = "height"
-        return GantryAttitudeResult(
-            heading, pitch, roll, f"{src}+roll_{roll_src}"
-        )
-
-    if not ga1_live or ga1 is None:
-        return None
-
-    hp_a = derive_heading_pitch_from_dual_gga(ga1)
-    ref_for_b = hp_a[0] if hp_a is not None else ga1.heading
-    hp_b = (
-        derive_heading_pitch_from_dual_gga(ga2, ref_heading=ref_for_b)
-        if ga2_live and ga2
-        else None
-    )
-
-    four_ecef = _collect_four_ecef(ga1, ga2 if ga2_live else None)
-
-    if mode == "four_antenna" and four_ecef is not None:
-        full = solve_four_antenna_attitude(
-            four_ecef, cfg.antenna_body, ref_lat, ref_lon, ref_alt
-        )
-        if full is not None:
-            return full
-
-    if ga2_live and ga2 is not None and hp_a is not None and hp_b is not None:
-        heading = _pick_gantry_heading(hp_a, hp_b)
-        pitch = (hp_a[1] + hp_b[1]) / 2.0
-        roll = 0.0
-        source = "dual_receiver"
-
-        if four_ecef is not None:
-            rigid = solve_four_antenna_attitude(
-                four_ecef, cfg.antenna_body, ref_lat, ref_lon, ref_alt
-            )
-            if rigid is not None:
-                roll = rigid.roll_deg
-                source = "dual_receiver+4ant_roll"
-
-        return GantryAttitudeResult(
-            normalize_heading_deg(heading), pitch, roll, source
-        )
-
-    if hp_a is not None:
-        roll = _nmea_roll(ga1)
-        return GantryAttitudeResult(
-            normalize_heading_deg(hp_a[0]),
-            hp_a[1],
-            roll if roll is not None else 0.0,
-            "nmea" if roll is not None else "dual_gga",
-        )
-
-    if ga1.heading is not None:
-        return GantryAttitudeResult(
-            normalize_heading_deg(float(ga1.heading or 0.0)),
-            float(ga1.pitch or 0.0),
-            float(ga1.roll or 0.0),
-            "nmea",
-        )
-    return None
+    """按配置 mode 解算大车姿态（回退路径与 compare 一致）。"""
+    return compute_gantry_attitude_compare(
+        ga1, ga2, ga1_live, ga2_live, cfg, ref_lat, ref_lon, ref_alt
+    ).primary

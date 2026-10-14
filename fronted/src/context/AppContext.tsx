@@ -90,9 +90,9 @@ const DEFAULT_RECEIVER_LAYOUT = {
   left_transport: 'tcp' as const,
   left_host: '192.168.8.172',
   left_port: 30001,
-  right_transport: 'tcp' as const,
-  right_host: '',
-  right_port: 30001,
+  right_transport: 'udp' as const,
+  right_host: '0.0.0.0',
+  right_port: 9002,
   trolley_transport: 'udp' as const,
   trolley_host: '0.0.0.0',
   trolley_port: 9003,
@@ -159,6 +159,37 @@ const DEFAULT_YARDS: YardInfo[] = [
 // ============================================================
 // Provider
 // ============================================================
+const BACKEND_CFG_KEY = 'rtg_backend_config';
+
+function defaultBackendConfig(): BackendConfig {
+  try {
+    const raw = localStorage.getItem(BACKEND_CFG_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<BackendConfig>;
+      const host = String(parsed.host ?? '').trim();
+      if (host) {
+        const port = Number(parsed.port);
+        return {
+          host,
+          port: host.toLowerCase() === 'auto'
+            ? 80
+            : (Number.isFinite(port) && port > 0 ? port : 8000),
+        };
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  // Docker/Nginx 同源（80）默认 auto；本机 Vite 开发默认 localhost:8000
+  if (typeof window !== 'undefined') {
+    const p = window.location.port;
+    if (!p || p === '80' || p === '443') {
+      return { host: 'auto', port: 80 };
+    }
+  }
+  return { host: 'localhost', port: 8000 };
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [vehicles, setVehicles] = useState<VehicleProfile[]>([]);
   const [pendingDevices, setPendingDevices] = useState<PendingDevice[]>([]);
@@ -166,10 +197,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
   const [selectedYardId, setSelectedYardId] = useState<string | null>(null);
   const [useMock, setUseMock] = useState<boolean>(false);
-  // Docker Nginx 部署可把 host 设为 auto（同源反代）；本机 Vite 开发用 localhost:8000
-  const [backendConfig, setBackendConfig] = useState<BackendConfig>({ host: 'localhost', port: 8000 });
+  const [backendConfig, setBackendConfigState] = useState<BackendConfig>(defaultBackendConfig);
   const [connStatus, setConnStatus] = useState<ConnStatus>('disconnected');
   const [isMock, setIsMock] = useState<boolean>(false);
+
+  const setBackendConfig = useCallback((cfg: BackendConfig) => {
+    const next: BackendConfig = {
+      host: cfg.host.trim(),
+      port: cfg.host.trim().toLowerCase() === 'auto' ? 80 : cfg.port,
+    };
+    setBackendConfigState(next);
+    try {
+      localStorage.setItem(BACKEND_CFG_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore quota */
+    }
+  }, []);
 
   const addVehicle = (v: VehicleProfile) =>
     setVehicles(prev => [...prev, v]);

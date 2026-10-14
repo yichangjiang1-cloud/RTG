@@ -1,13 +1,13 @@
 meta:
-  synced_at: '2026-07-16T15:17:19+08:00'
+  synced_at: '2026-09-24T13:51:49+08:00'
   vehicle_id: RTG-001
   source: api
 yards:
 - yard_id: A01
-  name: 001堆场
-  origin_lat: 30.123456
-  origin_lon: 120.654321
-  origin_alt: 10.0
+  name: A区堆场1号
+  origin_lat: 30.5384792173
+  origin_lon: 114.349230567
+  origin_alt: 9.8771
   heading_deg: 0.0
   bay_spacing: 0.0
   bay_count: 10

@@ -12,7 +12,7 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from src.utils.logger import setup_logging, EnhancedLogger
+from src.utils.logger import setup_logging, EnhancedLogger, get_position_logger
 from src.utils.config_loader import init_config, get_config
 from src.utils.device_manager import DeviceManager
 from src.driver.driver_node import DriverNode
@@ -57,13 +57,16 @@ class RTGSystem:
         init_config(*config_files)
         cfg = get_config()
 
-        # 初始化日志
+        # 初始化日志（每次启动新建 logs/session_* / system.log + position.log）
         setup_logging(
             level=cfg.get("logging.level", "INFO"),
             log_file=cfg.get("logging.file", "logs/rtg.log"),
             max_bytes=cfg.get("logging.max_bytes", 10485760),
             backup_count=cfg.get("logging.backup_count", 5),
         )
+        self._pos_logger = get_position_logger()
+        self._pos_log_interval_s = float(cfg.get("logging.position_log_interval_s", 1.0))
+        self._last_pos_log_ts = 0.0
         logger.info("=" * 60)
         logger.info("RTG 高精度自动定位系统启动")
         logger.info("=" * 60)
@@ -194,6 +197,13 @@ class RTGSystem:
         logger.info("系统停止中...")
         self._running = False
         try:
+            if self._mqtt_client.is_connected():
+                self._mqtt_client.publish_status({
+                    "event": "offline",
+                    "vehicle_id": self._vehicle_id,
+                    "timestamp": time.time(),
+                })
+                logger.info("→ 已上报设备下线: vehicle_id=%s", self._vehicle_id)
             self._bridge_node.stop()
             self._driver_node.stop()
             self._mqtt_client.stop()
@@ -203,12 +213,25 @@ class RTGSystem:
 
     def run_forever(self) -> None:
         """主循环（阻塞直到收到停止信号）。"""
-        import time
+        last_hb = 0.0
+        last_stats_bucket = -1
         try:
             while self._running:
                 time.sleep(1.0)
-                # 定期输出统计信息（可选）
-                if int(time.time()) % 30 == 0:
+                now = time.time()
+                # 心跳：即使暂时无 PositionResult（如 EVK 断连），也保持
+                # 后端→前端 WebSocket 有帧，避免前端 30s 静默主动重连弹「数据已暂停」
+                if self._mqtt_client.is_connected() and now - last_hb >= 5.0:
+                    last_hb = now
+                    self._mqtt_client.publish_status({
+                        "event": "heartbeat",
+                        "vehicle_id": self._vehicle_id,
+                        "timestamp": now,
+                        "uptime": round(now - self._boot_time, 1),
+                    })
+                bucket = int(now) // 30
+                if bucket != last_stats_bucket:
+                    last_stats_bucket = bucket
                     self._log_stats()
         except KeyboardInterrupt:
             logger.info("收到键盘中断")
@@ -270,16 +293,64 @@ class RTGSystem:
 
     def _on_position_result(self, result) -> None:
         """
-        订阅定位结果，推送到 MQTT（实时遥测）。
-        
-        :param result: PositionResult 对象
+        订阅定位结果，推送到 MQTT（实时遥测）；坐标/姿态写入 position.log（不刷终端）。
         """
+        self._log_position_snapshot(result)
+
         if not self._mqtt_client.is_connected():
             logger.debug("MQTT 未连接，跳过定位结果推送")
             return
 
         telemetry = position_result_to_realtime(result)
         self._mqtt_client.publish_telemetry(telemetry)
+
+    def _log_position_snapshot(self, result) -> None:
+        """落盘解算快照：大车/小车坐标与姿态（节流，默认 1Hz）。"""
+        now = time.time()
+        if now - self._last_pos_log_ts < self._pos_log_interval_s:
+            return
+        self._last_pos_log_ts = now
+
+        g = result.gantry
+        t = result.trolley
+        cmp = result.gantry_attitude_compare or {}
+        primary = (cmp.get("primary") or {})
+        method = cmp.get("primary_method") or primary.get("source") or "-"
+
+        self._pos_logger.info(
+            "yard=%s fix=%s method=%s | "
+            "LPoint LYCS=(%.4f,%.4f,%.4f) WGS84=(%.8f,%.8f,%.3f) | "
+            "elec=%s(%.4f,%.4f) diesel=%s(%.4f,%.4f) | "
+            "att hdg=%.2f pitch=%.3f roll=%.3f | "
+            "trolley valid=%s travel=%.3f body=(%.3f,%.3f,%.3f) spd=%.3f | "
+            "recv live a1=%s a2=%s",
+            result.yard_id or "-",
+            result.gnss_fix_quality,
+            method,
+            g.lpoint_x,
+            g.lpoint_y,
+            g.lpoint_z,
+            result.lpoint_latitude,
+            result.lpoint_longitude,
+            result.lpoint_altitude,
+            g.a1_valid,
+            g.center_elec_side,
+            g.center_elec_y,
+            g.a2_valid,
+            g.center_engine_side,
+            g.center_engine_y,
+            g.heading,
+            g.pitch,
+            g.roll,
+            t.is_valid,
+            t.travel_distance,
+            t.body_x,
+            t.body_y,
+            t.body_z,
+            t.speed,
+            g.recv1_live,
+            g.recv2_live,
+        )
 
     # ------------------------------------------------------------------
     # 控制指令处理器

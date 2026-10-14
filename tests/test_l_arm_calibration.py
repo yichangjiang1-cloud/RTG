@@ -48,11 +48,11 @@ class TestLArmCalibration(unittest.TestCase):
         a1_lat, a1_lon, a1_alt = 30.123456, 120.654321, 10.0
 
         solver = LPointSolver(l_arm_true)
-        from src.solver.attitude import euler_to_rotation_matrix
-        R = euler_to_rotation_matrix(0, 0, heading)
-        ant_ecef = np.array(wgs84_to_ecef(a1_lat, a1_lon, a1_alt))
-        lp_ecef = ant_ecef - R @ np.array(l_arm_true)
-        from src.solver.coordinate_transform import ecef_to_wgs84
+        from src.solver.attitude import body_to_enu_rotation
+        from src.solver.coordinate_transform import ecef_to_wgs84, enu_to_ecef
+        r_be = body_to_enu_rotation(0, 0, heading)
+        de, dn, du = -(r_be @ np.array(l_arm_true))
+        lp_ecef = np.array(enu_to_ecef(float(de), float(dn), float(du), a1_lat, a1_lon, a1_alt))
         lp_wgs = ecef_to_wgs84(lp_ecef[0], lp_ecef[1], lp_ecef[2])
 
         gga = sg.build_gga(a1_lat, a1_lon, a1_alt)
@@ -69,3 +69,17 @@ class TestLArmCalibration(unittest.TestCase):
         for arm in (arm_wgs, arm_ecef):
             err = np.linalg.norm(np.array(arm) - np.array(l_arm_true))
             self.assertLess(err, 0.01, f"杆臂误差 {err:.4f} m 超过 1 cm")
+
+    def test_wgs84_side_midpoint_is_minus_ten_forward(self):
+        """左后主天线 → 左侧前后中点：车体系应为 [-10, 0, 0]，不是 (0, 2.5, 0)。"""
+        from src.solver.coordinate_transform import enu_to_ecef, ecef_to_wgs84
+        from src.solver.l_arm_calibration import compute_l_arm_from_wgs84
+
+        ref_lat, ref_lon, ref_alt = 30.5384792173, 114.349230567, 9.8771
+        # 车心在原点、朝北：左中点 (0, 2.5, 0) → ENU 西 2.5 m
+        mid_ecef = enu_to_ecef(-2.5, 0.0, 0.0, ref_lat, ref_lon, ref_alt)
+        ant_ecef = enu_to_ecef(-2.5, -10.0, 0.0, ref_lat, ref_lon, ref_alt)
+        mid = ecef_to_wgs84(*mid_ecef)
+        ant = ecef_to_wgs84(*ant_ecef)
+        arm = compute_l_arm_from_wgs84(*ant, *mid, 0.0, 0.0, 0.0)
+        np.testing.assert_allclose(arm, [-10.0, 0.0, 0.0], atol=0.05)

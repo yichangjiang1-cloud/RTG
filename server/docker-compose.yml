@@ -41,6 +41,7 @@ services:
       - DATABASE_URL=sqlite:///./data/ground_truth.db
       - LOG_LEVEL=INFO
       - DEBUG=false
+      - WS_FRAME_LOG=${WS_FRAME_LOG:-true}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs

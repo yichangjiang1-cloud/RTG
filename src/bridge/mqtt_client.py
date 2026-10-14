@@ -175,7 +175,7 @@ class MqttClient:
 
     def publish_status(self, status_data: Dict[str, Any]) -> None:
         """
-        发布设备状态（低频，事件驱动）。
+        发布设备状态（低频，事件驱动；heartbeat 静默）。
         
         :param status_data: 状态字典，如堆场切换、健康度等
         """
@@ -184,7 +184,10 @@ class MqttClient:
         event_type = status_data.get("event", "unknown")
         try:
             self._client.publish(topic, payload, qos=1)
-            logger.info(f"✓ 设备状态已发布: 事件={event_type}, topic={topic}")
+            if event_type == "heartbeat":
+                logger.debug("设备心跳已发布: topic=%s", topic)
+            else:
+                logger.info(f"✓ 设备状态已发布: 事件={event_type}, topic={topic}")
         except Exception as e:
             logger.exception(f"发布设备状态异常: {e}")
 

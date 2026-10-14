@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Car, Map, CheckCircle2, AlertTriangle, Wifi, WifiOff, Loader2, ToggleLeft, ToggleRight, Edit2, X, Save, Zap, RefreshCw, Settings2, Plus } from 'lucide-react';
+import { Car, Map, CheckCircle2, AlertTriangle, Wifi, WifiOff, Loader2, Edit2, X, Save, Zap, RefreshCw, Settings2, Plus } from 'lucide-react';
 import { SectionHeader, showToast } from './common';
 import { useAppContext } from '../context/AppContext';
 import { clsx } from 'clsx';
@@ -135,9 +135,9 @@ export default function Settings() {
     selectedVehicleId, setSelectedVehicleId,
     selectedYardId, setSelectedYardId,
     useMock,
-    connStatus, isMock,
+    connStatus,
     backendConfig, setBackendConfig,
-    switchMockMode, fetchVehicles, fetchYards,
+    fetchVehicles, fetchYards,
   } = useAppContext();
 
   const [refreshingVehicles, setRefreshingVehicles] = useState(false);
@@ -191,12 +191,6 @@ export default function Settings() {
   const [editHost, setEditHost] = useState(backendConfig.host);
   const [editPort, setEditPort] = useState(String(backendConfig.port));
 
-  function toggleMock() {
-    const next = !useMock;
-    switchMockMode(next);
-    showToast(next ? '已切换为模拟数据模式' : '已切换为真实连接模式，正在拉取设备列表…');
-  }
-
   useEffect(() => {
     setEditHost(backendConfig.host);
     setEditPort(String(backendConfig.port));
@@ -216,7 +210,7 @@ export default function Settings() {
     }
     setBackendConfig({ host, port: host.toLowerCase() === 'auto' ? 80 : port });
     setEditingConn(false);
-    showToast('后端服务地址已更新，下次连接时生效');
+    showToast('后端服务地址已保存，刷新后仍会保留');
   }
 
   const baseUrl = httpBase(backendConfig);
@@ -236,28 +230,6 @@ export default function Settings() {
         subtitle="选择车辆与场地。流程：① RTK 建图真值 → ② 车体静态参数 → ③ 校准（全场/三点/免校准）→ ④ 作业。"
       />
 
-      {/* ── 模拟数据开关 ── */}
-      <div className="card p-5 border border-slate-700/60 flex items-center justify-between gap-4">
-        <div>
-          <p className="text-sm font-bold text-slate-200">模拟数据模式</p>
-          <p className="text-[10px] text-slate-500 mt-0.5">
-            {useMock ? '当前使用内置仿真数据，无需中控机连接' : '当前连接真实中控机 WebSocket 数据流'}
-          </p>
-        </div>
-        <button
-          onClick={() => toggleMock()}
-          className={clsx(
-            'flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-bold transition-all',
-            useMock
-              ? 'bg-amber-900/30 border-amber-500/40 text-amber-300 hover:border-amber-400'
-              : 'bg-emerald-900/30 border-emerald-500/40 text-emerald-300 hover:border-emerald-400',
-          )}
-        >
-          {useMock ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
-          {useMock ? '模拟开启' : '模拟关闭'}
-        </button>
-      </div>
-
       {/* ── 后端服务连接面板 ── */}
       <div className="card p-5 border border-slate-700/60 space-y-4">
         <div className="flex items-center gap-2">
@@ -276,7 +248,6 @@ export default function Settings() {
               : 'text-slate-500 bg-slate-800 border-slate-700',
           )}>
             {connStatus === 'connected' ? '已连接' : connStatus === 'connecting' ? '连接中…' : '未连接'}
-            {isMock && ' (模拟)'}
           </span>
         </div>
 
@@ -284,6 +255,14 @@ export default function Settings() {
           <p className="text-[11px] text-slate-400">
             前端通过统一的后端服务接入，后端负责与各车辆中控机的 MQTT 通信。
             {selectedVehicleId && <span className="text-blue-400"> 当前订阅车辆：{selectedVehicleId}</span>}
+          </p>
+          <p className="text-[10px] text-slate-500">
+            排查 WebSocket：浏览器 F12 控制台可看「← 帧 …」；每秒摘要默认开启。
+            要打出每一帧（含 heartbeat）可执行{' '}
+            <code className="text-slate-400">localStorage.setItem(&apos;rtg_ws_debug&apos;,&apos;1&apos;)</code>
+            {' '}后刷新，或 URL 加 <code className="text-slate-400">?ws_debug=1</code>。
+            服务端帧日志：<code className="text-slate-400">docker compose logs -f backend</code>
+            （需 <code className="text-slate-400">WS_FRAME_LOG=true</code>）。
           </p>
 
           {editingConn ? (
@@ -324,11 +303,9 @@ export default function Settings() {
           )}
 
           <p className="text-[10px] text-slate-500">
-            {useMock
-              ? '模拟模式下不会发起真实连接，关闭模拟后自动连接上方地址。'
-              : connStatus === 'connected'
+            {connStatus === 'connected'
               ? `已与后端服务建立 WebSocket（${backendConfig.host === 'auto' ? '同源 auto' : `${backendConfig.host}:${backendConfig.port}`}）。`
-              : '修改地址后，切换模拟模式或重新选择车辆以触发连接。'}
+              : '修改地址后，重新选择车辆以触发连接。'}
           </p>
         </div>
       </div>

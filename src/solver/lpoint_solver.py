@@ -8,7 +8,8 @@ import logging
 import numpy as np
 from typing import Tuple
 
-from src.solver.attitude import euler_to_rotation_matrix
+from src.solver.attitude import body_to_enu_rotation, euler_to_rotation_matrix
+from src.solver.coordinate_transform import ecef_to_wgs84, enu_to_ecef
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +57,14 @@ class LPointSolver:
         :param heading_deg:航向角ψ（°）
         :return:           L-Point 坐标 [x, y, z]（与输入同坐标系，米）
         """
-        R = euler_to_rotation_matrix(roll_deg, pitch_deg, heading_deg)
-        p_final = np.array(gps_pos, dtype=float) - R @ self._l_arm
-        return p_final
+        p = np.array(gps_pos, dtype=float)
+        if float(np.linalg.norm(p)) > 1.0e6:
+            lat, lon, alt = ecef_to_wgs84(float(p[0]), float(p[1]), float(p[2]))
+            r_be = body_to_enu_rotation(roll_deg, pitch_deg, heading_deg)
+            de, dn, du = -(r_be @ self._l_arm)
+            return np.array(enu_to_ecef(float(de), float(dn), float(du), lat, lon, alt))
+        r = euler_to_rotation_matrix(roll_deg, pitch_deg, heading_deg)
+        return p - r @ self._l_arm
 
     def solve_with_height_correction(
         self,

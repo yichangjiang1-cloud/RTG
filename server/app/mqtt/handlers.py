@@ -60,7 +60,11 @@ class MqttMessageHandler:
             return
 
         vehicle_id = match.group(1)
-        logger.info(f"[状态] {vehicle_id}: {data.get('event', 'unknown')}")
+        event = data.get("event", "unknown")
+        if event == "heartbeat":
+            logger.debug(f"[状态] {vehicle_id}: heartbeat")
+        else:
+            logger.info(f"[状态] {vehicle_id}: {event}")
 
         if self.ws_manager:
             await self.ws_manager.broadcast_to_vehicle(vehicle_id, {

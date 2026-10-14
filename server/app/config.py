@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     # 日志配置
     LOG_LEVEL: str = "INFO"
     LOG_FILE: str = "logs/backend.log"
+    # 1=打印 WebSocket 下发帧摘要（telemetry 约 1Hz），便于 docker compose logs -f backend
+    WS_FRAME_LOG: bool = False
 
     class Config:
         env_file = ".env"
