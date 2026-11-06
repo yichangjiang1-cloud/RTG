@@ -39,7 +39,7 @@ class GnssRawFileLogger:
         session_gap_s: float = 2.0,
     ):
         self.receiver_id = receiver_id
-        self.listen_port = listen_port
+        self.listen_port = int(listen_port)
         self.base_dir = Path(base_dir)
         sub = _RECEIVER_SUBDIRS.get(receiver_id, receiver_id)
         self._dir = self.base_dir / sub
@@ -81,6 +81,15 @@ class GnssRawFileLogger:
         logger.info(
             f"[{self.receiver_id}] 原始数据记录 → {path}"
         )
+
+    def set_listen_port(self, port: int) -> None:
+        """换绑端口后关掉当前文件，下一次写入用新端口命名。"""
+        port = int(port)
+        with self._lock:
+            if port == self.listen_port:
+                return
+            self.listen_port = port
+            self._close_session()
 
     def write_packet(self, data: bytes, addr: tuple, now: float) -> None:
         peer = (str(addr[0]), int(addr[1]))

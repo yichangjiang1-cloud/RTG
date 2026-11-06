@@ -35,7 +35,6 @@ class Yard(Base):
     origin_lat = Column(Float, nullable=False)   # 原点纬度
     origin_lon = Column(Float, nullable=False)   # 原点经度
     origin_alt = Column(Float, nullable=True, default=0)  # 原点高度
-    heading_deg = Column(Float, default=0)        # 堆场朝向（度）
     bay_spacing = Column(Float, nullable=True, default=6.0)  # 贝位间距（米）
     bay_count = Column(Integer, nullable=True, default=0)    # 贝位数
     mapped = Column(Boolean, default=False)       # 是否已有 RTK 场地真值（至少一个 mapping 点）

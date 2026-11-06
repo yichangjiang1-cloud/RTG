@@ -81,7 +81,7 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="card p-5 sm:col-span-2 lg:col-span-1">
           <p className="section-title mb-1">大车 L-Point（堆场坐标）</p>
-          <p className="text-[10px] text-slate-500 mb-3">解算输出 · LYCS · 原点为堆场参考点</p>
+          <p className="text-[10px] text-slate-500 mb-3">解算输出 · LYCS · X 北向，Y 东向</p>
           <div className="space-y-1">
             <div className="flex justify-between items-baseline">
               <span className="text-[10px] text-slate-500">X</span>
@@ -432,13 +432,14 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
               <span className="font-mono text-lg font-bold text-emerald-400">{data.trolley.travel.toFixed(3)} m</span>
             </div>
             <div className="flex flex-col items-center justify-center py-3 bg-slate-900/40 rounded-lg gap-1">
-              <span className="section-title">小车速度</span>
+              <span className="section-title">相对速度</span>
               <span className={`font-mono text-lg font-bold ${
                 data.trolley.speed > 0.01 ? 'text-emerald-400' :
                 data.trolley.speed < -0.01 ? 'text-amber-400' : 'text-slate-400'
               }`}>
                 {formatSignedSpeedMps(data.trolley.speed)}
               </span>
+              <span className="text-[10px] text-slate-500">相对零点 Δ 的变化</span>
             </div>
           </div>
         </div>

@@ -36,6 +36,7 @@ from src.solver.motion_speed import (
     hold_gnss_speed,
     shortest_arc_deg,
     update_motion_speed,
+    relative_planar_speed,
     use_gantry_speed_sample,
 )
 from src.solver.gantry_frame import lycs_to_gantry_body
@@ -54,25 +55,21 @@ def _trolley_origin_from_cfg(cfg) -> tuple[str, Optional[tuple[float, float, flo
     return "auto", None
 
 
-def _gantry_l_arms_from_cfg(cfg) -> tuple[list, list]:
-    """读取大车双作业点杆臂；兼容旧版单 l_arm。"""
-    legacy = cfg.get("l_arm", [0, 0, -8.45])
+def _read_named_arm(cfg, flat_key: str):
+    """读取一套杆臂。缺字段或单 l_arm 都返回 None，不参与解算。"""
     gantry_block = cfg.get("gantry") if isinstance(cfg.get("gantry"), dict) else {}
-    elec = (
-        cfg.get("gantry.l_arm_elec")
-        or gantry_block.get("l_arm_elec")
-        or cfg.get("l_arm_elec")
-    )
-    diesel = (
-        cfg.get("gantry.l_arm_diesel")
-        or gantry_block.get("l_arm_diesel")
-        or cfg.get("l_arm_diesel")
-    )
-    if not elec or len(elec) < 3:
-        elec = legacy
-    if not diesel or len(diesel) < 3:
-        diesel = legacy
-    return [float(x) for x in elec[:3]], [float(x) for x in diesel[:3]]
+    arm = cfg.get(f"gantry.{flat_key}") or gantry_block.get(flat_key) or cfg.get(flat_key)
+    if not arm or len(arm) < 3:
+        return None
+    return [float(x) for x in arm[:3]]
+
+
+def _gantry_l_arms_from_cfg(cfg) -> tuple[list, list]:
+    """只读电气房 / 柴油机两套杆臂。缺省为零，不用旧的单杆臂。"""
+    zero = [0.0, 0.0, 0.0]
+    elec = _read_named_arm(cfg, "l_arm_elec") or zero
+    diesel = _read_named_arm(cfg, "l_arm_diesel") or zero
+    return elec, diesel
 
 
 class SolverNode:
@@ -112,10 +109,6 @@ class SolverNode:
         # B 车校准器（每个堆场独立）
         self._calibrators: dict[str, BVehicleCalibrator] = {}
 
-        # 小车速度（沿车体系 Y / 横梁方向）
-        self._last_trolley_body_y: Optional[float] = None
-        self._last_trolley_time: float = 0.0
-
         # 大车速度
         self._last_gantry_x: Optional[float] = None
         self._last_gantry_y: Optional[float] = None
@@ -126,8 +119,8 @@ class SolverNode:
         self._last_gantry_any_time: float = 0.0
         self._last_gantry_heading: float = 0.0
 
-        # 小车速度
-        self._trolley_motion = MotionSpeedState()
+        # 小车相对速度历史 (t, rel_x, rel_y)
+        self._trolley_rel_hist: list[tuple[float, float, float]] = []
 
         # 订阅融合状态
         self._bus.subscribe(EventBus.TOPIC_FUSED_STATE, self._on_fused_state)
@@ -257,6 +250,7 @@ class SolverNode:
         current_bay_no = resolve_bay_no_next(
             float(gantry_result.lpoint_x),
             bay_positions,
+            float(gantry_result.lpoint_y),
         )
 
         result = PositionResult(
@@ -579,9 +573,11 @@ class SolverNode:
             self._trolley_origin_mode = "manual"
             self._trolley_pending_capture = False
             logger.info("小车零点已捕获 (车体系): x=%.3f y=%.3f z=%.3f", bx, by, bz)
+            self._trolley_rel_hist = []
         elif self._trolley_origin_body is None and self._trolley_origin_mode == "auto":
             self._trolley_origin_body = (bx, by, bz)
             logger.info("小车自动零点锁定 (车体系): x=%.3f y=%.3f z=%.3f", bx, by, bz)
+            self._trolley_rel_hist = []
 
         ox, oy, oz = self._trolley_origin_body or (bx, by, bz)
         trolley.origin_body_x, trolley.origin_body_y, trolley.origin_body_z = ox, oy, oz
@@ -591,46 +587,22 @@ class SolverNode:
         trolley.rel_z = bz - oz
         trolley.travel_distance = trolley.rel_y
 
-        gnss_speed = float(tly.get("speed_mps", 0.0))
-
-        # ── 小车速度估计（与大车逻辑同步的保护） ──
-        _MIN_SPEED_DT = 0.05
-        _MAX_SPEED_DT = 2.0
-        _STATIC_DECAY = 0.90
-
-        ref_valid = self._last_trolley_body_y is not None and self._last_trolley_time > 0
-        dy_body = 0.0
-        dt = 0.0
-        if ref_valid:
-            dy_body = by - self._last_trolley_body_y
-            dt = now - self._last_trolley_time
-
-        def _reset_tly_ref():
-            self._last_trolley_body_y = by
-            self._last_trolley_time = now
-
-        if not ref_valid:
-            _reset_tly_ref()
-        elif dt > _MAX_SPEED_DT:
-            _reset_tly_ref()
-        elif dt < _MIN_SPEED_DT:
-            pass
-        elif abs(dy_body) >= MIN_DISPLACEMENT_M:
-            update_motion_speed(
-                self._trolley_motion, 0.0, dy_body, dt, gnss_speed, None,
+        # 相对速度 = 仪表盘 ΔX/ΔY 在约 0.4 s 内的变化率。
+        # 大车移动而相对零点不动 → 0。不用 GNSS 地速。
+        _REL_WINDOW_S = 0.4
+        self._trolley_rel_hist.append((now, trolley.rel_x, trolley.rel_y))
+        self._trolley_rel_hist = [
+            p for p in self._trolley_rel_hist if now - p[0] <= 1.0
+        ]
+        older = [p for p in self._trolley_rel_hist if now - p[0] >= _REL_WINDOW_S]
+        if older:
+            t0, x0, y0 = older[-1]
+            trolley.speed = relative_planar_speed(
+                trolley.rel_x - x0, trolley.rel_y - y0, now - t0,
             )
-            _reset_tly_ref()
-        elif gnss_speed >= DEADBAND_MPS:
-            hold_gnss_speed(self._trolley_motion, gnss_speed)
         else:
-            if abs(self._trolley_motion.speed) >= DEADBAND_MPS:
-                self._trolley_motion.speed *= _STATIC_DECAY
-                from src.solver.motion_speed import _snap
-                self._trolley_motion.speed = _snap(
-                    self._trolley_motion.speed, DEADBAND_MPS
-                )
+            trolley.speed = 0.0
 
-        trolley.speed = self._trolley_motion.speed
         trolley.is_valid = True
         trolley.data_source = tly.get("source", DataSource.INVALID)
         return trolley
@@ -685,6 +657,7 @@ class SolverNode:
         self._trolley_origin_mode = "manual"
         self._trolley_origin_body = (float(ox), float(oy), float(oz))
         self._trolley_pending_capture = False
+        self._trolley_rel_hist = []
         logger.info("小车零点已手动设定 (车体系): (%.3f, %.3f, %.3f)", ox, oy, oz)
 
     def reset_trolley_origin(self) -> None:
@@ -692,9 +665,7 @@ class SolverNode:
         self._trolley_origin_mode = "auto"
         self._trolley_origin_body = None
         self._trolley_pending_capture = False
-        self._last_trolley_body_y = None
-        self._last_trolley_time = 0.0
-        self._trolley_motion = MotionSpeedState()
+        self._trolley_rel_hist = []
         logger.info("小车零点已重置为 auto")
 
     def apply_vehicle_config(self, cloud_config: dict) -> None:
@@ -702,9 +673,12 @@ class SolverNode:
         block = cloud_config.get("config") if isinstance(cloud_config.get("config"), dict) else cloud_config
         if not block:
             return
-        elec, diesel = _gantry_l_arms_from_cfg(block)
-        self._solver_elec.update_l_arm(elec)
-        self._solver_diesel.update_l_arm(diesel)
+        elec = _read_named_arm(block, "l_arm_elec")
+        diesel = _read_named_arm(block, "l_arm_diesel")
+        if elec is not None:
+            self._solver_elec.update_l_arm(elec)
+        if diesel is not None:
+            self._solver_diesel.update_l_arm(diesel)
         logger.info("已应用大车双作业点杆臂 elec=%s diesel=%s", elec, diesel)
         trolley_cfg = block.get("trolley")
         if isinstance(trolley_cfg, dict):

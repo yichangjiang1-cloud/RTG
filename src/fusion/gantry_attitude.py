@@ -57,9 +57,10 @@ class GantryAttitudeConfig:
     def from_dict(cls, block: Optional[dict], w_span: float = 0.0) -> "GantryAttitudeConfig":
         if not isinstance(block, dict):
             block = {}
+        _ = w_span  # 已废弃，不再作为横滚间距
         mode = normalize_attitude_mode(str(block.get("mode", "four_antenna")))
         baseline_m = float(block.get("baseline_m", 1.0))
-        roll_span_m = float(block.get("roll_span_m", w_span if w_span > 0 else 0.0))
+        roll_span_m = 0.0
         roll_alt0_m = float(block.get("roll_alt0_m", 0.0))
         body = block.get("antenna_body")
         if not isinstance(body, dict) or len(body) < 4:

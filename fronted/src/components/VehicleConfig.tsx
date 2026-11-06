@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type Dispatch, type SetStateAction, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type Dispatch, type SetStateAction, type ReactNode } from 'react';
 import { Settings2, Plus, Save, FolderOpen, Car, Radio, RefreshCw, X, Loader2, AlertTriangle, Copy, Sparkles, WifiOff, ArrowLeftRight, MoveHorizontal } from 'lucide-react';
 import { SectionHeader, showToast } from './common';
 import { useAppContext } from '../context/AppContext';
@@ -71,11 +71,8 @@ function InitDeviceModal({ device, backendBase, onClose, onDone }: {
         temp_id: device.temp_id,
         new_vehicle_id: newId.trim(),
         label: label.trim(),
-        l_arm: elec,
         l_arm_elec: elec,
         l_arm_diesel: diesel,
-        h: 0,
-        w_span: 0,
       });
 
       if (cloneSourceId) {
@@ -286,23 +283,40 @@ function mergeVehicleConfig(
     trolley?: TrolleyOriginConfig;
   } | null,
 ): VehicleProfile {
-  const legacy = data?.l_arm ?? local.l_arm ?? DEFAULT_ARM;
-  const span = data?.w_span ?? local.span ?? 10;
+    const legacy = data?.l_arm_elec ?? local.l_arm_elec ?? DEFAULT_ARM;
+  const diesel = data?.l_arm_diesel ?? local.l_arm_diesel ?? DEFAULT_ARM;
   return {
     ...local,
-    height: 0,
-    span: 0,
     l_arm: legacy,
-    l_arm_elec: data?.l_arm_elec ?? local.l_arm_elec ?? legacy,
-    l_arm_diesel: data?.l_arm_diesel ?? local.l_arm_diesel ?? legacy,
+    l_arm_elec: legacy,
+    l_arm_diesel: diesel,
     l_arm_calibration: data?.l_arm_calibration ?? local.l_arm_calibration,
     gantry_attitude: normalizeGantryAttitude(
       data?.gantry_attitude ?? local.gantry_attitude,
-      span,
+      0,
     ),
     receiver_layout: data?.receiver_layout ?? local.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT,
     ntrip: data?.ntrip ?? local.ntrip ?? DEFAULT_NTRIP,
     trolley: data?.trolley ?? local.trolley ?? { origin_mode: 'auto' },
+  };
+}
+
+function attitudeForSave(att: GantryAttitudeConfig | undefined): GantryAttitudeConfig | undefined {
+  if (!att) return att;
+  const mode = att.mode === 'dual_receiver' ? 'dual_receiver' : 'four_antenna';
+  const { roll_span_m: _roll, roll_alt0_m: _alt0, body_calibration, ...rest } = att;
+  const cal = body_calibration ? { ...body_calibration } : undefined;
+  if (cal) delete cal.span_m;
+  return { ...rest, mode, ...(cal ? { body_calibration: cal } : {}) };
+}
+
+function alignCalibrationArms(cfg: VehicleProfile): VehicleProfile['l_arm_calibration'] {
+  const cal = cfg.l_arm_calibration;
+  if (!cal) return cal;
+  return {
+    ...cal,
+    elec: cal.elec ? { ...cal.elec, l_arm: cfg.l_arm_elec } : cal.elec,
+    diesel: cal.diesel ? { ...cal.diesel, l_arm: cfg.l_arm_diesel } : cal.diesel,
   };
 }
 
@@ -1137,7 +1151,7 @@ function GantryAttitudePanel({
       };
       if (json.code !== 200 || !json.data?.antenna_body) throw new Error('标定失败');
 
-      const { antenna_body, baseline_m, span_m = 0 } = json.data;
+      const { antenna_body, baseline_m } = json.data;
       const body = bodyListsToTuples(antenna_body);
       const measuredAt = new Date().toISOString();
 
@@ -1153,7 +1167,6 @@ function GantryAttitudePanel({
             body_calibration: {
               measured_at: measuredAt,
               baseline_m,
-              span_m,
               source: 'live',
             },
           },
@@ -1352,6 +1365,8 @@ export default function VehicleConfig({
 
   const baseVehicle = vehicles.find(v => v.vehicle_id === editId) ?? null;
   const [cfg, setCfg] = useState<VehicleProfile | null>(baseVehicle);
+  const vehiclesRef = useRef(vehicles);
+  vehiclesRef.current = vehicles;
 
   const baseUrl = httpBase(backendConfig);
 
@@ -1377,7 +1392,7 @@ export default function VehicleConfig({
   }, [vehicles, editId, selectedVehicleId]);
 
   useEffect(() => {
-    const local = vehicles.find(v => v.vehicle_id === editId) ?? null;
+    const local = vehiclesRef.current.find(v => v.vehicle_id === editId) ?? null;
     if (!editId) {
       setCfg(null);
       return;
@@ -1427,7 +1442,9 @@ export default function VehicleConfig({
         setCfg(mergeVehicleConfig(local, null));
       })
       .finally(() => setLoading(false));
-  }, [editId, baseUrl, useMock, vehicles]);
+    // 只在切换车辆时重载。车辆列表每 10s 刷新不得重置正在编辑的表单。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editId, baseUrl, useMock]);
 
   const handleSelectVehicle = (id: string) => {
     setEditId(id);
@@ -1460,13 +1477,10 @@ export default function VehicleConfig({
     try {
       const payload = {
         vehicle_id: cfg.vehicle_id,
-        l_arm: cfg.l_arm_elec,
         l_arm_elec: cfg.l_arm_elec,
         l_arm_diesel: cfg.l_arm_diesel,
-        height: 0,
-        w_span: 0,
-        l_arm_calibration: cfg.l_arm_calibration,
-        gantry_attitude: cfg.gantry_attitude,
+        l_arm_calibration: alignCalibrationArms(cfg),
+        gantry_attitude: attitudeForSave(cfg.gantry_attitude),
         receiver_layout: cfg.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT,
         ntrip: cfg.ntrip ?? DEFAULT_NTRIP,
         trolley: cfg.trolley,
@@ -1533,7 +1547,15 @@ export default function VehicleConfig({
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-base font-bold text-amber-100 font-mono">{dev.temp_id}</p>
-                  <p className="text-xs text-slate-500 font-mono mt-0.5">SN: {dev.sn || '-'}</p>
+                  <p className="text-xs text-slate-500 font-mono mt-0.5">
+                    SN: {dev.sn || '-'}
+                    <span className={clsx(
+                      'ml-2 font-bold',
+                      dev.status === 'online' ? 'text-emerald-400' : 'text-slate-500',
+                    )}>
+                      {dev.status === 'online' ? '在线' : '离线'}
+                    </span>
+                  </p>
                 </div>
                 <button
                   onClick={() => setInitTarget(dev)}
@@ -1573,6 +1595,12 @@ export default function VehicleConfig({
               onClick={() => handleSelectVehicle(v.vehicle_id)}
               className={editId === v.vehicle_id ? 'chip-btn-active' : 'chip-btn-inactive'}
             >
+              <span
+                className={clsx(
+                  'inline-block w-1.5 h-1.5 rounded-full mr-1.5',
+                  v.status === 'online' ? 'bg-emerald-400' : 'bg-slate-500',
+                )}
+              />
               {v.label}
               <span className="ml-2 text-xs font-mono opacity-70">{v.vehicle_id}</span>
             </button>

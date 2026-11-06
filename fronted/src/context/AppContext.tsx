@@ -14,6 +14,7 @@ export interface PendingDevice {
   temp_id: string;
   sn: string;
   last_seen?: string;
+  status?: 'online' | 'offline';
 }
 
 interface AppState {
@@ -64,11 +65,8 @@ interface AppState {
     temp_id: string;
     new_vehicle_id: string;
     label: string;
-    l_arm: [number, number, number];
     l_arm_elec: [number, number, number];
     l_arm_diesel: [number, number, number];
-    h: number;
-    w_span: number;
   }) => Promise<void>;
   /**
    * 切换模拟模式：
@@ -103,6 +101,8 @@ const DEFAULT_VEHICLES: VehicleProfile[] = [
   {
     vehicle_id: 'RTG-001',
     label: 'RTG 01号机',
+    status: 'online',
+    is_initialized: true,
     l_arm: [0.12, 0.08, -29.8],
     l_arm_elec: [0.12, 0.08, -29.8],
     l_arm_diesel: [0.12, 0.08, -29.8],
@@ -111,6 +111,8 @@ const DEFAULT_VEHICLES: VehicleProfile[] = [
   {
     vehicle_id: 'RTG-002',
     label: 'RTG 02号机',
+    status: 'online',
+    is_initialized: true,
     l_arm: [0.12, 0.08, -29.8],
     l_arm_elec: [0.12, 0.08, -29.8],
     l_arm_diesel: [0.12, 0.08, -29.8],
@@ -119,6 +121,8 @@ const DEFAULT_VEHICLES: VehicleProfile[] = [
   {
     vehicle_id: 'RTG-003',
     label: 'RTG 03号机',
+    status: 'online',
+    is_initialized: true,
     l_arm: [0.12, 0.08, -30.3],
     l_arm_elec: [0.12, 0.08, -30.3],
     l_arm_diesel: [0.12, 0.08, -30.3],
@@ -132,7 +136,6 @@ const DEFAULT_YARDS: YardInfo[] = [
     name: '堆场 A区',
     origin_lat: 22.1234567,
     origin_lon: 114.2345678,
-    heading: 0,
     total_bays: 10,
     mapped: true,   // 已完成建图
   },
@@ -141,7 +144,6 @@ const DEFAULT_YARDS: YardInfo[] = [
     name: '堆场 B区',
     origin_lat: 22.1244567,
     origin_lon: 114.2355678,
-    heading: 90,
     total_bays: 8,
     mapped: false,  // 尚未建图
   },
@@ -150,7 +152,6 @@ const DEFAULT_YARDS: YardInfo[] = [
     name: '堆场 C区',
     origin_lat: 22.1254567,
     origin_lon: 114.2365678,
-    heading: 0,
     total_bays: 12,
     mapped: false,
   },
@@ -228,8 +229,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /** MQTT discovery → 后端 WS 广播后，把未初始化设备加入待分配列表 */
   const addPendingDevice = useCallback((dev: PendingDevice) => {
     setPendingDevices((prev) => {
-      if (prev.some((d) => d.temp_id === dev.temp_id)) return prev;
-      return [...prev, dev];
+      const next: PendingDevice = { ...dev, status: 'online' };
+      if (prev.some((d) => d.temp_id === dev.temp_id)) {
+        return prev.map((d) => (d.temp_id === dev.temp_id ? { ...d, ...next } : d));
+      }
+      return [...prev, next];
     });
   }, []);
 
@@ -253,7 +257,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         yard_id: string;
         name: string;
         origin: [number, number];
-        heading?: number;
         total_bays?: number;
         mapped?: boolean;
       }> };
@@ -263,7 +266,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
           name: y.name,
           origin_lat: y.origin[1],
           origin_lon: y.origin[0],
-          heading: y.heading ?? 0,
           total_bays: y.total_bays ?? 0,
           mapped: y.mapped ?? false,
         }));
@@ -296,22 +298,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }> };
       if (json.code === 200 && Array.isArray(json.data)) {
         const zeroArm = [0, 0, 0] as [number, number, number];
+        const asStatus = (s: string): 'online' | 'offline' =>
+          s === 'online' ? 'online' : 'offline';
         const profiles: VehicleProfile[] = json.data
           .filter(d => d.is_initialized)
           .map(d => ({
             vehicle_id: d.vehicle_id,
             label: d.label ?? d.vehicle_id,
+            status: asStatus(d.status),
+            is_initialized: true,
+            last_seen: d.last_seen,
             l_arm: zeroArm,
             l_arm_elec: zeroArm,
             l_arm_diesel: zeroArm,
             receiver_layout: { ...DEFAULT_RECEIVER_LAYOUT },
           }));
-        logger.info('AppContext', `fetchVehicles 成功，已初始化 ${profiles.length} 台，待初始化 ${json.data.length - profiles.length} 台`);
-        setVehicles(profiles);
         const pending: PendingDevice[] = json.data
           .filter(d => !d.is_initialized)
-          .map(d => ({ temp_id: d.vehicle_id, sn: d.sn ?? '', last_seen: d.last_seen }));
-        setPendingDevices(pending);
+          .map(d => ({
+            temp_id: d.vehicle_id,
+            sn: d.sn ?? '',
+            last_seen: d.last_seen,
+            status: asStatus(d.status),
+          }));
+        logger.info(
+          'AppContext',
+          `fetchVehicles 成功，已命名 ${profiles.length} 台（在线 ${profiles.filter(v => v.status === 'online').length}），待初始化 ${pending.length} 台`,
+        );
+        const vehicleKey = (list: { vehicle_id: string; label?: string; status?: string; last_seen?: string }[]) =>
+          JSON.stringify(list.map(p => [p.vehicle_id, p.label, p.status, p.last_seen]));
+        const pendingKey = (list: PendingDevice[]) =>
+          JSON.stringify(list.map(d => [d.temp_id, d.sn, d.status, d.last_seen]));
+        setVehicles(prev => (vehicleKey(prev) === vehicleKey(profiles) ? prev : profiles));
+        setPendingDevices(prev => (pendingKey(prev) === pendingKey(pending) ? prev : pending));
       } else {
         logger.warn('AppContext', 'fetchVehicles 返回非预期格式', json);
       }
@@ -354,16 +373,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 周期性刷新在线状态（中控心跳 5s，列表超时 15s）
+  useEffect(() => {
+    if (useMock) return;
+    const timer = window.setInterval(() => {
+      fetchVehicles().catch(() => {});
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, [useMock, fetchVehicles]);
+
   /** 为待初始化设备分配正式 ID，调用 POST /api/vehicle/init */
   const initDevice = useCallback(async (params: {
     temp_id: string;
     new_vehicle_id: string;
     label: string;
-    l_arm: [number, number, number];
     l_arm_elec: [number, number, number];
     l_arm_diesel: [number, number, number];
-    h: number;
-    w_span: number;
   }) => {
     const resp = await fetch(
       `${httpBase(backendConfig)}/api/vehicle/init`,
@@ -376,11 +401,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           label: params.label,
           params: {
             vehicle_id: params.new_vehicle_id,
-            l_arm: params.l_arm,
             l_arm_elec: params.l_arm_elec,
             l_arm_diesel: params.l_arm_diesel,
-            height: params.h,
-            w_span: params.w_span,
           },
         }),
         signal: AbortSignal.timeout(10000),
@@ -393,7 +415,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     addVehicle({
       vehicle_id: params.new_vehicle_id,
       label: params.label,
-      l_arm: params.l_arm,
+      l_arm: params.l_arm_elec,
       l_arm_elec: params.l_arm_elec,
       l_arm_diesel: params.l_arm_diesel,
       receiver_layout: { ...DEFAULT_RECEIVER_LAYOUT },

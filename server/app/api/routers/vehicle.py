@@ -18,6 +18,7 @@ from app.utils.antenna_body_calibration import (
     compute_antenna_body_from_ecef,
     ecef_dict_from_antennas,
 )
+from app.mqtt.presence import presence
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -32,6 +33,53 @@ def set_mqtt_client(client):
     _mqtt_client = client
 
 
+def _arm3(arm):
+    if not isinstance(arm, (list, tuple)) or len(arm) < 3:
+        return None
+    return [float(x) for x in arm[:3]]
+
+
+def _align_calibration_arms(cal, elec, diesel):
+    """标定记录里的杆臂改成当前正在用的两套杆臂。"""
+    if not isinstance(cal, dict):
+        return cal
+    out = dict(cal)
+    elec3 = _arm3(elec)
+    diesel3 = _arm3(diesel)
+    if elec3 and isinstance(out.get("elec"), dict):
+        rec = dict(out["elec"])
+        rec["l_arm"] = elec3
+        out["elec"] = rec
+    if diesel3 and isinstance(out.get("diesel"), dict):
+        rec = dict(out["diesel"])
+        rec["l_arm"] = diesel3
+        out["diesel"] = rec
+    return out
+
+
+def _sanitize_attitude(att):
+    """只保留四天线 / 双接收机，去掉跨距类旧字段。"""
+    if not isinstance(att, dict):
+        return att
+    out = dict(att)
+    mode = str(out.get("mode") or "").strip().lower()
+    out["mode"] = "dual_receiver" if mode in ("dual_receiver", "dual") else "four_antenna"
+    out.pop("roll_span_m", None)
+    out.pop("roll_alt0_m", None)
+    body_cal = out.get("body_calibration")
+    if isinstance(body_cal, dict):
+        body_cal = dict(body_cal)
+        body_cal.pop("span_m", None)
+        out["body_calibration"] = body_cal
+    return out
+
+
+def _drop_legacy_fields(config: VehicleConfig) -> None:
+    config.l_arm = None
+    config.height = None
+    config.w_span = None
+
+
 def _publish_vehicle_config_update(vehicle_id: str, config: VehicleConfig) -> None:
     """保存配置后通知中控机热更新，并触发 vehicle_params.yaml 本地备份。"""
     if not _mqtt_client or not _mqtt_client.is_connected():
@@ -40,11 +88,8 @@ def _publish_vehicle_config_update(vehicle_id: str, config: VehicleConfig) -> No
     payload = {
         "cmd": "UPDATE_CONFIG",
         "data": {
-            "l_arm": config.l_arm,
             "l_arm_elec": config.l_arm_elec,
             "l_arm_diesel": config.l_arm_diesel,
-            "height": config.height,
-            "w_span": config.w_span,
             "antennas": config.antennas,
             "l_arm_calibration": config.l_arm_calibration,
             "gantry_attitude": config.gantry_attitude,
@@ -104,21 +149,26 @@ async def init_vehicle(
             ).first()
 
             if config:
-                config.l_arm = req.params.l_arm
                 config.l_arm_elec = req.params.l_arm_elec
                 config.l_arm_diesel = req.params.l_arm_diesel
-                config.height = req.params.height
-                config.w_span = req.params.w_span
                 config.antennas = req.params.antennas
+                if req.params.l_arm_calibration is not None:
+                    config.l_arm_calibration = _align_calibration_arms(
+                        req.params.l_arm_calibration, req.params.l_arm_elec, req.params.l_arm_diesel
+                    )
+                if req.params.gantry_attitude is not None:
+                    config.gantry_attitude = _sanitize_attitude(req.params.gantry_attitude)
+                _drop_legacy_fields(config)
             else:
                 config = VehicleConfig(
                     vehicle_id=req.new_vehicle_id,
-                    l_arm=req.params.l_arm,
                     l_arm_elec=req.params.l_arm_elec,
                     l_arm_diesel=req.params.l_arm_diesel,
-                    height=req.params.height,
-                    w_span=req.params.w_span,
-                    antennas=req.params.antennas
+                    antennas=req.params.antennas,
+                    l_arm_calibration=_align_calibration_arms(
+                        req.params.l_arm_calibration, req.params.l_arm_elec, req.params.l_arm_diesel
+                    ),
+                    gantry_attitude=_sanitize_attitude(req.params.gantry_attitude),
                 )
                 db.add(config)
 
@@ -155,28 +205,55 @@ async def init_vehicle(
             detail=str(e)
         )
 
+def _is_temp_id(vehicle_id: str) -> bool:
+    return str(vehicle_id or "").upper().startswith("RTG-NEW")
+
+
 @router.get("/list", response_model=ApiResponse)
 async def list_vehicles(db: Session = Depends(get_db)):
-    """获取车辆列表（已初始化 + 待初始化）"""
+    """已命名车辆 + 当前 MQTT 在线设备（含未初始化）。status 由心跳/遥测判定。"""
     try:
         vehicles = db.query(Vehicle).all()
         result = []
+        listed_ids = set()
         for v in vehicles:
-            # 关联查询车辆参数（获取 height / w_span）
             config = db.query(VehicleConfig).filter(
                 VehicleConfig.vehicle_id == v.vehicle_id
             ).first()
+            online = presence.is_online(v.vehicle_id) or (
+                bool(v.temp_id) and presence.is_online(v.temp_id)
+            )
+            last_iso = (
+                presence.last_seen_iso(v.vehicle_id)
+                or (presence.last_seen_iso(v.temp_id) if v.temp_id else None)
+                or (v.updated_at.isoformat() if v.updated_at else None)
+            )
+            listed_ids.add(v.vehicle_id)
+            if v.temp_id:
+                listed_ids.add(v.temp_id)
             result.append({
                 "id": v.id,
                 "vehicle_id": v.vehicle_id,
                 "temp_id": v.temp_id,
                 "sn": v.sn or "",
                 "label": v.label or v.vehicle_id,
-                "is_initialized": v.initialized,   # 与前端字段保持一致
-                "status": "online",                 # 实际状态由 MQTT 心跳维护，此处默认值
-                "height": config.height if config else None,
-                "span": config.w_span if config else None,
-                "last_seen": v.updated_at.isoformat() if v.updated_at else None,
+                "is_initialized": v.initialized,
+                "status": "online" if online else "offline",
+                "last_seen": last_iso,
+            })
+
+        for vid in presence.online_ids():
+            if vid in listed_ids:
+                continue
+            result.append({
+                "id": None,
+                "vehicle_id": vid,
+                "temp_id": vid if _is_temp_id(vid) else None,
+                "sn": "",
+                "label": vid,
+                "is_initialized": not _is_temp_id(vid),
+                "status": "online",
+                "last_seen": presence.last_seen_iso(vid),
             })
         return ApiResponse(
             code=200,
@@ -217,11 +294,8 @@ async def get_vehicle(vehicle_id: str, db: Session = Depends(get_db)):
                 "sn": vehicle.sn or "",
                 "initialized": vehicle.initialized,
                 "config": {
-                    "l_arm": config.l_arm,
                     "l_arm_elec": config.l_arm_elec,
                     "l_arm_diesel": config.l_arm_diesel,
-                    "height": config.height,
-                    "w_span": config.w_span,
                     "antennas": config.antennas
                 } if config else None
             }
@@ -382,19 +456,31 @@ async def save_vehicle_config(
         ).first()
 
         if config:
-            config.l_arm = req.l_arm
             config.l_arm_elec = req.l_arm_elec
             config.l_arm_diesel = req.l_arm_diesel
-            config.height = req.height
-            config.w_span = req.w_span
             config.antennas = req.antennas
-            config.l_arm_calibration = req.l_arm_calibration
-            config.gantry_attitude = req.gantry_attitude
+            config.l_arm_calibration = _align_calibration_arms(
+                req.l_arm_calibration, req.l_arm_elec, req.l_arm_diesel
+            )
+            config.gantry_attitude = _sanitize_attitude(req.gantry_attitude)
             config.receiver_layout = req.receiver_layout
             config.ntrip = req.ntrip
             config.trolley = req.trolley
+            _drop_legacy_fields(config)
         else:
-            config = VehicleConfig(**req.dict())
+            config = VehicleConfig(
+                vehicle_id=req.vehicle_id,
+                l_arm_elec=req.l_arm_elec,
+                l_arm_diesel=req.l_arm_diesel,
+                antennas=req.antennas,
+                l_arm_calibration=_align_calibration_arms(
+                    req.l_arm_calibration, req.l_arm_elec, req.l_arm_diesel
+                ),
+                gantry_attitude=_sanitize_attitude(req.gantry_attitude),
+                receiver_layout=req.receiver_layout,
+                ntrip=req.ntrip,
+                trolley=req.trolley,
+            )
             db.add(config)
 
         db.commit()
@@ -435,11 +521,8 @@ async def get_vehicle_config(vehicle_id: str, db: Session = Depends(get_db)):
             message="获取成功",
             data={
                 "vehicle_id": config.vehicle_id,
-                "l_arm": config.l_arm,
                 "l_arm_elec": config.l_arm_elec,
                 "l_arm_diesel": config.l_arm_diesel,
-                "height": config.height,
-                "w_span": config.w_span,
                 "antennas": config.antennas,
                 "l_arm_calibration": config.l_arm_calibration,
                 "gantry_attitude": config.gantry_attitude,
@@ -496,24 +579,34 @@ async def clone_vehicle_config(
         ).first()
 
         if target_config:
-            target_config.l_arm = source_config.l_arm
             target_config.l_arm_elec = source_config.l_arm_elec
             target_config.l_arm_diesel = source_config.l_arm_diesel
-            target_config.height = source_config.height
-            target_config.w_span = source_config.w_span
             target_config.antennas = source_config.antennas
-            target_config.gantry_attitude = source_config.gantry_attitude
+            target_config.l_arm_calibration = _align_calibration_arms(
+                source_config.l_arm_calibration,
+                source_config.l_arm_elec,
+                source_config.l_arm_diesel,
+            )
+            target_config.gantry_attitude = _sanitize_attitude(source_config.gantry_attitude)
             target_config.receiver_layout = source_config.receiver_layout
+            target_config.ntrip = source_config.ntrip
             target_config.trolley = source_config.trolley
+            _drop_legacy_fields(target_config)
         else:
             target_config = VehicleConfig(
                 vehicle_id=req.new_vehicle_id,
-                l_arm=source_config.l_arm,
                 l_arm_elec=source_config.l_arm_elec,
                 l_arm_diesel=source_config.l_arm_diesel,
-                height=source_config.height,
-                w_span=source_config.w_span,
-                antennas=source_config.antennas
+                antennas=source_config.antennas,
+                l_arm_calibration=_align_calibration_arms(
+                    source_config.l_arm_calibration,
+                    source_config.l_arm_elec,
+                    source_config.l_arm_diesel,
+                ),
+                gantry_attitude=_sanitize_attitude(source_config.gantry_attitude),
+                receiver_layout=source_config.receiver_layout,
+                ntrip=source_config.ntrip,
+                trolley=source_config.trolley,
             )
             db.add(target_config)
 

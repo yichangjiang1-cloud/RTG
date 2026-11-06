@@ -14,6 +14,11 @@ sys.path.insert(0, str(project_root))
 
 from src.utils.logger import setup_logging, EnhancedLogger, get_position_logger
 from src.utils.config_loader import init_config, get_config
+from src.utils.runtime_paths import (
+    system_yaml_path,
+    vehicle_params_path,
+    yard_config_path,
+)
 from src.utils.device_manager import DeviceManager
 from src.driver.driver_node import DriverNode
 from src.fusion.fusion_node import FusionNode
@@ -21,17 +26,13 @@ from src.solver.solver_node import SolverNode
 from src.solver.yard_manager import YardManager
 from src.solver.calibration_context import CalibrationContextManager
 from src.utils.yard_backup import (
-    DEFAULT_BACKUP_PATH,
     fetch_from_api,
     load_backup,
     save_backup,
     build_indices,
     map_snapshot_for_yard,
 )
-from src.utils.vehicle_params_backup import (
-    DEFAULT_VEHICLE_PARAMS_PATH,
-    persist_vehicle_params,
-)
+from src.utils.vehicle_params_backup import persist_vehicle_params
 from src.bridge.bridge_node import BridgeNode
 from src.bridge.mqtt_client import MqttClient
 from src.bridge.api_client import ApiClient
@@ -48,13 +49,14 @@ class RTGSystem:
     """
 
     def __init__(self):
-        # 加载配置
-        config_files = [
-            "config/system.yaml",
-            "config/vehicle_params.yaml",
-            "config/yard_config.yaml",
-        ]
-        init_config(*config_files)
+        # 开发机读 config/；车上 RTG_CONFIG_DIR=/etc/rtg，RTG_STATE_DIR=/var/lib/rtg
+        self._system_yaml_path = str(system_yaml_path())
+        self._vehicle_params_path = str(vehicle_params_path())
+        init_config(
+            self._system_yaml_path,
+            self._vehicle_params_path,
+            str(yard_config_path()),
+        )
         cfg = get_config()
 
         # 初始化日志（每次启动新建 logs/session_* / system.log + position.log）
@@ -69,10 +71,12 @@ class RTGSystem:
         self._last_pos_log_ts = 0.0
         logger.info("=" * 60)
         logger.info("RTG 高精度自动定位系统启动")
+        logger.info("配置文件: %s", self._system_yaml_path)
+        logger.info("运行数据: %s", self._vehicle_params_path)
         logger.info("=" * 60)
 
         # 设备管理器：加载/生成 vehicle_id
-        self._device_mgr = DeviceManager()
+        self._device_mgr = DeviceManager(self._system_yaml_path)
         self._vehicle_id = self._device_mgr.load_vehicle_id()
         logger.info(f"当前 Vehicle ID: {self._vehicle_id}")
 
@@ -104,9 +108,8 @@ class RTGSystem:
         self._boot_time = time.time()
 
         # 堆场：优先 API，失败则读 yard_config.yaml 备份
-        self._vehicle_params_path = DEFAULT_VEHICLE_PARAMS_PATH
         self._yard_backup_path = cfg.get(
-            "yard_backup.path", DEFAULT_BACKUP_PATH
+            "yard_backup.path", str(yard_config_path())
         )
         yard_map_path = cfg.get("yard_map.path", "data/yard_map.json")
         self._yard_backup = self._bootstrap_yard_backup()
@@ -403,7 +406,9 @@ class RTGSystem:
         ntrip = block.get("ntrip") if isinstance(block, dict) else None
         if layout or ntrip:
             try:
-                self._driver_node.apply_gnss_layout(layout or {}, ntrip)
+                applied = self._driver_node.apply_gnss_layout(layout or {}, ntrip)
+                if applied:
+                    self._device_mgr.save_gnss_endpoints(applied)
             except Exception as e:
                 logger.warning("GNSS 布局/NTRIP 热更新失败: %s", e)
         persist_vehicle_params(config, self._vehicle_params_path)

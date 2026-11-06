@@ -20,10 +20,11 @@ class BayAnchor:
 
 @dataclass
 class BayPosition:
-    """RTK 建图贝位在堆场 LYCS X 上的位置（当前 X=北向，仅作索引参考）。"""
+    """RTK 建图贝位在堆场 LYCS 平面上的位置。X 北、Y 东。"""
 
     bay_no: int
     x: float
+    y: float = 0.0
 
 
 def build_bay_positions_from_survey_points(
@@ -32,8 +33,8 @@ def build_bay_positions_from_survey_points(
     bay_spacing: float = 6.0,
 ) -> List[BayPosition]:
     """
-    从前端建图 survey_points 构建贝位表（与 Mapping 页 bay_no 一致）。
-    X 优先用 local_x，否则由 WGS84 投影到 LYCS，再退回间距估算。
+    从前端建图 survey_points 构建贝位折线（按 bay_no 排序，不按北向重排）。
+    平面坐标优先用 local_x/local_y，否则由 WGS84 投影到 LYCS。
     """
     positions: List[BayPosition] = []
     spacing = max(float(bay_spacing), 0.1)
@@ -42,41 +43,77 @@ def build_bay_positions_from_survey_points(
         if bay_no is None:
             continue
         x = pt.get("local_x")
-        if x is None and transform is not None:
+        y = pt.get("local_y")
+        if (x is None or y is None) and transform is not None:
             lat = float(pt.get("lat", 0.0))
             lon = float(pt.get("lon", 0.0))
             alt = float(pt.get("alt") or 0.0)
             if abs(lat) > 1e-9 or abs(lon) > 1e-9:
-                x, _, _ = transform.wgs84_to_lycs(lat, lon, alt)
+                px, py, _ = transform.wgs84_to_lycs(lat, lon, alt)
+                if x is None:
+                    x = px
+                if y is None:
+                    y = py
         if x is None:
             x = float(int(bay_no) - 1) * spacing
-        positions.append(BayPosition(int(bay_no), float(x)))
-    positions.sort(key=lambda p: p.x)
+        if y is None:
+            y = 0.0
+        positions.append(BayPosition(int(bay_no), float(x), float(y)))
+    positions.sort(key=lambda p: p.bay_no)
     return positions
+
+
+def _segment_projection(
+    px: float, py: float, left: BayPosition, right: BayPosition,
+) -> Tuple[float, float]:
+    """作业点投到贝位线段上。返回 (t, 距离平方)。t<=0 在起点侧，t>=1 在终点侧。"""
+    sx = right.x - left.x
+    sy = right.y - left.y
+    len2 = sx * sx + sy * sy
+    if len2 <= 1e-12:
+        dx = px - left.x
+        dy = py - left.y
+        return 0.0, dx * dx + dy * dy
+    t = ((px - left.x) * sx + (py - left.y) * sy) / len2
+    if t <= 0.0:
+        dx = px - left.x
+        dy = py - left.y
+    elif t >= 1.0:
+        dx = px - right.x
+        dy = py - right.y
+    else:
+        dx = px - (left.x + t * sx)
+        dy = py - (left.y + t * sy)
+    return t, dx * dx + dy * dy
 
 
 def resolve_bay_no_next(
     lpoint_x: float,
     positions: Sequence[BayPosition],
+    lpoint_y: float = 0.0,
 ) -> int:
     """
-    PLC 当前贝位：与前端 RTK 贝位编号一致，区间内向「下一贝」取整。
+    PLC 当前贝位：沿 RTK 贝位折线（按贝位号顺序）判断，平面 X/Y 都参与。
 
-    例：在 8 号与 9 号贝位 X 之间 → 返回 9；正好在 8 号贝位 X → 返回 8。
-    无 RTK 表时返回 0。
+    正好落在某贝位上返回该贝；落在两贝线段之间返回下一贝。
+    折线起点之前返回第一贝，终点之后返回最后一贝。无 RTK 表时返回 0。
     """
     if not positions:
         return 0
-    sorted_pos = sorted(positions, key=lambda p: p.x)
-    if lpoint_x <= sorted_pos[0].x:
-        return sorted_pos[0].bay_no
-    for i in range(len(sorted_pos) - 1):
-        left, right = sorted_pos[i], sorted_pos[i + 1]
-        if lpoint_x <= left.x:
-            return left.bay_no
-        if left.x < lpoint_x < right.x:
-            return right.bay_no
-    return sorted_pos[-1].bay_no
+    ordered = sorted(positions, key=lambda p: p.bay_no)
+    if len(ordered) == 1:
+        return ordered[0].bay_no
+
+    best_dist = float("inf")
+    best_bay = ordered[0].bay_no
+    for i in range(len(ordered) - 1):
+        left, right = ordered[i], ordered[i + 1]
+        t, dist2 = _segment_projection(lpoint_x, lpoint_y, left, right)
+        bay = left.bay_no if t <= 1e-8 else right.bay_no
+        if dist2 < best_dist - 1e-9:
+            best_dist = dist2
+            best_bay = bay
+    return best_bay
 
 
 def geodetic_delta_to_local(

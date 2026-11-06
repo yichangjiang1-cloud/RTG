@@ -36,12 +36,6 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
-
-try:
-    import yaml
-except ImportError:
-    yaml = None  # type: ignore
 
 # 默认与 yard 示例原点一致
 DEFAULT_LAT = 30.123456
@@ -220,21 +214,6 @@ class OscillateMotion:
         return lat, lon, heading, speed_mps
 
 
-def load_yard_track_az(config_path: Path) -> float | None:
-    if yaml is None or not config_path.is_file():
-        return None
-    try:
-        with config_path.open(encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-    except OSError:
-        return None
-    for entry in data.get("yards") or []:
-        heading = entry.get("heading_deg", entry.get("heading"))
-        if heading is not None:
-            return float(heading)
-    return None
-
-
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="模拟大车单侧双天线 GNSS 接收机（同包双 GGA，刚体基线）"
@@ -278,13 +257,7 @@ def parse_args() -> argparse.Namespace:
         "--track-az",
         type=float,
         default=None,
-        help="移动轨道方位角 (°)；--move 时默认读 yard heading_deg",
-    )
-    p.add_argument(
-        "--yard-config",
-        type=Path,
-        default=Path("config/yard_config.yaml"),
-        help="堆场备份路径",
+        help="移动轨道方位角 (°)，默认与 --heading 相同",
     )
     return p.parse_args()
 
@@ -298,12 +271,7 @@ def resolve_baseline_body_deg(args: argparse.Namespace, heading_deg: float) -> f
 
 def main() -> int:
     args = parse_args()
-    track_az = args.track_az
-    if track_az is None and args.move:
-        yard_az = load_yard_track_az(args.yard_config)
-        track_az = yard_az if yard_az is not None else args.heading
-    elif track_az is None:
-        track_az = args.heading
+    track_az = args.heading if args.track_az is None else args.track_az
 
     baseline_body = resolve_baseline_body_deg(args, track_az if args.move else args.heading)
     motion = (

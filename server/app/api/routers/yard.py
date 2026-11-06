@@ -25,7 +25,6 @@ class YardCreateRequest(BaseModel):
     origin_lat: float
     origin_lon: float
     origin_alt: float = 0.0
-    heading_deg: float = 0.0
     bay_spacing: float = 6.0
     bay_count: int = 0
 
@@ -50,7 +49,6 @@ async def get_all_yards(db: Session = Depends(get_db)):
                 "yard_id": y.yard_id,
                 "name": y.name,
                 "origin": [y.origin_lon, y.origin_lat, y.origin_alt],
-                "heading": y.heading_deg,
                 "bay_spacing": y.bay_spacing,
                 "total_bays": y.bay_count,
                 "mapped": has_rtk or y.mapped,
@@ -74,7 +72,6 @@ async def create_yard(req: YardCreateRequest, db: Session = Depends(get_db)):
             yard.origin_lat = req.origin_lat
             yard.origin_lon = req.origin_lon
             yard.origin_alt = req.origin_alt
-            yard.heading_deg = req.heading_deg
             yard.bay_spacing = req.bay_spacing
             yard.bay_count = req.bay_count
         else:
@@ -84,7 +81,6 @@ async def create_yard(req: YardCreateRequest, db: Session = Depends(get_db)):
                 origin_lat=req.origin_lat,
                 origin_lon=req.origin_lon,
                 origin_alt=req.origin_alt,
-                heading_deg=req.heading_deg,
                 bay_spacing=req.bay_spacing,
                 bay_count=req.bay_count,
                 mapped=False,

@@ -11,11 +11,11 @@ gnss:
     enabled: true
     session_gap_s: 2.0
   receiver_a1:
-    host: 192.168.8.172
-    port: 30001
+    host: 0.0.0.0
+    port: 9001
     reconnect_interval_s: 3
     role: gantry_a1
-    transport: tcp
+    transport: udp
   receiver_a2:
     host: 0.0.0.0
     port: 9002

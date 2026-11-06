@@ -74,7 +74,7 @@
 ```
 
 - **大车**：接收机1 (`gantry_a1`) 双天线 A1(电气房侧主) + A2(柴油机侧副) 各配独立杆臂，解算两个作业点 L-Point；汇总 L-Point 为两侧均值。不再用跨距推算另一侧作业点。
-- **小车**：一台双天线接收机；**同包双 GGA**（GGA[0]=C1，GGA[1]=C2），**不使用姿态句**；解算双天线中点相对起始点的位置与沿横梁行程、速度（`solver_node._solve_trolley`）。
+- **小车**：一台双天线接收机；**同包双 GGA**（GGA[0]=C1，GGA[1]=C2），**不使用姿态句**；解算双天线中点相对车上零点的位置、沿横梁行程，以及相对大车的平面速度（`solver_node._solve_trolley`）。
 - **前端 `ant1`–`ant6`**：仅为物理角色标签（存后端 `vehicle_configs.antennas`），**不决定** UDP 端口；路由以 `system.yaml` 的 `role` 为准。
 
 > 中控为 UDP **监听端**，接收机为 **推送端**；身份由端口决定，与发送设备 IP 无关。配错端口会导致多路数据混入同一通道，详见 [docs/RECEIVER_UDP_ARCHITECTURE.md](docs/RECEIVER_UDP_ARCHITECTURE.md)。
@@ -213,8 +213,8 @@ P_作业 ≈ 套用(A 在贝位 k 的标定) ∘ M × P_B解算
 - **双 GGA 定位置**：GGA[0]=C1、GGA[1]=C2，直接取两天线 ECEF，**不求姿态句**。
 - **大车车体系**：零点锚定在大车 L-Point，X 沿航向、Y 沿横梁；**大车移动/转向时零点随动**，相对位置不因大车平移而漂移。
 - **相对位置**：`rel_x/rel_y/rel_z` = 当前车体系坐标 − 配置零点；**行程** `travel = rel_y`。
-- **零点设置**：前端「小车零点」页 — 捕获当前位置 / 手动 `origin_body` / 重置 auto；API `POST /api/vehicle/trolley_origin` → MQTT `SET_TROLLEY_ORIGIN`。
-- **速度**：沿横梁方向（车体系 Y）带符号实时速度。
+- **零点设置**：前端「车辆配置 → 小车零点」— 捕获当前位置 / 手动 `origin_body` / 重置 auto；API `POST /api/vehicle/trolley_origin` → MQTT `SET_TROLLEY_ORIGIN`。库表 `vehicle_configs.trolley`（JSON：`origin_mode` + `origin_body`）。
+- **速度**：仪表盘「相对速度」。约 0.4 s 内相对零点的平面变化 `√(Δx²+Δy²)/Δt`（与画面上的 ΔX/ΔY 同一套数）。2 cm 以内视为没动，速度为 0。**不用**小车 RMC/VTG 地速；大车走/转而相对位置不动则为 0。符号跟变化更大的那一轴。不含 Z。
 
 ---
 

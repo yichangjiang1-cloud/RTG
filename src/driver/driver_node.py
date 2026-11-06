@@ -95,15 +95,19 @@ class DriverNode:
         for rcv in self._gantry_evk_receivers():
             rcv.inject_rtcm(data)
 
-    def apply_gnss_layout(self, layout: dict, ntrip: Optional[dict] = None) -> None:
+    def apply_gnss_layout(self, layout: dict, ntrip: Optional[dict] = None) -> dict[str, dict]:
         """
         热更新大车/小车地址与 NTRIP（来自车辆配置 MQTT）。
         TCP/UDP 地址与协议变化时接收机自动重连或换绑。
+
+        返回本次真正改过的接收机，键为 system.yaml 里的 gnss 段名。
         """
         if not isinstance(layout, dict):
             layout = {}
 
-        def _apply_side(role: str, host_key: str, port_key: str, transport_key: str) -> None:
+        applied: dict[str, dict] = {}
+
+        def _apply_side(role: str, yaml_key: str, host_key: str, port_key: str, transport_key: str) -> None:
             rcv = self._by_role.get(role)
             if rcv is None:
                 return
@@ -125,10 +129,15 @@ class DriverNode:
                     rcv.host,
                     rcv.port,
                 )
+                applied[yaml_key] = {
+                    "host": rcv.host,
+                    "port": int(rcv.port),
+                    "transport": rcv.transport,
+                }
 
-        _apply_side("gantry_a1", "left_host", "left_port", "left_transport")
-        _apply_side("gantry_a2", "right_host", "right_port", "right_transport")
-        _apply_side("trolley", "trolley_host", "trolley_port", "trolley_transport")
+        _apply_side("gantry_a1", "receiver_a1", "left_host", "left_port", "left_transport")
+        _apply_side("gantry_a2", "receiver_a2", "right_host", "right_port", "right_transport")
+        _apply_side("trolley", "receiver_b", "trolley_host", "trolley_port", "trolley_transport")
 
         if isinstance(ntrip, dict):
             enabled = bool(ntrip.get("enabled", False))
@@ -163,6 +172,7 @@ class DriverNode:
                 self._ntrip.stop()
                 self._ntrip = None
                 logger.info("NTRIP 已按配置关闭")
+        return applied
 
     def _start_ntrip(self) -> None:
         """启动 NTRIP；已在跑则跳过（线程不可二次 start）。"""

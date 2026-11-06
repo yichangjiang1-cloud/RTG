@@ -110,6 +110,42 @@ class DeviceManager:
             logger.exception(f"✗ 保存 Vehicle ID 失败: {e}")
             return False
 
+    def save_gnss_endpoints(self, endpoints: Dict[str, Dict[str, Any]]) -> bool:
+        """把热更新后的接收机 host/port/transport 写回 system.yaml 的 gnss 段。"""
+        if not endpoints:
+            return False
+        try:
+            if os.path.exists(self._config_path):
+                with open(self._config_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+            else:
+                data = {}
+            gnss = data.get("gnss") if isinstance(data.get("gnss"), dict) else {}
+            changed = False
+            for key, fields in endpoints.items():
+                if not isinstance(fields, dict):
+                    continue
+                block = gnss.get(key) if isinstance(gnss.get(key), dict) else {}
+                for name in ("host", "port", "transport"):
+                    if name not in fields or fields[name] is None:
+                        continue
+                    value = int(fields[name]) if name == "port" else str(fields[name])
+                    if block.get(name) != value:
+                        block[name] = value
+                        changed = True
+                gnss[key] = block
+            if not changed:
+                return False
+            data["gnss"] = gnss
+            os.makedirs(os.path.dirname(self._config_path) or ".", exist_ok=True)
+            with open(self._config_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            logger.info("✓ GNSS 端口已写回 %s: %s", self._config_path, list(endpoints))
+            return True
+        except Exception as e:
+            logger.exception(f"✗ 写回 GNSS 端口失败: {e}")
+            return False
+
     def reconcile_with_backend(self, api_client) -> str:
         """
         启动时与后端对账本地身份。

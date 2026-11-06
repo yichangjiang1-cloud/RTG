@@ -4,11 +4,8 @@
 """
 
 import math
-import logging
 import numpy as np
 from typing import Tuple
-
-logger = logging.getLogger(__name__)
 
 # WGS84 椭球参数
 _A = 6378137.0              # 长半轴（m）
@@ -132,12 +129,9 @@ class YardTransform:
 
     以堆场原点为参考，先算常规 ENU（东/北/天），再投影到平面 XY。
 
-    当前约定（需求说明书未要求对齐贝位，也不假定沿跑道开时 Y 不变）：
-      X：相对原点偏北分量（North，m）
-      Y：相对原点偏东分量（East，m）
-      Z：相对原点天向分量（Up，m）
-
-    配置中的 heading_deg 仅保留兼容，暂不参与旋转。
+      X：相对原点偏北（m）
+      Y：相对原点偏东（m）
+      Z：相对原点天向（m）
     """
 
     def __init__(
@@ -145,25 +139,13 @@ class YardTransform:
         origin_lat: float,
         origin_lon: float,
         origin_alt: float,
-        heading_deg: float,
     ):
         """
         :param origin_lat/lon/alt: 堆场原点 WGS84 坐标
-        :param heading_deg:        兼容字段，当前忽略（不做跑道对齐旋转）
         """
         self.origin_lat = origin_lat
         self.origin_lon = origin_lon
         self.origin_alt = origin_alt
-        self.heading_deg = float(heading_deg)
-
-        # 固定为 heading=0：X=North，Y=East（常规局部平面，不旋到贝位）
-        # 需求未要求沿跑道开时 Y 不变；配置里的 heading_deg 暂不参与
-        if abs(self.heading_deg) > 1e-9:
-            logger.warning(
-                "yard heading_deg=%.3f 已忽略：当前堆场坐标固定为相对原点 ENU "
-                "(X=北, Y=东)，不对齐贝位",
-                self.heading_deg,
-            )
         self._R2d = np.array([
             [0.0, 1.0],   # LYCS_X = North
             [1.0, 0.0],   # LYCS_Y = East

@@ -122,9 +122,8 @@ class FusionNode:
         self._last_imu: Optional[ImuRaw] = None
         self._last_imu_time: float = 0.0
 
-        w_span = float(cfg.get("w_span", 23.47))
         att_block = cfg.get("gantry.attitude", {})
-        self._gantry_att_cfg = GantryAttitudeConfig.from_dict(att_block, w_span=w_span)
+        self._gantry_att_cfg = GantryAttitudeConfig.from_dict(att_block)
         self._last_gantry_att_source: str = ""
 
         # 订阅事件
@@ -142,11 +141,10 @@ class FusionNode:
         block = cloud_config.get("config") if isinstance(cloud_config.get("config"), dict) else cloud_config
         if not isinstance(block, dict):
             return
-        w_span = float(block.get("w_span", 23.47))
         att = block.get("gantry_attitude")
         if not isinstance(att, dict):
             att = block.get("gantry", {}).get("attitude") if isinstance(block.get("gantry"), dict) else {}
-        self._gantry_att_cfg = GantryAttitudeConfig.from_dict(att, w_span=w_span)
+        self._gantry_att_cfg = GantryAttitudeConfig.from_dict(att)
         logger.info("大车姿态配置已热更新: mode=%s", self._gantry_att_cfg.mode)
 
     # ------------------------------------------------------------------

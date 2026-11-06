@@ -1,11 +1,10 @@
-w_span: 0.0
 receiver_layout:
   left: gantry_a1
   right: gantry_a2
   trolley: trolley
-  left_transport: tcp
-  left_host: 192.168.8.172
-  left_port: 30001
+  left_transport: udp
+  left_host: 0.0.0.0
+  left_port: 9001
   right_transport: udp
   right_host: 0.0.0.0
   right_port: 9002
@@ -17,106 +16,98 @@ receiver_layout:
   - diesel
 ntrip:
   enabled: false
-  caster_host: 103.143.19.54
-  caster_port: 8002
-  mountpoint: RTCM33GRCEJpro
-  username: YCJ004
-  password: '47293'
+  caster_host: ''
+  caster_port: 2101
+  mountpoint: ''
+  username: ''
+  password: ''
   gga_interval_s: 10
 gantry:
   attitude:
     mode: four_antenna
-    baseline_m: 3.074856829305379
-    roll_span_m: 10
-    roll_alt0_m: 0
+    baseline_m: 20.00003055696353
     antenna_body:
       a1:
       - 0
       - 0
       - 0
       a2:
-      - 3.0748568293053786
+      - 20.00003055696353
+      - 1.2924697071141057e-26
       - 0
-      - -1.3552527156068805e-20
       b1:
-      - -0.01163126221696822
-      - 1.5671197594847215
-      - 0.28679942555757937
+      - 1.1553357773624683e-06
+      - 5.00000243124359
+      - -1.958392464683483e-06
       b2:
-      - 3.1185947324537615
-      - 1.5202116550604252
-      - 0.2859012303847968
+      - 20.000031712168937
+      - 4.999993189683121
+      - -1.9581714758838638e-06
     body_calibration:
-      measured_at: '2026-09-24T02:41:23.018Z'
-      baseline_m: 3.074856829305379
-      span_m: 1.5671197594847215
+      measured_at: '2026-10-19T03:52:17.517Z'
+      baseline_m: 20.00003055696353
       source: live
   l_arm_elec:
-  - -9.999734365449896
-  - 0.0005830666064774526
-  - -0.00011702598568839255
+  - -10.000020752524858
+  - 3.1999946098453153e-06
+  - -0.00012361387190558924
   l_arm_diesel:
-  - -10.000044667528186
-  - 0.00027572760290689116
-  - -0.00011702467262701536
+  - -10.000020752283723
+  - -3.1996460950785096e-06
+  - -0.00012361428064136564
   l_arm_calibration:
     elec:
-      measured_at: '2026-09-23T15:03:57.004Z'
+      measured_at: '2026-10-19T03:45:05.340Z'
       lpoint:
-        lat: 30.53856506
-        lon: 114.34921283
+        lat: 30.5384792173
+        lon: 114.3492566192
         alt: 9.8771
       antenna:
-        lat: 30.538534649
-        lon: 114.34931093483333
+        lat: 30.538389014666667
+        lon: 114.34925661916667
         alt: 9.877
       attitude:
-        roll: 0.00016824669727486335
-        pitch: 5.264189136861595e-05
-        heading: 289.7000019281822
+        roll: 1.1655660723851858e-14
+        pitch: 9.020588850867123e-05
+        heading: 2.0434832232261468e-10
       l_arm:
-      - -9.999734365449896
-      - 0.0005830666064774526
-      - -0.00011702598568839255
+      - -10.000020752524858
+      - 3.1999946098453153e-06
+      - -0.00012361387190558924
       receiver_id: gantry_a1
       gga_index: 0
       layout_snapshot:
-        left: gantry_a2
-        right: gantry_a1
+        left: gantry_a1
+        right: gantry_a2
         gga_order:
         - elec
         - diesel
     diesel:
-      measured_at: '2026-09-23T15:04:42.125Z'
+      measured_at: '2026-10-19T03:45:31.901Z'
       lpoint:
-        lat: 30.53860752
-        lon: 114.34923039
+        lat: 30.5384792173
+        lon: 114.3492045148
         alt: 9.8771
       antenna:
-        lat: 30.538577110666665
-        lon: 114.349328499
+        lat: 30.538389014666667
+        lon: 114.34920451483333
         alt: 9.877
       attitude:
-        roll: 0.00016824669727486335
-        pitch: 5.264189136861595e-05
-        heading: 289.7000019281822
+        roll: 1.1655660723851858e-14
+        pitch: 9.020588850867123e-05
+        heading: 2.0434832232261468e-10
       l_arm:
-      - -10.000044667528186
-      - 0.00027572760290689116
-      - -0.00011702467262701536
+      - -10.000020752283723
+      - -3.1996460950785096e-06
+      - -0.00012361428064136564
       receiver_id: gantry_a1
       gga_index: 1
       layout_snapshot:
-        left: gantry_a2
-        right: gantry_a1
+        left: gantry_a1
+        right: gantry_a2
         gga_order:
         - elec
         - diesel
-l_arm:
-- -9.999734365449896
-- 0.0005830666064774526
-- -0.00011702598568839255
-height: 0.0
 trolley:
   origin_mode: auto
 ekf:

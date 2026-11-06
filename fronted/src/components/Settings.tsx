@@ -36,7 +36,6 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
           origin_lat: parseFloat(originLat),
           origin_lon: parseFloat(originLon),
           origin_alt: parseFloat(originAlt) || 0,
-          heading_deg: 0,
           bay_spacing: 0,
           bay_count: parseInt(bayCount) || 0,
         }),
@@ -131,7 +130,7 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
 
 export default function Settings() {
   const {
-    vehicles, yards,
+    vehicles, pendingDevices, yards,
     selectedVehicleId, setSelectedVehicleId,
     selectedYardId, setSelectedYardId,
     useMock,
@@ -424,7 +423,12 @@ export default function Settings() {
           <div className="flex items-center gap-2 pb-3 border-b border-slate-700/60">
             <Car className="w-4 h-4 text-blue-400" />
             <h3 className="text-sm font-bold uppercase tracking-wide text-slate-300">车辆列表</h3>
-            <span className="text-[10px] text-slate-500">{vehicles.length} 台注册</span>
+            <span className="text-[10px] text-slate-500">
+              {vehicles.length} 台已命名
+              {pendingDevices.filter(d => d.status === 'online').length > 0
+                ? ` · ${pendingDevices.filter(d => d.status === 'online').length} 台在线未命名`
+                : ''}
+            </span>
             <button
               onClick={handleRefreshVehicles}
               disabled={useMock || refreshingVehicles}
@@ -436,14 +440,40 @@ export default function Settings() {
           </div>
 
           <div className="space-y-2">
-            {vehicles.map((v) => {
-              const isSelected = v.vehicle_id === selectedVehicleId;
+            {[
+              ...vehicles.map((v) => ({
+                id: v.vehicle_id,
+                label: v.label,
+                status: v.status ?? 'offline',
+                initialized: true,
+              })),
+              ...pendingDevices
+                .filter((d) => d.status === 'online' && !vehicles.some((v) => v.vehicle_id === d.temp_id))
+                .map((d) => ({
+                  id: d.temp_id,
+                  label: d.temp_id,
+                  status: 'online' as const,
+                  initialized: false,
+                })),
+            ].map((item) => {
+              const isSelected = item.id === selectedVehicleId;
+              const online = item.status === 'online';
               return (
                 <button
-                  key={v.vehicle_id}
+                  key={item.id}
                   onClick={() => {
-                    setSelectedVehicleId(isSelected ? null : v.vehicle_id);
-                    if (!isSelected) showToast(`已选择：${v.label}`);
+                    if (isSelected) {
+                      setSelectedVehicleId(null);
+                      return;
+                    }
+                    setSelectedVehicleId(item.id);
+                    if (!item.initialized) {
+                      showToast('该设备尚未命名，实时数据可看，正式作业请先到车辆管理初始化');
+                    } else if (!online) {
+                      showToast(`已选择 ${item.label}（当前离线，可能没有实时数据）`);
+                    } else {
+                      showToast(`已选择：${item.label}`);
+                    }
                   }}
                   className={clsx(
                     'w-full text-left p-4 rounded-xl border transition-all duration-150',
@@ -457,21 +487,39 @@ export default function Settings() {
                       'w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold shrink-0',
                       isSelected ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400',
                     )}>
-                      {v.vehicle_id.slice(-3)}
+                      {item.id.slice(-3)}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className={clsx('text-sm font-bold truncate', isSelected ? 'text-blue-200' : 'text-slate-200')}>
-                        {v.label}
+                        {item.label}
                       </p>
                       <p className="text-[10px] text-slate-500 font-mono mt-0.5">
-                        {v.vehicle_id}
+                        {item.id}
                       </p>
                     </div>
-                    {isSelected && <CheckCircle2 className="w-5 h-5 text-blue-400 shrink-0" />}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {!item.initialized && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border text-amber-400 bg-amber-900/30 border-amber-500/30">
+                          待命名
+                        </span>
+                      )}
+                      <span className={clsx(
+                        'text-[10px] font-bold px-2 py-0.5 rounded-full border',
+                        online
+                          ? 'text-emerald-400 bg-emerald-900/30 border-emerald-500/30'
+                          : 'text-slate-400 bg-slate-800/60 border-slate-600/40',
+                      )}>
+                        {online ? '在线' : '离线'}
+                      </span>
+                      {isSelected && <CheckCircle2 className="w-5 h-5 text-blue-400" />}
+                    </div>
                   </div>
                 </button>
               );
             })}
+            {vehicles.length === 0 && pendingDevices.filter(d => d.status === 'online').length === 0 && (
+              <p className="text-xs text-slate-500 py-6 text-center">暂无已命名或在线设备，请刷新或先初始化</p>
+            )}
           </div>
 
           <button

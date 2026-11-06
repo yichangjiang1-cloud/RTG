@@ -41,7 +41,6 @@ def normalize_api_yard(item: dict) -> Optional[dict]:
         "origin_lat": origin_lat,
         "origin_lon": origin_lon,
         "origin_alt": origin_alt,
-        "heading_deg": float(item.get("heading_deg", item.get("heading", 0.0))),
         "bay_spacing": float(item.get("bay_spacing", 6.0)),
         "bay_count": int(item.get("bay_count", item.get("total_bays", 0))),
         "mapped": bool(item.get("mapped", False)),

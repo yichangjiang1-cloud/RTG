@@ -342,7 +342,7 @@ fronted/
 |------|------|
 | `trolley.ant_a` / `ant_b` | 小车两端 GNSS 天线在 RTG 坐标系下的实时 X/Y/Z 坐标 (m) |
 | `trolley.travel` | 小车距轨道起始点的实际运行距离 (m)，用于驱动门架示意图中小车位置 |
-| `trolley.speed` | 小车运行速度 (m/s)，沿轨道数值增大方向为正 |
+| `trolley.speed` | 仪表盘「相对速度」(m/s)：约 0.4 s 内相对零点 `√(Δx²+Δy²)/Δt`，2 cm 内视为 0；不用 GNSS 地速 |
 
 #### 接收机状态面板
 

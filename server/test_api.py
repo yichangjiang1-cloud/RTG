@@ -54,9 +54,8 @@ def test_vehicle_init():
         "label": "RTG 01号机",
         "params": {
             "vehicle_id": "RTG-001",
-            "l_arm": [0.12, 0.08, -8.45],
-            "height": 8.45,
-            "w_span": 20.0,
+            "l_arm_elec": [0.12, 0.08, -8.45],
+            "l_arm_diesel": [0.12, 0.08, -8.45],
             "antennas": {
                 "ant1": {"label": "大车左前"},
                 "ant2": {"label": "大车右前"},
@@ -84,9 +83,8 @@ def test_vehicle_config_save():
     print("\n=== 8. 保存车辆参数 POST /api/vehicle/config ===")
     payload = {
         "vehicle_id": "RTG-001",
-        "l_arm": [0.15, 0.10, -8.50],
-        "height": 8.50,
-        "w_span": 20.5,
+        "l_arm_elec": [0.15, 0.10, -8.50],
+        "l_arm_diesel": [0.15, 0.10, -8.50],
         "antennas": {
             "ant1": {"label": "大车左前"},
             "ant2": {"label": "大车右前"},
@@ -123,7 +121,6 @@ def test_yard_create():
         "origin_lat": 22.345678,
         "origin_lon": 113.987654,
         "origin_alt": 5.20,
-        "heading_deg": 87.5,
         "bay_spacing": 6.058,
         "bay_count": 20
     }

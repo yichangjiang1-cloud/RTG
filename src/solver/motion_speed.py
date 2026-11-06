@@ -205,3 +205,52 @@ def update_motion_speed(
     state.speed = alpha * signed + (1.0 - alpha) * state.speed
     state.speed = _snap(state.speed, deadband)
     return state.speed
+
+
+def relative_planar_speed(
+    dx: float,
+    dy: float,
+    dt: float,
+    *,
+    min_disp_m: float = 0.02,
+    deadband: float = 0.05,
+) -> float:
+    """
+    小车相对速度：一段时间内相对零点的平面位移 / 时间。
+
+    与仪表盘 ΔX/ΔY 同一套数。位移小于 min_disp_m（默认 2 cm）视为没动，速度为 0。
+    大车走/转而相对位置不变时为 0。符号沿变化更大的那一轴。
+    """
+    if dt <= 0:
+        return 0.0
+    dist = math.hypot(dx, dy)
+    if dist < min_disp_m:
+        return 0.0
+    speed = dist / dt
+    if speed < deadband:
+        return 0.0
+    sign_src = dy if abs(dy) >= abs(dx) else dx
+    if abs(sign_src) < 1e-12:
+        return speed
+    return math.copysign(speed, sign_src)
+
+
+def update_trolley_beam_speed(
+    state: MotionSpeedState,
+    dx_body: float,
+    dy_body: float,
+    dt: float,
+    *,
+    deadband: float = DEADBAND_MPS,
+    alpha: float = EMA_ALPHA,
+) -> float:
+    """
+    小车速度：相对大车零点的车体平面位移变化（Δx、Δy）。
+
+    零点固定时 Δ(中心−零点)=Δbody。相对零点不动则速度为 0，与大车地速无关。
+    不用 RMC/VTG；不含 Z（高程噪声）。
+    """
+    return update_motion_speed(
+        state, dx_body, dy_body, dt, 0.0, None,
+        deadband=deadband, alpha=alpha,
+    )

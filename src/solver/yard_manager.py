@@ -32,14 +32,12 @@ def parse_yard_config_entry(entry: dict) -> Optional[Dict[str, Any]]:
         origin_lon = float(origin.get("lon", 0.0))
         origin_alt = float(origin.get("alt", 0.0))
 
-    heading = entry.get("heading_deg", entry.get("heading", 0.0))
     return {
         "yard_id": yard_id,
         "name": entry.get("name", ""),
         "origin_lat": origin_lat,
         "origin_lon": origin_lon,
         "origin_alt": origin_alt,
-        "heading_deg": float(heading),
         "bay_spacing": float(entry.get("bay_spacing", 6.0)),
         "bay_count": int(entry.get("bay_count", entry.get("total_bays", 0))),
     }
@@ -75,7 +73,6 @@ class YardManager:
                 origin_lat=parsed["origin_lat"],
                 origin_lon=parsed["origin_lon"],
                 origin_alt=parsed["origin_alt"],
-                heading_deg=parsed["heading_deg"],
             )
             self._yard_meta[yid] = parsed
             logger.info("已加载堆场配置: %s (%s)", yid, parsed.get("name", ""))
@@ -101,7 +98,6 @@ class YardManager:
                 origin_lat=parsed["origin_lat"],
                 origin_lon=parsed["origin_lon"],
                 origin_alt=parsed["origin_alt"],
-                heading_deg=parsed["heading_deg"],
             )
             self._yard_meta[yid] = parsed
         logger.info("堆场投影已刷新，共 %d 个堆场", len(self._transforms))

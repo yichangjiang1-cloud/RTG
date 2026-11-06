@@ -187,6 +187,8 @@ class GnssReceiver(threading.Thread):
             if port is not None and int(port) != self.port:
                 self.port = int(port)
                 changed = True
+                if self._raw_file_logger is not None:
+                    self._raw_file_logger.set_listen_port(self.port)
             if transport is not None:
                 t = str(transport).strip().lower()
                 if t != self.transport:

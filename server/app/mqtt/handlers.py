@@ -4,6 +4,7 @@ import re
 from typing import Dict, Any
 from app.database import SessionLocal
 from app.models import Vehicle
+from app.mqtt.presence import presence
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -42,6 +43,7 @@ class MqttMessageHandler:
             return
 
         vehicle_id = match.group(1)
+        presence.touch(vehicle_id)
         logger.debug(f"[遥测] {vehicle_id}: 收到定位数据")
 
         if self.ws_manager:
@@ -60,7 +62,11 @@ class MqttMessageHandler:
             return
 
         vehicle_id = match.group(1)
-        event = data.get("event", "unknown")
+        event = str(data.get("event", "unknown")).lower()
+        if event in ("offline", "disconnect", "shutdown"):
+            presence.mark_offline(vehicle_id)
+        else:
+            presence.touch(vehicle_id)
         if event == "heartbeat":
             logger.debug(f"[状态] {vehicle_id}: heartbeat")
         else:
@@ -82,6 +88,7 @@ class MqttMessageHandler:
             return
 
         sn = data.get("sn", "")
+        presence.touch(temp_id)
         logger.info(f"[发现] 新设备上线: temp_id={temp_id}, sn={sn}")
 
         # 写入 vehicles 表（去重：同 temp_id 不重复插入）

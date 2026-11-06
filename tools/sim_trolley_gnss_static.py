@@ -139,8 +139,7 @@ def load_yard_origin(config_path: Path) -> tuple[float, float, float, float] | N
     lat = float(y.get("origin_lat", sg.DEFAULT_LAT))
     lon = float(y.get("origin_lon", sg.DEFAULT_LON))
     alt = float(y.get("origin_alt", sg.DEFAULT_ALT))
-    hdg = float(y.get("heading_deg", y.get("heading", 0.0)))
-    return lat, lon, alt, hdg
+    return lat, lon, alt
 
 
 def build_trolley_packet(pair: sg.AntennaPair) -> bytes:
@@ -182,7 +181,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--use-yard-origin",
         action="store_true",
-        help="从 config/yard_config.yaml 读取 A1 原点与 heading（与 sim_rtg 一致）",
+        help="从 config/yard_config.yaml 读取 A1 原点（与 sim_rtg 一致）",
     )
     p.add_argument(
         "--yard-config",
@@ -206,7 +205,7 @@ def main() -> int:
     if args.use_yard_origin:
         origin = load_yard_origin(args.yard_config)
         if origin:
-            lat, lon, alt, heading = origin
+            lat, lon, alt = origin
             print(f"[配置] 已加载堆场原点 (A1 参考): {args.yard_config}")
         else:
             print(f"[警告] 无法读取 {args.yard_config}，使用默认经纬度")

@@ -25,7 +25,6 @@ class YardBase(BaseModel):
     origin_lat: float
     origin_lon: float
     origin_alt: float
-    heading_deg: float = 0
     bay_spacing: float
     bay_count: int
 
