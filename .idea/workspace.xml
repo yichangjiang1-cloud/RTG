@@ -4,8 +4,38 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="同时兼容R61、MC10、UB482等接收机设备">
+    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="问题一堆">
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/vehicle_params.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/vehicle_params.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/yard_config.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/yard_config.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Dashboard.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Dashboard.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Mapping.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Mapping.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Settings.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Settings.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/VehicleConfig.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/VehicleConfig.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/context/AppContext.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/context/AppContext.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/hooks/useWebSocket.ts" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/hooks/useWebSocket.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/types/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/types/index.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/api/routers/survey.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/api/routers/survey.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/api/routers/yard.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/api/routers/yard.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/database.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/database.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/models.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/utils/antenna_body_calibration.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/utils/antenna_body_calibration.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/utils/l_arm_calibration.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/utils/l_arm_calibration.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/server/docker-compose.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/bridge/telemetry.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/telemetry.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/fusion/antenna_body_calibration.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/fusion/antenna_body_calibration.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/models/positioning.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/positioning.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/solver/attitude.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/attitude.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/solver/coordinate_transform.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/coordinate_transform.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/solver/solver_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/solver_node.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/solver/yard_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/yard_manager.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/utils/vehicle_params_backup.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/vehicle_params_backup.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/utils/yard_backup.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/yard_backup.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_antenna_body_calibration.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_antenna_body_calibration.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_gantry_attitude.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_gantry_attitude.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_protocol.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_protocol.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tools/sim_plc_server.py" beforeDir="false" afterPath="$PROJECT_DIR$/tools/sim_plc_server.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -57,6 +87,7 @@
   </component>
   <component name="PropertiesComponent">{
   &quot;keyToString&quot;: {
+    &quot;Python 测试.Python 测试 (test_protocol.py 内).executor&quot;: &quot;Run&quot;,
     &quot;Python.gnss_listener.executor&quot;: &quot;Run&quot;,
     &quot;Python.main.executor&quot;: &quot;Run&quot;,
     &quot;Python.sim_plc_server.executor&quot;: &quot;Run&quot;,
@@ -144,9 +175,25 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
+    <configuration name="Python 测试 (test_protocol.py 内)" type="tests" factoryName="Autodetect" temporary="true" nameIsGenerated="true">
+      <module name="RTG" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/tests" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="_new_additionalArguments" value="&quot;&quot;" />
+      <option name="_new_target" value="&quot;$PROJECT_DIR$/tests/test_protocol.py&quot;" />
+      <option name="_new_targetType" value="&quot;PATH&quot;" />
+      <method v="2" />
+    </configuration>
     <recent_temporary>
       <list>
         <item itemvalue="Python.sim_plc_server" />
+        <item itemvalue="Python 测试.Python 测试 (test_protocol.py 内)" />
         <item itemvalue="Python.gnss_listener" />
         <item itemvalue="Python.main" />
       </list>
@@ -216,7 +263,15 @@
       <option name="project" value="LOCAL" />
       <updated>1791962750850</updated>
     </task>
-    <option name="localTasksCounter" value="7" />
+    <task id="LOCAL-00007" summary="问题一堆">
+      <option name="closed" value="true" />
+      <created>1793954983260</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1793954983260</updated>
+    </task>
+    <option name="localTasksCounter" value="8" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -243,7 +298,8 @@
     <MESSAGE value="兼容482板卡" />
     <MESSAGE value="差分接入、evk设备连接等" />
     <MESSAGE value="同时兼容R61、MC10、UB482等接收机设备" />
-    <option name="LAST_COMMIT_MESSAGE" value="同时兼容R61、MC10、UB482等接收机设备" />
+    <MESSAGE value="问题一堆" />
+    <option name="LAST_COMMIT_MESSAGE" value="问题一堆" />
   </component>
   <component name="github-copilot-workspace">
     <instructionFileLocations>

@@ -28,15 +28,28 @@ class GantryResult:
     """
     timestamp: float = 0.0
 
-    # ---- 大车双作业点 L-Point（堆场 LYCS，米）----
-    # 接收机1 天线 A1(主) → 电气房侧作业点；字段名历史遗留 center_elec_*
+    # ---- 四个轮胎中心（堆场 X/Y/Z，米）。顺序：该侧 GGA、GGA2 ----
+    tire_elec1: tuple = (0.0, 0.0, 0.0)
+    tire_elec1_valid: bool = False
+    tire_elec2: tuple = (0.0, 0.0, 0.0)
+    tire_elec2_valid: bool = False
+    tire_diesel1: tuple = (0.0, 0.0, 0.0)
+    tire_diesel1_valid: bool = False
+    tire_diesel2: tuple = (0.0, 0.0, 0.0)
+    tire_diesel2_valid: bool = False
+    # 主天线 GGA 是否在下游。用来把 GGA/GGA2 标成上游、下游轮胎。
+    elec_primary_down: bool = True
+    diesel_primary_down: bool = True
+    # 车道偏离 mm：电气 GGA、电气 GGA2、动力 GGA、动力 GGA2。朝场内为负。
+    lane_mm: list = field(default_factory=lambda: [0, 0, 0, 0])
+
+    # 电气侧 / 动力侧中心 = 该侧两个轮胎的中点
     center_elec_side: float = 0.0
     center_elec_y: float = 0.0
-    # 接收机1 天线 A2(副) → 柴油机侧作业点；字段名历史遗留 center_engine_*
     center_engine_side: float = 0.0
     center_engine_y: float = 0.0
-    a1_valid: bool = False   # 电气房侧作业点有效（A1 + l_arm_elec）
-    a2_valid: bool = False   # 柴油机侧作业点有效（A2 + l_arm_diesel）
+    a1_valid: bool = False   # 电气侧两个轮胎都有效
+    a2_valid: bool = False   # 动力侧两个轮胎都有效
     recv1_live: bool = False  # gantry_a1 / 9001 接收机在线
     recv2_live: bool = False  # gantry_a2 / 9002 接收机在线（监控用）
 
@@ -46,8 +59,9 @@ class GantryResult:
 
     # ---- 速度（m/s）----
     speed: float = 0.0
-
-    # ---- 姿态角（°）----
+    # 电气房 / 动力房轮胎中心沿堆场 +Y 的速度
+    speed_y_elec: float = 0.0
+    speed_y_diesel: float = 0.0
     heading: float = 0.0
     pitch: float = 0.0
     roll: float = 0.0
@@ -106,6 +120,8 @@ class TrolleyResult:
 
     # ---- 速度（m/s）----
     speed: float = 0.0
+    # 小车中心沿堆场 +X 的速度
+    speed_x: float = 0.0
 
     is_valid: bool = False
 
@@ -120,6 +136,7 @@ class PositionResult:
     """
     timestamp: float = 0.0
     yard_id: str = ""               # 当前所在堆场 ID（= PLC 场号，≤8 字节 ASCII）
+    in_yard: bool = False
 
     gantry: GantryResult = field(default_factory=GantryResult)
     trolley: TrolleyResult = field(default_factory=TrolleyResult)
@@ -169,6 +186,11 @@ class PositionResult:
     fix_quality_left_ant2: int = 0    # 左列副天线
     fix_quality_right: int = 0        # 右列主天线
     fix_quality_right_ant2: int = 0
+    # 按电气/动力侧分组。None 时协议仍用左/右字段。
+    fix_quality_elec: Optional[int] = None
+    fix_quality_elec_ant2: Optional[int] = None
+    fix_quality_diesel: Optional[int] = None
+    fix_quality_diesel_ant2: Optional[int] = None
     fix_quality_trolley: int = 0
     fix_quality_trolley_ant2: int = 0
     satellites_left: int = 0

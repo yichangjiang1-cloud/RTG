@@ -2,9 +2,9 @@
 从四天线 ECEF 反算车体系安装坐标（标定用）。
 
 约定（与现场一致）：
-  - 左接收机 gantry_a1：GGA[0]=电气房(a1)，GGA[1]=柴油机(a2)
-  - 右接收机 gantry_a2：GGA[0]=电气房(b1)，GGA[1]=柴油机(b2)
-  - 车体系：X 前（a1→a2），Y 左，Z 上；原点 a1
+  - 上水接收机：GGA[0]=电气房(a1)，GGA[1]=动力房(a2)
+  - 下水接收机：GGA[0]=电气房(b1)，GGA[1]=动力房(b2)
+  - 车体系：X 指向上水（下水端中心→上水端中心），Y 指向电气房，Z 上；原点 a1
 """
 
 from __future__ import annotations
@@ -38,30 +38,33 @@ def compute_antenna_body_from_ecef(
     :return: (antenna_body, baseline_m, span_m)
     """
     ref_lla = ecef_to_wgs84(*a1)
-    p_a1 = np.zeros(3)
-    p_a2 = _enu_delta(*a2, a1, ref_lla)
-    p_b1 = _enu_delta(*b1, a1, ref_lla)
-    p_b2 = _enu_delta(*b2, a1, ref_lla)
-
-    baseline_m = float(np.linalg.norm(p_a2 - p_a1))
+    pts = {
+        "a1": np.zeros(3),
+        "a2": _enu_delta(*a2, a1, ref_lla),
+        "b1": _enu_delta(*b1, a1, ref_lla),
+        "b2": _enu_delta(*b2, a1, ref_lla),
+    }
+    up = (pts["a1"] + pts["a2"]) * 0.5
+    down = (pts["b1"] + pts["b2"]) * 0.5
+    x_vec = up - down
+    baseline_m = float(np.linalg.norm(x_vec))
     if baseline_m < 0.5:
-        raise ValueError("左接收机双天线基线过短，无法建立车体系")
-
-    x_hat = (p_a2 - p_a1) / baseline_m
-    z_up = np.array([0.0, 0.0, 1.0])
-    y_hat = np.cross(z_up, x_hat)
-    y_norm = float(np.linalg.norm(y_hat))
-    if y_norm < 1e-6:
-        raise ValueError("四天线共线，无法确定横向轴")
-    y_hat /= y_norm
+        raise ValueError("上下水两端距离过短，无法建立车体系")
+    x_hat = x_vec / baseline_m
+    y_raw = (pts["a1"] + pts["b1"]) * 0.5 - (pts["a2"] + pts["b2"]) * 0.5
+    y_raw = y_raw - x_hat * float(np.dot(y_raw, x_hat))
+    y_norm = float(np.linalg.norm(y_raw))
+    if y_norm < 0.3:
+        raise ValueError("电气房与动力房距离过短，无法确定横向轴")
+    y_hat = y_raw / y_norm
     z_hat = np.cross(x_hat, y_hat)
     r_be = np.column_stack([x_hat, y_hat, z_hat])
 
     body: BodyDict = {}
-    for key, p in (("a1", p_a1), ("a2", p_a2), ("b1", p_b1), ("b2", p_b2)):
+    for key, p in pts.items():
         body[key] = (r_be.T @ p).tolist()
 
-    span_m = float(abs(body["b1"][1]))
+    span_m = y_norm
     return body, baseline_m, span_m
 
 

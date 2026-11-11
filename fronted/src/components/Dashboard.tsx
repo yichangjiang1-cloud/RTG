@@ -27,10 +27,6 @@ function formatCoordM(v: number, valid = true, digits = 4): string {
   return `${v.toFixed(digits)} m`;
 }
 
-function isCenterValid(valid: boolean | undefined): boolean {
-  return valid !== false;
-}
-
 interface DashboardProps {
   data: RealtimeData;
   history: RealtimeData[];
@@ -39,8 +35,6 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ data, history, isMock, connStatus }: DashboardProps) {
-  const elecCenter = data.gantry.elec_lpoint ?? data.gantry.receiver_left ?? data.gantry.elec_center;
-  const dieselCenter = data.gantry.diesel_lpoint ?? data.gantry.receiver_right ?? data.gantry.diesel_center;
   const attCmp = data.gantry_attitude_compare;
   const dualAtt = attCmp?.dual_receiver;
   const dualAttOk = Boolean(dualAtt?.valid);
@@ -123,7 +117,7 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
             <div>
               <p className="text-[10px] text-slate-500 mb-2 leading-relaxed">
                 {primaryIsFour
-                  ? '四天线刚体定姿（跟随配置 mode=four_antenna）'
+                  ? '上下水四天线：航向沿下水指向上水，俯仰为该轴线仰角，横滚为电气房相对动力房'
                   : primaryIsDual
                     ? '双接收机四 GGA（跟随配置 mode=dual_receiver）'
                     : '等待姿态解算'}
@@ -328,44 +322,34 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
             <span className="text-sm font-semibold">大车定位</span>
           </div>
 
-          {/* 双中心输出 */}
           <div className="grid grid-cols-2 gap-3">
-            <div className="bg-slate-900/50 rounded-lg p-3">
-              <p className="section-title mb-2">电气房侧作业点 (A1)</p>
-              <p className="text-[9px] text-slate-600 mb-1">接收机1 主天线 · gantry_a1</p>
+            {([
+              ['电气上游轮胎中心', data.gantry.tires?.elec_upstream, 'text-blue-400'],
+              ['电气下游轮胎中心', data.gantry.tires?.elec_downstream, 'text-blue-300'],
+              ['动力上游轮胎中心', data.gantry.tires?.diesel_upstream, 'text-purple-400'],
+              ['动力下游轮胎中心', data.gantry.tires?.diesel_downstream, 'text-purple-300'],
+            ] as const).map(([label, point, color]) => {
+              const ok = point?.valid === true;
+              return (
+              <div key={label} className="bg-slate-900/50 rounded-lg p-3">
+                <p className="section-title mb-2">{label}</p>
               <div className="space-y-1">
                 <div className="flex justify-between items-baseline">
                   <span className="text-[10px] text-slate-500">X</span>
-                  <span className={`font-mono text-sm ${isCenterValid(elecCenter.valid) ? 'text-blue-400' : 'text-slate-500'}`}>
-                    {formatCoordM(elecCenter.x, elecCenter.valid)}
+                    <span className={`font-mono text-sm ${ok ? color : 'text-slate-500'}`}>
+                      {formatCoordM(point?.x ?? 0, ok)}
                   </span>
                 </div>
                 <div className="flex justify-between items-baseline">
                   <span className="text-[10px] text-slate-500">Y</span>
-                  <span className={`font-mono text-sm ${isCenterValid(elecCenter.valid) ? 'text-blue-400' : 'text-slate-500'}`}>
-                    {formatCoordM(elecCenter.y, elecCenter.valid)}
+                    <span className={`font-mono text-sm ${ok ? color : 'text-slate-500'}`}>
+                      {formatCoordM(point?.y ?? 0, ok)}
                   </span>
+                </div>
                 </div>
               </div>
-            </div>
-            <div className="bg-slate-900/50 rounded-lg p-3">
-              <p className="section-title mb-2">柴油机侧作业点 (A2)</p>
-              <p className="text-[9px] text-slate-600 mb-1">右接收机主天线 · gantry_a2</p>
-              <div className="space-y-1">
-                <div className="flex justify-between items-baseline">
-                  <span className="text-[10px] text-slate-500">X</span>
-                  <span className={`font-mono text-sm ${isCenterValid(dieselCenter.valid) ? 'text-purple-400' : 'text-slate-500'}`}>
-                    {formatCoordM(dieselCenter.x, dieselCenter.valid)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-baseline">
-                  <span className="text-[10px] text-slate-500">Y</span>
-                  <span className={`font-mono text-sm ${isCenterValid(dieselCenter.valid) ? 'text-purple-400' : 'text-slate-500'}`}>
-                    {formatCoordM(dieselCenter.y, dieselCenter.valid)}
-                  </span>
-                </div>
-              </div>
-            </div>
+              );
+            })}
           </div>
 
           {/* 四门腿偏移 */}

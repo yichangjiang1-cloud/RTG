@@ -57,6 +57,13 @@ export interface GantryData {
   elec_center: GantryCenter;
   /** @deprecated 同 diesel_lpoint */
   diesel_center: GantryCenter;
+  /** 四个轮胎中心。上游/下游按车辆配置里主从天线的上下游对应。 */
+  tires?: {
+    elec_upstream: GantryCenter;
+    elec_downstream: GantryCenter;
+    diesel_upstream: GantryCenter;
+    diesel_downstream: GantryCenter;
+  };
   leg_offsets: { fl: number; fr: number; rl: number; rr: number };
   speed: number;
 }
@@ -79,6 +86,7 @@ export interface TrolleyData {
   origin_mode?: 'auto' | 'manual';
   /** 沿横梁行程，等于 position.y */
   travel: number;
+  /** 相对零点平面速度：√(Δx²+Δy²)/Δt，相对位置不变则为 0 */
   speed: number;
 }
 
@@ -160,6 +168,8 @@ export interface GantryAntennaPoint {
   ecef_z?: number;
   valid?: boolean;
   role?: 'elec' | 'diesel';
+  end?: 'upstream' | 'downstream';
+  primary?: boolean;
   receiver?: 'left' | 'right';
 }
 
@@ -178,8 +188,15 @@ export interface ReceiverLayout {
   trolley_transport?: 'tcp' | 'udp';
   trolley_host?: string;
   trolley_port: number;
-  /** 同包双 GGA 顺序 */
+  /** 同包双 GGA 顺序。几何不再使用，保留兼容旧配置 */
   gga_order: ['elec', 'diesel'];
+  /** 哪一台接收机是电气侧。left=左侧端口，right=右侧端口 */
+  elec_receiver?: 'left' | 'right';
+  /** 该接收机主天线 GGA 在上游还是下游。从天线 GGA2 为另一端 */
+  left_primary_end?: 'up' | 'down';
+  right_primary_end?: 'up' | 'down';
+  /** @deprecated 旧的“一端一台”。新布局用 elec_receiver 与 primary_end */
+  upstream_receiver?: 'left' | 'right';
 }
 
 /** 全局 NTRIP（差分仅转发给大车 EVK TCP 侧） */
@@ -197,18 +214,31 @@ export interface NtripConfig {
 export interface VehicleProfile {
   vehicle_id: string;
   label: string;       // 用户可读名称，如 "RTG 01号机"
+  /** MQTT 心跳/遥测判定；离线车辆仍可出现在已命名列表 */
+  status?: 'online' | 'offline';
+  is_initialized?: boolean;
+  last_seen?: string;
   height?: number;     // 已废弃，保留兼容
   span?: number;       // 已废弃，保留兼容；横滚用 gantry_attitude.roll_span_m
-  /** @deprecated 兼容单杆臂；请使用 l_arm_elec / l_arm_diesel */
+  /** @deprecated 兼容单杆臂；请使用四个轮胎杆臂 */
   l_arm: [number, number, number];
-  /** 电气房侧作业点杆臂（天线 A1 → L-Point） */
+  /** 旧字段：电气侧主天线那一套，只对应一个轮胎 */
   l_arm_elec: [number, number, number];
-  /** 柴油机侧作业点杆臂（天线 A2 → L-Point） */
+  /** 旧字段：动力侧主天线那一套，只对应一个轮胎 */
   l_arm_diesel: [number, number, number];
+  /** 电气上游 / 下游、动力上游 / 下游，各一根天线到各自轮胎中心 */
+  l_arm_elec_up?: [number, number, number];
+  l_arm_elec_down?: [number, number, number];
+  l_arm_diesel_up?: [number, number, number];
+  l_arm_diesel_down?: [number, number, number];
   /** 最近一次智能标定记录（可选，便于追溯） */
   l_arm_calibration?: {
     elec?: LArmCalibrationRecord;
     diesel?: LArmCalibrationRecord;
+    elec_up?: LArmCalibrationRecord;
+    elec_down?: LArmCalibrationRecord;
+    diesel_up?: LArmCalibrationRecord;
+    diesel_down?: LArmCalibrationRecord;
   };
   /** @deprecated 仅兼容旧 API，请使用 receiver_layout */
   antennas?: AntennaLabel[];
@@ -301,14 +331,28 @@ export interface SurveyPoint {
   synced: boolean;
 }
 
+export interface YardAxisPoint {
+  lat: number;
+  lon: number;
+}
+
+export interface YardAxisSpec {
+  source?: 'bays' | 'manual';
+  from_bay?: number;
+  to_bay?: number;
+  from?: YardAxisPoint;
+  to?: YardAxisPoint;
+}
+
 export interface YardInfo {
   yard_id: string;
   name: string;
   origin_lat: number;
   origin_lon: number;
-  heading: number;
   total_bays: number;
   mapped: boolean;      // 是否已完成场地底图测绘
+  y_axis_mode?: 'fit' | 'two_point';
+  y_axis_points?: YardAxisSpec | null;
 }
 
 // ===== 校准数据类型 =====

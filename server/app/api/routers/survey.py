@@ -17,6 +17,7 @@ from app.utils.calibration_mode import (
     get_reference_vehicle_id,
 )
 from app.utils.constants import MQTT_TOPIC_CONTROL
+from app.utils.yard_geometry import en_meters, resolve_y_axis, spacing_violation, to_yard_xy
 from app.utils.logger import get_logger
 
 RTK_VEHICLE_ID = "RTK_HANDHELD"
@@ -98,6 +99,39 @@ def _required_calibration_bays(db: Session, vehicle_id: str, yard_id: str) -> tu
     if others_done > 0:
         return min(3, rtk_count), rtk_count
     return rtk_count, rtk_count
+
+
+def _reject_close_bays(db: Session, yard_id: str) -> None:
+    """相邻贝位沿拟合 Y 的间距必须不小于 2 倍半宽。"""
+    yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
+    if yard is None:
+        return
+    half = float(yard.bay_half_width_m if yard.bay_half_width_m is not None else 0.3)
+    points = db.query(SurveyPoint).filter(
+        SurveyPoint.yard_id == yard_id,
+        SurveyPoint.point_type == "mapping",
+        SurveyPoint.bay_no.isnot(None),
+    ).all()
+    en_pts = []
+    for p in points:
+        east, north = en_meters(p.lat, p.lon, yard.origin_lat, yard.origin_lon)
+        en_pts.append((int(p.bay_no), east, north))
+    axis = resolve_y_axis(
+        en_pts,
+        yard.y_axis_mode,
+        yard.y_axis_points,
+        yard.origin_lat,
+        yard.origin_lon,
+    )
+    if axis is None:
+        return
+    bay_ys = [
+        (bay, to_yard_xy(east, north, axis[0], axis[1])[1])
+        for bay, east, north in en_pts
+    ]
+    message = spacing_violation(bay_ys, half)
+    if message:
+        raise HTTPException(status_code=400, detail=message)
 
 
 def _mark_yard_rtk_ready(db: Session, yard_id: str) -> None:
@@ -238,6 +272,7 @@ async def confirm_survey_point(
                     detail="场地真值仅允许 RTK 录入，请使用 RTK 手动或 CSV 导入",
                 )
             survey_point = _upsert_mapping_point(db, req, bay_no)
+            _reject_close_bays(db, req.yard_id)
             _mark_yard_rtk_ready(db, req.yard_id)
             db.commit()
             rtk_count = db.query(SurveyPoint).filter(
@@ -295,6 +330,9 @@ async def confirm_survey_point(
             )
 
         raise HTTPException(status_code=400, detail=f"未知 mode: {req.mode}")
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"打点确认失败: {e}")
@@ -653,6 +691,7 @@ async def batch_import_survey_points(
             _upsert_mapping_point(db, fake_req, bay_no)
             created.append({"bay_id": p.bay_id, "bay_no": bay_no})
 
+        _reject_close_bays(db, req.yard_id)
         _mark_yard_rtk_ready(db, req.yard_id)
         db.commit()
         logger.info(f"批量导入完成: {len(created)} 条记录")

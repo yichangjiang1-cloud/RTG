@@ -59,7 +59,7 @@ def _build_receivers(result: PositionResult) -> list:
     return [
         _entry(
             "gantry_a1",
-            "左（电气）主 GGA → 作业点",
+            "左侧接收机",
             g.recv1_live,
             result.fix_quality_left,
             result.satellites_left,
@@ -67,7 +67,7 @@ def _build_receivers(result: PositionResult) -> list:
         ),
         _entry(
             "gantry_a2",
-            "右（动力）主 GGA → 作业点",
+            "右侧接收机",
             g.recv2_live,
             result.fix_quality_right,
             result.satellites_right,
@@ -96,6 +96,21 @@ def _antenna2_live(result: PositionResult) -> bool:
         abs(lat2 - result.latitude) > 1e-8
         or abs(lon2 - result.longitude) > 1e-8
     )
+
+
+def _tire_end(g, side: str, upstream: bool) -> dict:
+    """GGA 是 1，GGA2 是 2。主天线在下游时，1 为下游、2 为上游。"""
+    primary = getattr(g, f"tire_{side}1")
+    secondary = getattr(g, f"tire_{side}2")
+    primary_ok = bool(getattr(g, f"tire_{side}1_valid"))
+    secondary_ok = bool(getattr(g, f"tire_{side}2_valid"))
+    primary_down = bool(getattr(g, f"{side}_primary_down", True))
+    use_primary = primary_down != upstream
+    point = primary if use_primary else secondary
+    ok = primary_ok if use_primary else secondary_ok
+    x = float(point[0]) if point else 0.0
+    y = float(point[1]) if point and len(point) > 1 else 0.0
+    return {"x": x, "y": y, "valid": ok}
 
 
 def position_result_to_realtime(result: PositionResult) -> dict:
@@ -192,6 +207,12 @@ def position_result_to_realtime(result: PositionResult) -> dict:
                 "x": g.center_engine_side,
                 "y": g.center_engine_y,
                 "valid": g.a2_valid,
+            },
+            "tires": {
+                "elec_upstream": _tire_end(g, "elec", upstream=True),
+                "elec_downstream": _tire_end(g, "elec", upstream=False),
+                "diesel_upstream": _tire_end(g, "diesel", upstream=True),
+                "diesel_downstream": _tire_end(g, "diesel", upstream=False),
             },
             "leg_offsets": {
                 "fl": legs[0],

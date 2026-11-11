@@ -25,81 +25,55 @@ ntrip:
 gantry:
   attitude:
     mode: four_antenna
-    baseline_m: 20.00003055696353
+    baseline_m: 4.999999679521846
     antenna_body:
       a1:
       - 0
       - 0
       - 0
       a2:
-      - 20.00003055696353
-      - 1.2924697071141057e-26
-      - 0
+      - 6.838457510704879e-06
+      - -20.000025285680124
+      - 1.875820698543553e-08
       b1:
-      - 1.1553357773624683e-06
-      - 5.00000243124359
-      - -1.958392464683483e-06
+      - -5.000001711218218
+      - -1.4215333762031446e-06
+      - 1.8758206985437225e-08
       b2:
-      - 20.000031712168937
-      - 4.999993189683121
-      - -1.9581714758838638e-06
+      - -4.999990809367962
+      - -20.00002386414675
+      - 0
     body_calibration:
-      measured_at: '2026-10-19T03:52:17.517Z'
-      baseline_m: 20.00003055696353
+      measured_at: '2026-11-11T02:28:13.194Z'
+      baseline_m: 4.999999679521846
       source: live
-  l_arm_elec:
-  - -10.000020752524858
-  - 3.1999946098453153e-06
-  - -0.00012361387190558924
-  l_arm_diesel:
-  - -10.000020752283723
-  - -3.1996460950785096e-06
-  - -0.00012361428064136564
+  l_arm_elec: &id001
+  - 0.000287760503601043
+  - 1.606908561620827e-05
+  - -1.0593423876847732e-09
+  l_arm_diesel: &id002
+  - -1.2577294813578869e-05
+  - -0.0005578242635898782
+  - 1.516144737191502e-09
   l_arm_calibration:
-    elec:
-      measured_at: '2026-10-19T03:45:05.340Z'
+    elec_up:
+      measured_at: '2026-11-11T02:26:48.752Z'
       lpoint:
-        lat: 30.5384792173
-        lon: 114.3492566192
-        alt: 9.8771
+        lat: 32.20096212
+        lon: 119.05417994
+        alt: 9.655
       antenna:
-        lat: 30.538389014666667
-        lon: 114.34925661916667
-        alt: 9.877
+        lat: 32.200962123833335
+        lon: 119.05417994216667
+        alt: 9.655
       attitude:
-        roll: 1.1655660723851858e-14
-        pitch: 9.020588850867123e-05
-        heading: 2.0434832232261468e-10
+        roll: 8.99655858437105e-05
+        pitch: -8.604318708111716e-06
+        heading: 228.335034826339
       l_arm:
-      - -10.000020752524858
-      - 3.1999946098453153e-06
-      - -0.00012361387190558924
-      receiver_id: gantry_a1
-      gga_index: 0
-      layout_snapshot:
-        left: gantry_a1
-        right: gantry_a2
-        gga_order:
-        - elec
-        - diesel
-    diesel:
-      measured_at: '2026-10-19T03:45:31.901Z'
-      lpoint:
-        lat: 30.5384792173
-        lon: 114.3492045148
-        alt: 9.8771
-      antenna:
-        lat: 30.538389014666667
-        lon: 114.34920451483333
-        alt: 9.877
-      attitude:
-        roll: 1.1655660723851858e-14
-        pitch: 9.020588850867123e-05
-        heading: 2.0434832232261468e-10
-      l_arm:
-      - -10.000020752283723
-      - -3.1996460950785096e-06
-      - -0.00012361428064136564
+      - -0.0004351950743534283
+      - -0.0001817489952265937
+      - 3.5767107804743243e-10
       receiver_id: gantry_a1
       gga_index: 1
       layout_snapshot:
@@ -108,8 +82,100 @@ gantry:
         gga_order:
         - elec
         - diesel
+    elec_down:
+      measured_at: '2026-11-11T02:26:49.851Z'
+      lpoint:
+        lat: 32.2009921
+        lon: 119.05421956
+        alt: 9.655
+      antenna:
+        lat: 32.200992098166665
+        lon: 119.05421955783333
+        alt: 9.655
+      attitude:
+        roll: 8.99655858437105e-05
+        pitch: -8.604318708111716e-06
+        heading: 228.335034826339
+      l_arm:
+      - 0.000287760503601043
+      - 1.606908561620827e-05
+      - -1.0593423876847732e-09
+      receiver_id: gantry_a1
+      gga_index: 0
+      layout_snapshot:
+        left: gantry_a1
+        right: gantry_a2
+        gga_order:
+        - elec
+        - diesel
+    diesel_down:
+      measured_at: '2026-11-11T02:27:38.935Z'
+      lpoint:
+        lat: 32.20112683
+        lon: 119.05407855
+        alt: 9.655
+      antenna:
+        lat: 32.201126833833335
+        lon: 119.05407854616666
+        alt: 9.655
+      attitude:
+        roll: 8.99655858437105e-05
+        pitch: -8.604318708111716e-06
+        heading: 228.335034826339
+      l_arm:
+      - -1.2577294813578869e-05
+      - -0.0005578242635898782
+      - 1.516144737191502e-09
+      receiver_id: gantry_a2
+      gga_index: 0
+      layout_snapshot:
+        left: gantry_a1
+        right: gantry_a2
+        gga_order:
+        - elec
+        - diesel
+    diesel_up:
+      measured_at: '2026-11-11T02:27:29.987Z'
+      lpoint:
+        lat: 32.20109686
+        lon: 119.05403893
+        alt: 9.655
+      antenna:
+        lat: 32.2010968595
+        lon: 119.0540389305
+        alt: 9.655
+      attitude:
+        roll: 8.99655858437105e-05
+        pitch: -8.604318708111716e-06
+        heading: 228.335034826339
+      l_arm:
+      - 1.6408378668181965e-06
+      - 7.276078813353667e-05
+      - -8.785777737625982e-10
+      receiver_id: gantry_a2
+      gga_index: 1
+      layout_snapshot:
+        left: gantry_a1
+        right: gantry_a2
+        gga_order:
+        - elec
+        - diesel
+  l_arm_elec_down: *id001
+  l_arm_elec_up:
+  - -0.0004351950743534283
+  - -0.0001817489952265937
+  - 3.5767107804743243e-10
+  l_arm_diesel_down: *id002
+  l_arm_diesel_up:
+  - 1.6408378668181965e-06
+  - 7.276078813353667e-05
+  - -8.785777737625982e-10
 trolley:
-  origin_mode: auto
+  origin_mode: manual
+  origin_body:
+  - 0.0
+  - 0.0
+  - 0.0
 ekf:
   sigma_pos: 0.05
   sigma_vel: 0.01

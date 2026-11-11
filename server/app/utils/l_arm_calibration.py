@@ -60,7 +60,7 @@ def _euler_to_rotation_matrix(roll_deg: float, pitch_deg: float, heading_deg: fl
     cy, sy = math.cos(theta), math.sin(theta)
     cz, sz = math.cos(psi), math.sin(psi)
     rx = ((1, 0, 0), (0, cx, -sx), (0, sx, cx))
-    ry = ((cy, 0, sy), (0, 1, 0), (-sy, 0, cy))
+    ry = ((cy, 0, -sy), (0, 1, 0), (sy, 0, cy))
     rz = ((cz, -sz, 0), (sz, cz, 0), (0, 0, 1))
     return _matmul(_matmul(rz, ry), rx)
 
@@ -73,7 +73,7 @@ def _body_to_enu_rotation(roll_deg: float, pitch_deg: float, heading_deg: float)
     cy, sy = math.cos(theta), math.sin(theta)
     cz, sz = math.cos(psi), math.sin(psi)
     rx = ((1, 0, 0), (0, cx, -sx), (0, sx, cx))
-    ry = ((cy, 0, sy), (0, 1, 0), (-sy, 0, cy))
+    ry = ((cy, 0, -sy), (0, 1, 0), (sy, 0, cy))
     rz = ((sz, -cz, 0), (cz, sz, 0), (0, 0, 1))
     return _matmul(_matmul(rz, ry), rx)
 

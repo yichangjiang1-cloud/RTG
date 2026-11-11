@@ -18,6 +18,8 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
   const [originLon, setOriginLon] = useState('');
   const [originAlt, setOriginAlt] = useState('0');
   const [bayCount, setBayCount] = useState('40');
+  const [halfWidth, setHalfWidth] = useState('0.30');
+  const [boundaryText, setBoundaryText] = useState('');
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit() {
@@ -25,6 +27,16 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
     if (idErr) { showToast(idErr, 'error'); return; }
     if (!name.trim()) { showToast('请填写场地名称'); return; }
     if (!originLat.trim() || !originLon.trim()) { showToast('请填写原点经纬度'); return; }
+    const boundary = boundaryText.split(/\n+/).map(line => line.trim()).filter(Boolean).map(line => {
+      const [lat, lon] = line.split(/[,，\s]+/).map(Number);
+      return { lat, lon };
+    });
+    if (boundary.length < 3 || boundary.some(p => !Number.isFinite(p.lat) || !Number.isFinite(p.lon))) {
+      showToast('区域至少 3 个顶点，每行：纬度,经度', 'error');
+      return;
+    }
+    const half = parseFloat(halfWidth);
+    if (!Number.isFinite(half) || half <= 0) { showToast('贝位半宽必须大于 0', 'error'); return; }
     setSaving(true);
     try {
       const res = await fetch(`${backendBase}/api/yard/create`, {
@@ -38,6 +50,8 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
           origin_alt: parseFloat(originAlt) || 0,
           bay_spacing: 0,
           bay_count: parseInt(bayCount) || 0,
+          bay_half_width_m: half,
+          boundary,
         }),
         signal: AbortSignal.timeout(10000),
       });
@@ -101,6 +115,22 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
                 <input type="number" step="0.01" className="input-field font-mono text-sm py-1.5" value={originAlt} onChange={e => setOriginAlt(e.target.value)} placeholder="5.0" />
               </div>
             </div>
+          </div>
+
+          <div>
+            <label className="section-title block mb-1">区域顶点（纬度,经度，按顺序首尾相连）</label>
+            <textarea
+              className="input-field font-mono text-xs h-28"
+              value={boundaryText}
+              onChange={e => setBoundaryText(e.target.value)}
+              placeholder={'30.53850,114.34910\n30.53850,114.34940\n30.53940,114.34940\n30.53940,114.34910'}
+            />
+          </div>
+
+          <div>
+            <label className="section-title block mb-1">贝位半宽 (m)</label>
+            <input type="number" step="0.01" className="input-field font-mono w-32" value={halfWidth} onChange={e => setHalfWidth(e.target.value)} />
+            <p className="text-[10px] text-slate-500 mt-1">沿贝位方向正负各延伸这段距离。相邻贝位间距须不小于两倍半宽。</p>
           </div>
 
           <div>

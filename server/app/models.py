@@ -37,6 +37,10 @@ class Yard(Base):
     origin_alt = Column(Float, nullable=True, default=0)  # 原点高度
     bay_spacing = Column(Float, nullable=True, default=6.0)  # 贝位间距（米）
     bay_count = Column(Integer, nullable=True, default=0)    # 贝位数
+    bay_half_width_m = Column(Float, nullable=True, default=0.3)  # 贝位沿 Y 半宽（米）
+    boundary = Column(JSON, nullable=True)  # 区域多边形 [{lat, lon}, ...]，首尾相连
+    y_axis_mode = Column(String(20), nullable=True, default="fit")  # fit | two_point
+    y_axis_points = Column(JSON, nullable=True)  # 两点：from→to 为 +Y
     mapped = Column(Boolean, default=False)       # 是否已有 RTK 场地真值（至少一个 mapping 点）
     created_at = Column(DateTime, default=get_cst_now)
 

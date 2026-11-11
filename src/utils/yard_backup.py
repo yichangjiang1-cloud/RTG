@@ -43,6 +43,10 @@ def normalize_api_yard(item: dict) -> Optional[dict]:
         "origin_alt": origin_alt,
         "bay_spacing": float(item.get("bay_spacing", 6.0)),
         "bay_count": int(item.get("bay_count", item.get("total_bays", 0))),
+        "bay_half_width_m": float(item.get("bay_half_width_m") or 0.3),
+        "boundary": item.get("boundary") or [],
+        "y_axis_mode": str(item.get("y_axis_mode") or "fit"),
+        "y_axis_points": item.get("y_axis_points") or None,
         "mapped": bool(item.get("mapped", False)),
         "rtk_point_count": int(item.get("rtk_point_count", 0)),
     }

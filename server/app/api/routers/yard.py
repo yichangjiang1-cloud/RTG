@@ -27,6 +27,8 @@ class YardCreateRequest(BaseModel):
     origin_alt: float = 0.0
     bay_spacing: float = 6.0
     bay_count: int = 0
+    bay_half_width_m: float = 0.3
+    boundary: Optional[list] = None
 
 
 # ==================== 堆场 CRUD ====================
@@ -51,6 +53,10 @@ async def get_all_yards(db: Session = Depends(get_db)):
                 "origin": [y.origin_lon, y.origin_lat, y.origin_alt],
                 "bay_spacing": y.bay_spacing,
                 "total_bays": y.bay_count,
+                "bay_half_width_m": y.bay_half_width_m if y.bay_half_width_m is not None else 0.3,
+                "boundary": y.boundary or [],
+                "y_axis_mode": y.y_axis_mode or "fit",
+                "y_axis_points": y.y_axis_points,
                 "mapped": has_rtk or y.mapped,
                 "rtk_point_count": rtk_count,
             })
@@ -66,6 +72,14 @@ async def create_yard(req: YardCreateRequest, db: Session = Depends(get_db)):
     """新建或更新堆场信息"""
     try:
         yard_id = validate_yard_id(req.yard_id)
+        half = float(req.bay_half_width_m if req.bay_half_width_m is not None else 0.3)
+        if half <= 0:
+            raise HTTPException(status_code=400, detail="贝位半宽必须大于 0")
+        from app.utils.yard_geometry import normalize_boundary
+        boundary = normalize_boundary(req.boundary)
+        if len(boundary) < 3:
+            raise HTTPException(status_code=400, detail="堆场区域至少需要 3 个顶点")
+        boundary_payload = [{"lat": lat, "lon": lon} for lat, lon in boundary]
         yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
         if yard:
             yard.name = req.name
@@ -74,6 +88,8 @@ async def create_yard(req: YardCreateRequest, db: Session = Depends(get_db)):
             yard.origin_alt = req.origin_alt
             yard.bay_spacing = req.bay_spacing
             yard.bay_count = req.bay_count
+            yard.bay_half_width_m = half
+            yard.boundary = boundary_payload
         else:
             yard = Yard(
                 yard_id=yard_id,
@@ -83,6 +99,8 @@ async def create_yard(req: YardCreateRequest, db: Session = Depends(get_db)):
                 origin_alt=req.origin_alt,
                 bay_spacing=req.bay_spacing,
                 bay_count=req.bay_count,
+                bay_half_width_m=half,
+                boundary=boundary_payload,
                 mapped=False,
             )
             db.add(yard)
@@ -96,6 +114,92 @@ async def create_yard(req: YardCreateRequest, db: Session = Depends(get_db)):
         db.rollback()
         logger.error(f"保存堆场失败: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+class YardAxisRequest(BaseModel):
+    yard_id: str
+    mode: str = "fit"  # fit | two_point
+    source: str = "bays"  # bays | manual
+    from_bay: Optional[int] = None
+    to_bay: Optional[int] = None
+    from_lat: Optional[float] = None
+    from_lon: Optional[float] = None
+    to_lat: Optional[float] = None
+    to_lon: Optional[float] = None
+
+
+@router.post("/y_axis", response_model=ApiResponse)
+async def set_yard_axis(req: YardAxisRequest, db: Session = Depends(get_db)):
+    """贝位采点时选择 +Y：全部拟合，或两点（已采集贝位 / 手填坐标）。"""
+    try:
+        yard_id = validate_yard_id(req.yard_id)
+        yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
+        if yard is None:
+            raise HTTPException(status_code=404, detail=f"堆场 {yard_id} 不存在")
+        mode = (req.mode or "fit").strip().lower()
+        if mode not in ("fit", "two_point"):
+            raise HTTPException(status_code=400, detail="Y 轴方式只能是拟合或两点")
+        spec = None
+        if mode == "two_point":
+            source = (req.source or "bays").strip().lower()
+            if source == "manual":
+                if None in (req.from_lat, req.from_lon, req.to_lat, req.to_lon):
+                    raise HTTPException(status_code=400, detail="请填写两个点的纬度和经度")
+                spec = {
+                    "source": "manual",
+                    "from": {"lat": float(req.from_lat), "lon": float(req.from_lon)},
+                    "to": {"lat": float(req.to_lat), "lon": float(req.to_lon)},
+                }
+            else:
+                if not req.from_bay or not req.to_bay:
+                    raise HTTPException(status_code=400, detail="请选择两个已采集的贝位")
+                if int(req.from_bay) == int(req.to_bay):
+                    raise HTTPException(status_code=400, detail="两个贝位不能相同")
+                have = {
+                    int(p.bay_no)
+                    for p in db.query(SurveyPoint).filter(
+                        SurveyPoint.yard_id == yard_id,
+                        SurveyPoint.point_type == "mapping",
+                        SurveyPoint.bay_no.isnot(None),
+                    ).all()
+                }
+                missing = [n for n in (int(req.from_bay), int(req.to_bay)) if n not in have]
+                if missing:
+                    raise HTTPException(status_code=400, detail=f"贝位 {missing[0]} 尚未采集")
+                spec = {
+                    "source": "bays",
+                    "from_bay": int(req.from_bay),
+                    "to_bay": int(req.to_bay),
+                }
+            from app.utils.yard_geometry import en_meters, resolve_y_axis
+            en_pts = []
+            for p in db.query(SurveyPoint).filter(
+                SurveyPoint.yard_id == yard_id,
+                SurveyPoint.point_type == "mapping",
+                SurveyPoint.bay_no.isnot(None),
+            ).all():
+                east, north = en_meters(p.lat, p.lon, yard.origin_lat, yard.origin_lon)
+                en_pts.append((int(p.bay_no), east, north))
+            if resolve_y_axis(en_pts, mode, spec, yard.origin_lat, yard.origin_lon) is None:
+                raise HTTPException(status_code=400, detail="两点距离过近，无法确定 +Y")
+        yard.y_axis_mode = mode
+        yard.y_axis_points = spec
+        db.commit()
+        return ApiResponse(code=200, message="Y 轴已保存", data={
+            "yard_id": yard_id,
+            "y_axis_mode": mode,
+            "y_axis_points": spec,
+        })
+    except HTTPException:
+        db.rollback()
+        raise
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        db.rollback()
+        logger.error(f"保存 Y 轴失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==================== 底图 / 校准 ====================

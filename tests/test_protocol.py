@@ -65,6 +65,7 @@ class TestPlcProtocolV1(unittest.TestCase):
         ctx = PlcProtocolContext(vehicle_id="RTG-001")
         result = PositionResult(
             yard_id="25A",
+            in_yard=True,
             current_bay_no=9,
             yard_origin_lat=30.0,
             yard_origin_lon=120.0,
@@ -92,8 +93,22 @@ class TestPlcProtocolV1(unittest.TestCase):
             is_valid=True,
         )
 
+        result.gantry.heading = 90.0
+        result.gantry.tire_elec1 = (1.25, 2.0, -1.5)
+        result.gantry.tire_elec1_valid = True
+        result.gantry.lane_mm = [-120, 80, -30, 40]
+        result.gantry.a1_valid = True
         frame = encode_gnss_to_plc(result, ctx)
         self.assertEqual(len(frame), GNSS_TO_PLC_SIZE)
+        lane = struct.unpack_from("<hhhh", frame, 8 + struct.calcsize("<HHHH8sHH"))
+        self.assertEqual(lane, (-120, 80, -30, 40))
+        tire_off = 8 + struct.calcsize("<HHHH8sHHhhhhIIHhhhHH")
+        x_mm, y_mm, z_mm = struct.unpack_from("<IIH", frame, tire_off)
+        self.assertEqual(struct.unpack("<i", struct.pack("<I", x_mm))[0], 1250)
+        self.assertEqual(struct.unpack("<i", struct.pack("<I", y_mm))[0], 2000)
+        self.assertEqual(z_mm, 1500)
+        reserved0 = struct.unpack_from("<H", frame, GNSS_TO_PLC_SIZE - 2 - 40)[0]
+        self.assertEqual(reserved0, 9000)
         magic = struct.unpack_from("<H", frame, 0)[0]
         self.assertEqual(magic, FRAME_MAGIC)
         footer = struct.unpack_from("<H", frame, GNSS_TO_PLC_SIZE - 2)[0]

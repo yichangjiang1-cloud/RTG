@@ -147,9 +147,30 @@ class YardTransform:
         self.origin_lon = origin_lon
         self.origin_alt = origin_alt
         self._R2d = np.array([
-            [0.0, 1.0],   # LYCS_X = North
-            [1.0, 0.0],   # LYCS_Y = East
+            [0.0, 1.0],   # 未拟合时：X = 北，Y = 东
+            [1.0, 0.0],
         ], dtype=float)
+        self.axis_ready = False
+
+    def set_y_axis(self, y_east: float, y_north: float) -> None:
+        """+Y 为贝位拟合方向；+X 在朝 +Y 看时的右侧。"""
+        ye = float(y_east)
+        yn = float(y_north)
+        norm = math.hypot(ye, yn)
+        if norm < 1e-9:
+            self.reset_axis()
+            return
+        ye /= norm
+        yn /= norm
+        self._R2d = np.array([
+            [yn, -ye],
+            [ye, yn],
+        ], dtype=float)
+        self.axis_ready = True
+
+    def reset_axis(self) -> None:
+        self._R2d = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=float)
+        self.axis_ready = False
 
     def wgs84_to_lycs(
         self, lat_deg: float, lon_deg: float, alt_m: float

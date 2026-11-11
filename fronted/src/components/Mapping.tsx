@@ -44,7 +44,69 @@ export default function Mapping({ liveData: _liveData }: MappingProps) {
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [axisMode, setAxisMode] = useState<'fit' | 'two_point'>('fit');
+  const [axisSource, setAxisSource] = useState<'bays' | 'manual'>('bays');
+  const [axisFromBay, setAxisFromBay] = useState('');
+  const [axisToBay, setAxisToBay] = useState('');
+  const [axisFromLat, setAxisFromLat] = useState('');
+  const [axisFromLon, setAxisFromLon] = useState('');
+  const [axisToLat, setAxisToLat] = useState('');
+  const [axisToLon, setAxisToLon] = useState('');
+  const [savingAxis, setSavingAxis] = useState(false);
+
   const baseUrl = httpBase(backendConfig);
+
+  useEffect(() => {
+    const mode = selectedYard?.y_axis_mode === 'two_point' ? 'two_point' : 'fit';
+    const spec = selectedYard?.y_axis_points;
+    setAxisMode(mode);
+    setAxisSource(spec?.source === 'manual' ? 'manual' : 'bays');
+    setAxisFromBay(spec?.from_bay != null ? String(spec.from_bay) : '');
+    setAxisToBay(spec?.to_bay != null ? String(spec.to_bay) : '');
+    setAxisFromLat(spec?.from?.lat != null ? String(spec.from.lat) : '');
+    setAxisFromLon(spec?.from?.lon != null ? String(spec.from.lon) : '');
+    setAxisToLat(spec?.to?.lat != null ? String(spec.to.lat) : '');
+    setAxisToLon(spec?.to?.lon != null ? String(spec.to.lon) : '');
+  }, [selectedYard?.yard_id, selectedYard?.y_axis_mode, selectedYard?.y_axis_points]);
+
+  const saveAxis = async () => {
+    if (!yardId) return;
+    const body: Record<string, unknown> = { yard_id: yardId, mode: axisMode };
+    if (axisMode === 'two_point') {
+      body.source = axisSource;
+      if (axisSource === 'bays') {
+        const fromBay = parseBayNo(axisFromBay);
+        const toBay = parseBayNo(axisToBay);
+        if (!fromBay || !toBay) { showToast('请选择两个已采集的贝位'); return; }
+        if (fromBay === toBay) { showToast('两个贝位不能相同'); return; }
+        body.from_bay = fromBay;
+        body.to_bay = toBay;
+      } else {
+        const nums = [axisFromLat, axisFromLon, axisToLat, axisToLon].map(Number);
+        if (nums.some(n => !Number.isFinite(n))) { showToast('请填写两个点的纬度和经度'); return; }
+        body.from_lat = nums[0];
+        body.from_lon = nums[1];
+        body.to_lat = nums[2];
+        body.to_lon = nums[3];
+      }
+    }
+    setSavingAxis(true);
+    try {
+      const res = await fetch(`${baseUrl}/api/yard/y_axis`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json().catch(() => ({})) as { detail?: string; message?: string };
+      if (!res.ok) throw new Error(typeof json.detail === 'string' ? json.detail : '保存失败');
+      await fetchYards();
+      showToast(axisMode === 'fit' ? '已改为全部贝位拟合 +Y' : '已用两点确定 +Y');
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : '保存 Y 轴失败', 'error');
+    } finally {
+      setSavingAxis(false);
+    }
+  };
 
   // 加载历史打点记录
   const loadHistory = useCallback(() => {
@@ -264,6 +326,113 @@ export default function Mapping({ liveData: _liveData }: MappingProps) {
           </button>
         </div>
       )}
+
+      <div className="card p-5 space-y-3">
+        <div>
+          <p className="text-sm font-bold text-white">Y 轴正方向</p>
+          <p className="text-[10px] text-slate-500 mt-1">
+            拟合时 +Y 指向贝位号增大的方向。两点时 +Y 从第一点指向第二点。朝 +Y 看，右侧为 +X。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {([
+            ['fit', '全部贝位拟合'],
+            ['two_point', '两点确定'],
+          ] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setAxisMode(id)}
+              className={clsx(
+                'px-3 py-1.5 rounded-lg text-xs font-bold border',
+                axisMode === id
+                  ? 'bg-blue-600 border-blue-500 text-white'
+                  : 'bg-slate-800 border-slate-700 text-slate-400',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {axisMode === 'two_point' && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {([
+                ['bays', '已采集贝位'],
+                ['manual', '手动输入坐标'],
+              ] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setAxisSource(id)}
+                  className={clsx(
+                    'px-3 py-1.5 rounded-lg text-xs font-bold border',
+                    axisSource === id
+                      ? 'bg-slate-600 border-slate-500 text-white'
+                      : 'bg-slate-900 border-slate-700 text-slate-400',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {axisSource === 'bays' ? (
+              <div className="grid grid-cols-2 gap-3">
+                {([
+                  ['第一点（起点）', axisFromBay, setAxisFromBay],
+                  ['第二点（+Y）', axisToBay, setAxisToBay],
+                ] as const).map(([label, value, setValue]) => (
+                  <div key={label}>
+                    <span className="text-[10px] text-slate-500">{label}</span>
+                    <select
+                      className="input-field font-mono text-sm py-1.5"
+                      value={value}
+                      onChange={e => setValue(e.target.value)}
+                    >
+                      <option value="">选择贝位</option>
+                      {points
+                        .map(p => p.bay_no ?? parseBayNo(p.bay_id))
+                        .filter((n): n is number => n != null)
+                        .filter((n, i, arr) => arr.indexOf(n) === i)
+                        .sort((a, b) => a - b)
+                        .map(n => (
+                          <option key={n} value={n}>贝位 {n}</option>
+                        ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <span className="text-[10px] text-slate-500">第一点纬度</span>
+                  <input className="input-field font-mono text-sm py-1.5" value={axisFromLat} onChange={e => setAxisFromLat(e.target.value)} />
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500">第一点经度</span>
+                  <input className="input-field font-mono text-sm py-1.5" value={axisFromLon} onChange={e => setAxisFromLon(e.target.value)} />
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500">第二点纬度（+Y）</span>
+                  <input className="input-field font-mono text-sm py-1.5" value={axisToLat} onChange={e => setAxisToLat(e.target.value)} />
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500">第二点经度（+Y）</span>
+                  <input className="input-field font-mono text-sm py-1.5" value={axisToLon} onChange={e => setAxisToLon(e.target.value)} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={saveAxis}
+          disabled={savingAxis}
+          className="btn-primary text-sm disabled:opacity-50"
+        >
+          {savingAxis ? '保存中…' : '保存 Y 轴'}
+        </button>
+      </div>
 
       {/* ── 模式切换 ── */}
       <div className="flex flex-wrap gap-2">

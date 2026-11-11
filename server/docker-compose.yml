@@ -30,6 +30,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # 构建时 pip 走 Docker Desktop 代理。不要在本机 PowerShell 里设 HTTP_PROXY。
+      args:
+        HTTP_PROXY: http://http.docker.internal:3128
+        HTTPS_PROXY: http://http.docker.internal:3128
+        http_proxy: http://http.docker.internal:3128
+        https_proxy: http://http.docker.internal:3128
+        NO_PROXY: localhost,127.0.0.1
+        no_proxy: localhost,127.0.0.1
     container_name: rtg-backend
     ports:
       - "8000:8000"
@@ -63,6 +71,13 @@ services:
     build:
       context: ../fronted
       dockerfile: Dockerfile
+      args:
+        HTTP_PROXY: http://http.docker.internal:3128
+        HTTPS_PROXY: http://http.docker.internal:3128
+        http_proxy: http://http.docker.internal:3128
+        https_proxy: http://http.docker.internal:3128
+        NO_PROXY: localhost,127.0.0.1
+        no_proxy: localhost,127.0.0.1
     container_name: rtg-frontend
     ports:
       - "80:80"

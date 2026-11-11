@@ -39,11 +39,11 @@ def euler_to_rotation_matrix(
         [0,  math.sin(phi),  math.cos(phi)],
     ])
 
-    # 绕 Y 轴旋转（俯仰）
+    # 绕 Y 轴旋转（俯仰）。正俯仰 = 车头抬高，+X 朝 +Z。
     Ry = np.array([
-        [ math.cos(theta), 0, math.sin(theta)],
-        [              0,  1,             0],
-        [-math.sin(theta), 0, math.cos(theta)],
+        [math.cos(theta), 0, -math.sin(theta)],
+        [             0,  1,              0],
+        [math.sin(theta), 0,  math.cos(theta)],
     ])
 
     # 绕 Z 轴旋转（航向）
@@ -65,7 +65,7 @@ def body_to_enu_rotation(
 ) -> np.ndarray:
     """
     车体 (X 前, Y 左, Z 上) → ENU。航向 0=北、顺时针（NMEA）。
-    朝北时：+X→北、+Y→西。
+    朝北时：+X→北、+Y→西。正俯仰 = 车头抬高。
     """
     phi = math.radians(roll_deg)
     theta = math.radians(pitch_deg)
@@ -74,7 +74,8 @@ def body_to_enu_rotation(
     cy, sy = math.cos(theta), math.sin(theta)
     cz, sz = math.cos(psi), math.sin(psi)
     Rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
-    Ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    # 正俯仰抬高车头：+X 获得 +Z
+    Ry = np.array([[cy, 0, -sy], [0, 1, 0], [sy, 0, cy]])
     # 航向 0：X→北 (0,1,0)，Y→西 (-1,0,0)
     Rz = np.array([[sz, -cz, 0], [cz, sz, 0], [0, 0, 1]])
     return Rz @ Ry @ Rx
@@ -91,7 +92,7 @@ def body_enu_to_nmea_euler(R: np.ndarray) -> tuple:
     heading = math.degrees(math.atan2(float(R[0, 0]), float(R[1, 0]))) % 360.0
     if heading >= 359.95:
         heading = 0.0
-    z0 = float(np.clip(-R[2, 0], -1.0, 1.0))
+    z0 = float(np.clip(R[2, 0], -1.0, 1.0))
     pitch = math.degrees(math.asin(z0))
     roll = math.degrees(math.atan2(float(R[2, 1]), float(R[2, 2])))
     if roll > 90.0:
@@ -111,14 +112,14 @@ def rotation_matrix_to_euler(R: np.ndarray) -> tuple:
     # 处理 gimbal lock
     if abs(R[2, 0]) >= 1.0 - 1e-6:
         heading = 0.0
-        if R[2, 0] < 0:        # pitch = +90°
+        if R[2, 0] > 0:        # pitch = +90°，车头朝上
             pitch = 90.0
             roll = math.degrees(math.atan2(R[0, 1], R[0, 2]))
         else:                   # pitch = -90°
             pitch = -90.0
             roll = math.degrees(math.atan2(-R[0, 1], -R[0, 2]))
     else:
-        pitch   = math.degrees(math.asin(-R[2, 0]))
+        pitch   = math.degrees(math.asin(float(R[2, 0])))
         roll    = math.degrees(math.atan2(R[2, 1], R[2, 2]))
         heading = math.degrees(math.atan2(R[1, 0], R[0, 0]))
         heading = heading % 360.0

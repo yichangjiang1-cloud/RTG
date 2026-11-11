@@ -7,6 +7,8 @@ import numpy as np
 
 from src.fusion.gantry_attitude import (
     GantryAttitudeConfig,
+    compute_end_pair_attitude,
+    compute_side_pair_attitude,
     compute_gantry_attitude,
     compute_gantry_attitude_compare,
     compute_nmea_height_roll_attitude,
@@ -54,37 +56,13 @@ def _set_secondary_from_ecef(g: GnssRaw, ex: float, ey: float, ez: float) -> Non
 
 
 class GantryAttitudeTest(unittest.TestCase):
-    def test_four_antenna_falls_back_to_dual_gga(self):
-        """四天线未齐时回退到单机双 GGA；无四天线刚体则横滚为 0。"""
+    def test_one_receiver_has_no_crane_attitude(self):
+        """只有一端时，车宽基线不能当成大车航向。"""
         ga1 = _make_gnss("gantry_a1", 30.0, 120.0, 10.0, 30.00018, 120.0, 10.0)
         att = compute_gantry_attitude(
             ga1, None, True, False, GantryAttitudeConfig(mode="four_antenna"), 30.0, 120.0, 10.0
         )
-        self.assertIsNotNone(att)
-        self.assertEqual(att.source, "dual_gga_a1")
-        self.assertAlmostEqual(att.roll_deg, 0.0)
-
-        att_dual = compute_gantry_attitude(
-            ga1, None, True, False,
-            GantryAttitudeConfig(mode="dual_receiver"),
-            30.0, 120.0, 10.0,
-        )
-        self.assertIsNotNone(att_dual)
-        self.assertEqual(att_dual.source, "dual_gga_a1")
-        self.assertAlmostEqual(att_dual.roll_deg, 0.0)
-
-    def test_dual_gga_ignores_receiver_nmea_roll(self):
-        """双 GGA 主通道不再沿用接收机 NMEA 横滚字段。"""
-        ga1 = _make_gnss("gantry_a1", 30.0, 120.0, 10.0, 30.00018, 120.0, 10.0)
-        ga1.heading = 10.0
-        ga1.roll = 2.5
-        att = compute_gantry_attitude(
-            ga1, None, True, False,
-            GantryAttitudeConfig(mode="dual_receiver"),
-            30.0, 120.0, 10.0,
-        )
-        self.assertIsNotNone(att)
-        self.assertAlmostEqual(att.roll_deg, 0.0)
+        self.assertIsNone(att)
 
     def test_short_baseline_yields_no_attitude(self):
         """基线过短时双 GGA 无效；两主点/NMEA 主通道已移除，结果为 None。"""
@@ -105,31 +83,67 @@ class GantryAttitudeTest(unittest.TestCase):
         )
         self.assertIsNone(att)
 
-    def test_dual_receiver_averages_heading(self):
-        span = 25.0
-        baseline = 20.0
-        body = default_antenna_body(span, baseline)
-        ref_lat, ref_lon, ref_alt = 30.123456, 120.654321, 10.0
-        hdg = 0.0
-        r = euler_to_rotation_matrix(0.0, 0.0, hdg)
-        ecef = {}
-        for key, bp in body.items():
-            e, n, u = (r @ np.array(bp)).tolist()
-            ecef[key] = enu_to_ecef(e, n, u, ref_lat, ref_lon, ref_alt)
+    def _end_pair_gnss(self, roll, pitch, heading):
+        """上水电气/动力、下水电气/动力，按车体→ENU 摆到参考点。"""
+        from src.solver.attitude import body_to_enu_rotation
 
-        ga1 = _make_gnss("gantry_a1", ref_lat, ref_lon, ref_alt, 0, 0, 0)
-        _set_primary_from_ecef(ga1, *ecef["a1"])
-        _set_secondary_from_ecef(ga1, *ecef["a2"])
+        body = {
+            "a1": [10.0, 2.5, 0.0],
+            "a2": [10.0, -2.5, 0.0],
+            "b1": [-10.0, 2.5, 0.0],
+            "b2": [-10.0, -2.5, 0.0],
+        }
+        ref = (30.5384792173, 114.349230567, 9.8771)
+        r = body_to_enu_rotation(roll, pitch, heading)
+        ecef = {
+            key: enu_to_ecef(*(r @ np.array(bp)).tolist(), *ref)
+            for key, bp in body.items()
+        }
+        ga_up = _make_gnss("gantry_a1", *ref, 0, 0, 0)
+        _set_primary_from_ecef(ga_up, *ecef["a1"])
+        _set_secondary_from_ecef(ga_up, *ecef["a2"])
+        ga_down = _make_gnss("gantry_a2", *ref, 0, 0, 0)
+        _set_primary_from_ecef(ga_down, *ecef["b1"])
+        _set_secondary_from_ecef(ga_down, *ecef["b2"])
+        return ga_up, ga_down, ref
 
-        ga2 = _make_gnss("gantry_a2", ref_lat, ref_lon, ref_alt, 0, 0, 0)
-        _set_primary_from_ecef(ga2, *ecef["b1"])
-        _set_secondary_from_ecef(ga2, *ecef["b2"])
-
-        cfg = GantryAttitudeConfig(mode="dual_receiver", baseline_m=baseline, antenna_body=body)
-        att = compute_gantry_attitude(ga1, ga2, True, True, cfg, ref_lat, ref_lon, ref_alt)
+    def test_nose_up_pitch_is_positive(self):
+        """上水端高于下水端时俯仰为正，与 CarMode 车头抬高为正一致。"""
+        ref_lat, ref_lon, ref_alt = 30.0, 120.0, 10.0
+        ga_up = _make_gnss("gantry_a1", ref_lat, ref_lon, ref_alt, 0, 0, 0)
+        ga_down = _make_gnss("gantry_a2", ref_lat, ref_lon, ref_alt, 0, 0, 0)
+        _set_primary_from_ecef(ga_up, *enu_to_ecef(-2.5, 10.0, 5.0, ref_lat, ref_lon, ref_alt))
+        _set_secondary_from_ecef(ga_up, *enu_to_ecef(2.5, 10.0, 5.0, ref_lat, ref_lon, ref_alt))
+        _set_primary_from_ecef(ga_down, *enu_to_ecef(-2.5, -10.0, 0.0, ref_lat, ref_lon, ref_alt))
+        _set_secondary_from_ecef(ga_down, *enu_to_ecef(2.5, -10.0, 0.0, ref_lat, ref_lon, ref_alt))
+        att = compute_end_pair_attitude(ga_up, ga_down, ref_lat, ref_lon, ref_alt)
         self.assertIsNotNone(att)
-        self.assertIn("dual_receiver", att.source)
-        self.assertAlmostEqual(att.pitch_deg, 0.0, delta=0.5)
+        self.assertGreater(att.pitch_deg, 10.0)
+        self.assertAlmostEqual(att.heading_deg, 0.0, delta=0.3)
+        self.assertAlmostEqual(att.roll_deg, 0.0, delta=0.3)
+
+    def test_end_pair_level_north(self):
+        """车头朝北、水平时，航向 0、俯仰 0、横滚 0。"""
+        ga_up, ga_down, ref = self._end_pair_gnss(0.0, 0.0, 0.0)
+        att = compute_end_pair_attitude(ga_up, ga_down, *ref)
+        self.assertIsNotNone(att)
+        self.assertEqual(att.source, "end_pair")
+        self.assertAlmostEqual(att.heading_deg, 0.0, delta=0.2)
+        self.assertAlmostEqual(att.pitch_deg, 0.0, delta=0.2)
+        self.assertAlmostEqual(att.roll_deg, 0.0, delta=0.2)
+
+    def test_end_pair_recovers_pitch_and_roll(self):
+        """俯仰、横滚沿车长和车宽，不跟单台接收机的车宽基线。"""
+        roll, pitch, heading = 2.5, -1.2, 30.0
+        ga_up, ga_down, ref = self._end_pair_gnss(roll, pitch, heading)
+        att = compute_gantry_attitude(
+            ga_up, ga_down, True, True, GantryAttitudeConfig(), *ref,
+        )
+        self.assertIsNotNone(att)
+        self.assertEqual(att.source, "end_pair")
+        self.assertAlmostEqual(att.heading_deg, heading, delta=0.3)
+        self.assertAlmostEqual(att.pitch_deg, pitch, delta=0.3)
+        self.assertAlmostEqual(att.roll_deg, roll, delta=0.3)
 
     def test_nmea_height_roll_primary(self):
         ga1 = _make_gnss("gantry_a1", 30.0, 120.0, 10.0, 30.0, 120.0, 10.0)
@@ -146,58 +160,30 @@ class GantryAttitudeTest(unittest.TestCase):
         self.assertIn("roll_gga", att.source)
         self.assertNotAlmostEqual(att.roll_deg, 0.0, places=2)
 
-    def test_compare_both_methods(self):
-        span = 25.0
-        baseline = 20.0
-        body = default_antenna_body(span, baseline)
-        ref_lat, ref_lon, ref_alt = 30.0, 120.0, 10.0
-        roll = 2.0
-        hdg = 45.0
-        r = euler_to_rotation_matrix(roll, 0.0, hdg)
-        ecef = {}
-        for key, bp in body.items():
-            e, n, u = (r @ np.array(bp)).tolist()
-            ecef[key] = enu_to_ecef(e, n, u, ref_lat, ref_lon, ref_alt)
-
-        ga1 = _make_gnss("gantry_a1", ref_lat, ref_lon, ref_alt, 0, 0, 0)
-        _set_primary_from_ecef(ga1, *ecef["a1"])
-        _set_secondary_from_ecef(ga1, *ecef["a2"])
-        ga1.heading = hdg
-        ga1.pitch = 0.0
-
-        ga2 = _make_gnss("gantry_a2", ref_lat, ref_lon, ref_alt, 0, 0, 0)
-        _set_primary_from_ecef(ga2, *ecef["b1"])
-        _set_secondary_from_ecef(ga2, *ecef["b2"])
-
-        cfg = GantryAttitudeConfig(
-            mode="four_antenna",
-            baseline_m=baseline,
-            roll_span_m=span,
-            antenna_body=body,
-        )
+    def test_compare_uses_end_pair(self):
+        ga_up, ga_down, ref = self._end_pair_gnss(0.0, 0.0, 15.0)
         cmp = compute_gantry_attitude_compare(
-            ga1, ga2, True, True, cfg, ref_lat, ref_lon, ref_alt
+            ga_up, ga_down, True, True, GantryAttitudeConfig(), *ref,
         )
         self.assertTrue(cmp.four_ready)
-        self.assertIsNotNone(cmp.primary)
-        self.assertIsNotNone(cmp.four_antenna)
         self.assertEqual(cmp.primary_method, "four_antenna")
-        self.assertEqual(cmp.primary.source, "four_antenna")
-        self.assertIsNotNone(cmp.delta)
-        self.assertAlmostEqual(cmp.four_antenna.roll_deg, roll, delta=0.5)
-        self.assertAlmostEqual(cmp.four_antenna.heading_deg, hdg, delta=0.5)
+        self.assertEqual(cmp.primary.source, "end_pair")
+        self.assertAlmostEqual(cmp.primary.heading_deg, 15.0, delta=0.3)
 
-        cfg_dual = GantryAttitudeConfig(
-            mode="dual_receiver",
-            baseline_m=baseline,
-            roll_span_m=span,
-            antenna_body=body,
-        )
-        cmp2 = compute_gantry_attitude_compare(
-            ga1, ga2, True, True, cfg_dual, ref_lat, ref_lon, ref_alt
-        )
-        self.assertEqual(cmp2.primary_method, "dual_receiver")
-        self.assertIsNotNone(cmp2.dual_receiver)
+    def test_side_receivers_primary_downstream(self):
+        """电气、动力各一台。主天线在下游，从天线在上游，航向仍指向上水。"""
+        ga_up, ga_down, ref = self._end_pair_gnss(0.0, 0.0, 15.0)
+        ga_elec = _make_gnss("gantry_a1", *ref, 0, 0, 0)
+        _set_primary_from_ecef(ga_elec, ga_down.ecef_x, ga_down.ecef_y, ga_down.ecef_z)
+        _set_secondary_from_ecef(ga_elec, ga_up.ecef_x, ga_up.ecef_y, ga_up.ecef_z)
+        ga_diesel = _make_gnss("gantry_a2", *ref, 0, 0, 0)
+        _set_primary_from_ecef(ga_diesel, ga_down.antenna2_ecef_x, ga_down.antenna2_ecef_y, ga_down.antenna2_ecef_z)
+        _set_secondary_from_ecef(ga_diesel, ga_up.antenna2_ecef_x, ga_up.antenna2_ecef_y, ga_up.antenna2_ecef_z)
+        att = compute_side_pair_attitude(ga_elec, ga_diesel, True, True, *ref)
+        self.assertIsNotNone(att)
+        self.assertAlmostEqual(att.heading_deg, 15.0, delta=0.3)
+        self.assertAlmostEqual(att.pitch_deg, 0.0, delta=0.3)
+        self.assertAlmostEqual(att.roll_deg, 0.0, delta=0.3)
 
     def test_four_antenna_nmea_north_is_zero(self):
         """车头朝北时四天线航向应为 0°（NMEA），不是欧拉 90°/270°。"""

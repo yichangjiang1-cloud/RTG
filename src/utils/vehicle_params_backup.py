@@ -27,21 +27,20 @@ def _arm3(arm) -> list | None:
     return [float(x) for x in arm[:3]]
 
 
-def align_calibration_arms(cal: Any, elec, diesel) -> Any:
-    """标定记录里的杆臂与当前正在用的两套杆臂对齐。"""
+def align_calibration_arms(cal: Any, elec, diesel, extra: dict | None = None) -> Any:
+    """标定记录里的杆臂与当前正在用的杆臂对齐。extra 的键是 elec_up 这类记录名。"""
     if not isinstance(cal, dict):
         return cal
     out = dict(cal)
-    elec3 = _arm3(elec)
-    diesel3 = _arm3(diesel)
-    if elec3 and isinstance(out.get("elec"), dict):
-        rec = dict(out["elec"])
-        rec["l_arm"] = elec3
-        out["elec"] = rec
-    if diesel3 and isinstance(out.get("diesel"), dict):
-        rec = dict(out["diesel"])
-        rec["l_arm"] = diesel3
-        out["diesel"] = rec
+    pairs = {"elec": elec, "diesel": diesel}
+    if isinstance(extra, dict):
+        pairs.update(extra)
+    for key, arm in pairs.items():
+        arm3 = _arm3(arm)
+        if arm3 and isinstance(out.get(key), dict):
+            rec = dict(out[key])
+            rec["l_arm"] = arm3
+            out[key] = rec
     return out
 
 
@@ -71,13 +70,28 @@ def persist_vehicle_params(
     if not block:
         return False
 
-    l_arm_elec = _arm3(block.get("l_arm_elec"))
-    l_arm_diesel = _arm3(block.get("l_arm_diesel"))
+    # 新报文里某一端显式为空时，不用旧的单侧杆臂去填，避免把上游的数写进下游。
+    l_arm_elec_up = _arm3(block.get("l_arm_elec_up"))
+    l_arm_elec_down = (
+        _arm3(block.get("l_arm_elec_down"))
+        if "l_arm_elec_down" in block
+        else _arm3(block.get("l_arm_elec"))
+    )
+    l_arm_diesel_up = _arm3(block.get("l_arm_diesel_up"))
+    l_arm_diesel_down = (
+        _arm3(block.get("l_arm_diesel_down"))
+        if "l_arm_diesel_down" in block
+        else _arm3(block.get("l_arm_diesel"))
+    )
+    l_arm_elec = l_arm_elec_down
+    l_arm_diesel = l_arm_diesel_down
     cal = block.get("l_arm_calibration")
     gantry_att = block.get("gantry_attitude")
     if not (
         l_arm_elec
         or l_arm_diesel
+        or l_arm_elec_up
+        or l_arm_diesel_up
         or isinstance(cal, dict)
         or isinstance(gantry_att, dict)
         or isinstance(block.get("receiver_layout"), dict)
@@ -95,11 +109,25 @@ def persist_vehicle_params(
         gantry = data.get("gantry") if isinstance(data.get("gantry"), dict) else {}
         if l_arm_elec:
             gantry["l_arm_elec"] = l_arm_elec
+            gantry["l_arm_elec_down"] = l_arm_elec_down
+        if l_arm_elec_up:
+            gantry["l_arm_elec_up"] = l_arm_elec_up
         if l_arm_diesel:
             gantry["l_arm_diesel"] = l_arm_diesel
+            gantry["l_arm_diesel_down"] = l_arm_diesel_down
+        if l_arm_diesel_up:
+            gantry["l_arm_diesel_up"] = l_arm_diesel_up
         if isinstance(cal, dict) and cal:
             gantry["l_arm_calibration"] = align_calibration_arms(
-                cal, gantry.get("l_arm_elec"), gantry.get("l_arm_diesel")
+                cal,
+                gantry.get("l_arm_elec"),
+                gantry.get("l_arm_diesel"),
+                {
+                    "elec_up": gantry.get("l_arm_elec_up"),
+                    "elec_down": gantry.get("l_arm_elec_down"),
+                    "diesel_up": gantry.get("l_arm_diesel_up"),
+                    "diesel_down": gantry.get("l_arm_diesel_down"),
+                },
             )
         if isinstance(gantry_att, dict) and gantry_att:
             gantry["attitude"] = sanitize_saved_attitude(gantry_att)

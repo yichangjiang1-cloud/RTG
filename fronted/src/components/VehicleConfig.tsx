@@ -180,6 +180,9 @@ const DEFAULT_RECEIVER_LAYOUT: ReceiverLayout = {
   trolley_host: '0.0.0.0',
   trolley_port: 9003,
   gga_order: ['elec', 'diesel'],
+  elec_receiver: 'left',
+  left_primary_end: 'down',
+  right_primary_end: 'down',
 };
 
 const DEFAULT_NTRIP: NtripConfig = {
@@ -219,7 +222,20 @@ function normalizeGantryAttitude(
 }
 
 type ConfigTab = 'basic' | 'larm' | 'attitude' | 'trolley';
-type CalibSide = 'elec' | 'diesel';
+type TireArmId = 'elec_up' | 'elec_down' | 'diesel_up' | 'diesel_down';
+
+const TIRE_ARMS: {
+  id: TireArmId;
+  role: 'elec' | 'diesel';
+  end: 'upstream' | 'downstream';
+  label: string;
+  armKey: 'l_arm_elec_up' | 'l_arm_elec_down' | 'l_arm_diesel_up' | 'l_arm_diesel_down';
+}[] = [
+  { id: 'elec_up', role: 'elec', end: 'upstream', label: '电气上游轮胎中心', armKey: 'l_arm_elec_up' },
+  { id: 'elec_down', role: 'elec', end: 'downstream', label: '电气下游轮胎中心', armKey: 'l_arm_elec_down' },
+  { id: 'diesel_up', role: 'diesel', end: 'upstream', label: '动力上游轮胎中心', armKey: 'l_arm_diesel_up' },
+  { id: 'diesel_down', role: 'diesel', end: 'downstream', label: '动力下游轮胎中心', armKey: 'l_arm_diesel_down' },
+];
 
 function ConfigPanelHeader({
   icon: Icon,
@@ -274,6 +290,10 @@ function mergeVehicleConfig(
     l_arm?: [number, number, number];
     l_arm_elec?: [number, number, number];
     l_arm_diesel?: [number, number, number];
+    l_arm_elec_up?: [number, number, number] | null;
+    l_arm_elec_down?: [number, number, number] | null;
+    l_arm_diesel_up?: [number, number, number] | null;
+    l_arm_diesel_down?: [number, number, number] | null;
     height?: number;
     w_span?: number;
     l_arm_calibration?: VehicleProfile['l_arm_calibration'];
@@ -283,13 +303,21 @@ function mergeVehicleConfig(
     trolley?: TrolleyOriginConfig;
   } | null,
 ): VehicleProfile {
-    const legacy = data?.l_arm_elec ?? local.l_arm_elec ?? DEFAULT_ARM;
-  const diesel = data?.l_arm_diesel ?? local.l_arm_diesel ?? DEFAULT_ARM;
+    const legacy = asArm(data?.l_arm_elec, asArm(local.l_arm_elec, DEFAULT_ARM));
+  const diesel = asArm(data?.l_arm_diesel, asArm(local.l_arm_diesel, DEFAULT_ARM));
+  const hasFour = data != null && (
+    Array.isArray(data.l_arm_elec_up) || Array.isArray(data.l_arm_elec_down)
+    || Array.isArray(data.l_arm_diesel_up) || Array.isArray(data.l_arm_diesel_down)
+  );
   return {
     ...local,
     l_arm: legacy,
     l_arm_elec: legacy,
     l_arm_diesel: diesel,
+    l_arm_elec_up: hasFour ? asArm(data?.l_arm_elec_up, DEFAULT_ARM) : asArm(local.l_arm_elec_up, DEFAULT_ARM),
+    l_arm_elec_down: hasFour ? asArm(data?.l_arm_elec_down, DEFAULT_ARM) : asArm(local.l_arm_elec_down, legacy),
+    l_arm_diesel_up: hasFour ? asArm(data?.l_arm_diesel_up, DEFAULT_ARM) : asArm(local.l_arm_diesel_up, DEFAULT_ARM),
+    l_arm_diesel_down: hasFour ? asArm(data?.l_arm_diesel_down, DEFAULT_ARM) : asArm(local.l_arm_diesel_down, diesel),
     l_arm_calibration: data?.l_arm_calibration ?? local.l_arm_calibration,
     gantry_attitude: normalizeGantryAttitude(
       data?.gantry_attitude ?? local.gantry_attitude,
@@ -310,13 +338,31 @@ function attitudeForSave(att: GantryAttitudeConfig | undefined): GantryAttitudeC
   return { ...rest, mode, ...(cal ? { body_calibration: cal } : {}) };
 }
 
+function asArm(
+  value: [number, number, number] | null | undefined,
+  fallback: [number, number, number],
+): [number, number, number] {
+  if (Array.isArray(value) && value.length >= 3 && value.every(n => Number.isFinite(Number(n)))) {
+    return [Number(value[0]), Number(value[1]), Number(value[2])];
+  }
+  return fallback;
+}
+
 function alignCalibrationArms(cfg: VehicleProfile): VehicleProfile['l_arm_calibration'] {
   const cal = cfg.l_arm_calibration;
   if (!cal) return cal;
+  const touch = (
+    rec: LArmCalibrationRecord | undefined,
+    arm: [number, number, number] | undefined,
+  ) => (rec && arm ? { ...rec, l_arm: arm } : rec);
   return {
     ...cal,
-    elec: cal.elec ? { ...cal.elec, l_arm: cfg.l_arm_elec } : cal.elec,
-    diesel: cal.diesel ? { ...cal.diesel, l_arm: cfg.l_arm_diesel } : cal.diesel,
+    elec_up: touch(cal.elec_up, cfg.l_arm_elec_up),
+    elec_down: touch(cal.elec_down, cfg.l_arm_elec_down),
+    diesel_up: touch(cal.diesel_up, cfg.l_arm_diesel_up),
+    diesel_down: touch(cal.diesel_down, cfg.l_arm_diesel_down),
+    elec: touch(cal.elec, cfg.l_arm_elec_down ?? cfg.l_arm_elec),
+    diesel: touch(cal.diesel, cfg.l_arm_diesel_down ?? cfg.l_arm_diesel),
   };
 }
 
@@ -346,17 +392,6 @@ function pickAntennaEcef(src: AntennaEcefSource | undefined): { x: number; y: nu
   if (![x, y, z].every(v => typeof v === 'number' && Number.isFinite(v))) return null;
   if (x === 0 && y === 0 && z === 0) return null;
   return { x: x!, y: y!, z: z! };
-}
-
-/** 副天线 A2 是否可用于柴油机侧杆臂标定 */
-function isAntenna2Ready(liveData: RealtimeData): boolean {
-  const a2 = liveData.antenna2;
-  if (!a2) return false;
-  if (a2.valid === true) return true;
-  const hasCoords = Math.abs(a2.lat) > 1e-6 && Math.abs(a2.lon) > 1e-6;
-  if (!hasCoords) return false;
-  const ref = liveData.ref_antenna;
-  return Math.abs(a2.lat - ref.lat) > 1e-7 || Math.abs(a2.lon - ref.lon) > 1e-7;
 }
 
 function formatArm(arm: [number, number, number]) {
@@ -411,14 +446,16 @@ function LArmSmartCalibration({
   cfg: VehicleProfile | null;
   setCfg: Dispatch<SetStateAction<VehicleProfile | null>>;
 }) {
-  const [lpElec, setLpElec] = useState({ lat: '', lon: '', alt: '' });
-  const [lpDiesel, setLpDiesel] = useState({ lat: '', lon: '', alt: '' });
-  const [computing, setComputing] = useState<CalibSide | null>(null);
-  const [calibSide, setCalibSide] = useState<CalibSide>('elec');
+  const [points, setPoints] = useState<Record<TireArmId, { lat: string; lon: string; alt: string }>>({
+    elec_up: { lat: '', lon: '', alt: '' },
+    elec_down: { lat: '', lon: '', alt: '' },
+    diesel_up: { lat: '', lon: '', alt: '' },
+    diesel_down: { lat: '', lon: '', alt: '' },
+  });
+  const [computing, setComputing] = useState<TireArmId | null>(null);
 
   const stationary = liveData.speed <= MAX_CALIB_SPEED;
   const wsOk = connStatus === 'connected' && !useMock && !isMock;
-  const a2Ok = isAntenna2Ready(liveData);
   const fourGaps = describeGantryAntennaGaps(liveData.gantry_antennas);
   const fourReady = fourGaps.length === 0;
   const rtkFixed = isGantryRtkFixed(liveData);
@@ -438,15 +475,13 @@ function LArmSmartCalibration({
       return `须 RTK 固定解：左 ${left?.status ?? liveData.status} / 右 ${right?.status ?? '—'}`;
     }
     if (!stationary) return `车辆未静止（速度 ${liveData.speed.toFixed(3)} m/s），请停车后标定`;
-    if (!a2Ok) {
-      return '柴油侧天线坐标无效：请确认右接收机主/副 GGA 已接入';
-    }
-    return '条件满足：四天线齐、RTK 固定且静止，可输入作业点并计算杆臂';
-  }, [cfg, useMock, isMock, connStatus, stationary, liveData.speed, liveData.status, liveData.receivers, a2Ok, fourReady, fourGaps, rtkFixed]);
+    return '条件满足：四天线齐、RTK 固定且静止。每个轮胎中心单独填写，用这一端自己的天线计算杆臂';
+  }, [cfg, useMock, isMock, connStatus, stationary, liveData.speed, liveData.status, liveData.receivers, fourReady, fourGaps, rtkFixed]);
 
-  async function computeSide(side: CalibSide) {
+  async function computeTire(id: TireArmId) {
     if (!cfg) return;
-    const lpStr = side === 'elec' ? lpElec : lpDiesel;
+    const spec = TIRE_ARMS.find(item => item.id === id)!;
+    const lpStr = points[id];
     const lat = parseFloat(lpStr.lat);
     const lon = parseFloat(lpStr.lon);
     const alt = parseFloat(lpStr.alt);
@@ -458,29 +493,29 @@ function LArmSmartCalibration({
       showToast(liveHint, 'error');
       return;
     }
-    const antenna: GpsCoord = side === 'elec'
-      ? { lat: liveData.ref_antenna.lat, lon: liveData.ref_antenna.lon, alt: liveData.ref_antenna.alt }
-      : {
-          lat: liveData.antenna2?.lat ?? 0,
-          lon: liveData.antenna2?.lon ?? 0,
-          alt: liveData.antenna2?.alt ?? 0,
-        };
-    const antennaSrc = side === 'elec' ? liveData.ref_antenna : liveData.antenna2;
-    const antennaEcef = pickAntennaEcef(antennaSrc);
-    if (side === 'diesel' && !a2Ok) {
-      showToast('柴油侧天线无效：请确认右接收机主 GGA 已接入', 'error');
+    const layout = cfg.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT;
+    const elecLeft = (layout.elec_receiver ?? 'left') !== 'right';
+    const antennaSrc = endAntenna(liveData, spec.role, spec.end);
+    if (Math.abs(antennaSrc.lat) < 1e-6 && Math.abs(antennaSrc.lon) < 1e-6) {
+      showToast(`${spec.label}的天线无效`, 'error');
       return;
     }
+    const antenna: GpsCoord = {
+      lat: antennaSrc.lat,
+      lon: antennaSrc.lon,
+      alt: antennaSrc.alt,
+    };
+    const antennaEcef = pickAntennaEcef(antennaSrc);
     const attitude = { roll: liveData.roll, pitch: liveData.pitch, heading: liveData.heading };
     const lpoint = { lat, lon, alt };
 
-    setComputing(side);
+    setComputing(id);
     try {
       const res = await fetch(`${baseUrl}/api/vehicle/compute_l_arm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          side,
+          side: id,
           lpoint,
           antenna,
           attitude,
@@ -493,16 +528,14 @@ function LArmSmartCalibration({
       if (json.code !== 200 || !json.data?.l_arm) throw new Error('反算失败');
 
       const arm = json.data.l_arm;
-      const layout = cfg.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT;
-      const ggaIndex = layout.gga_order.indexOf(side);
       const record: LArmCalibrationRecord = {
         measured_at: new Date().toISOString(),
         lpoint,
         antenna,
         attitude,
         l_arm: arm,
-        receiver_id: liveData.ref_antenna?.receiver_id ?? layout.left,
-        gga_index: ggaIndex >= 0 ? ggaIndex : (side === 'elec' ? 0 : 1),
+        receiver_id: (spec.role === 'elec') === elecLeft ? layout.left : layout.right,
+        gga_index: ggaIndexForEnd(layout, spec.role, spec.end),
         layout_snapshot: {
           left: layout.left,
           right: layout.right,
@@ -512,15 +545,19 @@ function LArmSmartCalibration({
 
       setCfg(prev => {
         if (!prev) return null;
-        const cal = { ...(prev.l_arm_calibration ?? {}) };
-        if (side === 'elec') {
-          cal.elec = record;
-          return { ...prev, l_arm_elec: arm, l_arm: arm, l_arm_calibration: cal };
+        const cal = { ...(prev.l_arm_calibration ?? {}), [id]: record };
+        const next: VehicleProfile = { ...prev, [spec.armKey]: arm, l_arm_calibration: cal };
+        const primaryIsThisEnd = ggaIndexForEnd(layout, spec.role, spec.end) === 0;
+        if (primaryIsThisEnd && spec.role === 'elec') {
+          next.l_arm_elec = arm;
+          next.l_arm = arm;
         }
-        cal.diesel = record;
-        return { ...prev, l_arm_diesel: arm, l_arm_calibration: cal };
+        if (primaryIsThisEnd && spec.role === 'diesel') {
+          next.l_arm_diesel = arm;
+        }
+        return next;
       });
-      showToast(`${side === 'elec' ? '电气房侧' : '柴油机侧'}杆臂已计算：[${arm.map(v => v.toFixed(3)).join(', ')}]`);
+      showToast(`${spec.label}杆臂已计算：[${arm.map(v => v.toFixed(3)).join(', ')}]`);
     } catch {
       showToast('杆臂计算失败，请检查后端与输入', 'error');
     } finally {
@@ -528,7 +565,8 @@ function LArmSmartCalibration({
     }
   }
 
-  function renderLpointInputs(_side: CalibSide, val: typeof lpElec, setVal: typeof setLpElec) {
+  function renderLpointInputs(id: TireArmId) {
+    const val = points[id];
     return (
       <div className="grid grid-cols-3 gap-2">
         {(['lat', 'lon', 'alt'] as const).map(k => (
@@ -537,7 +575,7 @@ function LArmSmartCalibration({
             <input
               className="input-field font-mono text-xs py-1.5"
               value={val[k]}
-              onChange={e => setVal(v => ({ ...v, [k]: e.target.value }))}
+              onChange={e => setPoints(prev => ({ ...prev, [id]: { ...prev[id], [k]: e.target.value } }))}
               placeholder={k === 'lat' ? '22.xxx' : k === 'lon' ? '114.xxx' : '12.xxx'}
             />
           </div>
@@ -562,9 +600,11 @@ function LArmSmartCalibration({
       />
 
       <p className="text-sm text-slate-400 leading-relaxed">
-        须<strong className="text-slate-300">四天线齐</strong>、<strong className="text-slate-300">RTK 固定</strong>且车辆<strong className="text-slate-300">静止</strong>、中控实时运行时，
-        输入 RTK 测量的<strong className="text-slate-300">作业点 WGS84</strong>；
-        系统用当前天线坐标与姿态（heading/pitch/roll）反算车体系杆臂 <code className="text-blue-300">L_arm = Rᵀ·(P_天线−P_作业点)</code>。
+        四个轮胎中心各自标定。天线间距不能当成轮胎间距。
+        须<strong className="text-slate-300">四天线齐</strong>、<strong className="text-slate-300">RTK 固定</strong>且车辆<strong className="text-slate-300">静止</strong>。
+        每一端用<strong className="text-slate-300">这一端自己的天线</strong>和 RTK 测得的<strong className="text-slate-300">该轮胎中心</strong>反算杆臂
+        <code className="text-blue-300"> L_arm = Rᵀ·(P_天线−P_轮胎)</code>。
+        以前每侧只标过主天线的，那套数只留在主天线对应的那一端。
       </p>
 
       <div className={clsx(canCalib ? 'config-hint' : 'config-hint-warn')}>
@@ -573,18 +613,18 @@ function LArmSmartCalibration({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs font-mono">
-        <div className="config-data-block space-y-1">
-          <p className="text-slate-500 mb-1">实时 A1（电气房天线）</p>
-          <p>lat {liveData.ref_antenna.lat.toFixed(8)}</p>
-          <p>lon {liveData.ref_antenna.lon.toFixed(8)}</p>
-          <p>alt {liveData.ref_antenna.alt.toFixed(3)} m</p>
+        {TIRE_ARMS.map(spec => {
+          const ant = endAntenna(liveData, spec.role, spec.end);
+          const missing = Math.abs(ant.lat) < 1e-6 && Math.abs(ant.lon) < 1e-6;
+          return (
+            <div key={spec.id} className="config-data-block space-y-1">
+              <p className="text-slate-500 mb-1">{spec.label}天线{missing ? ' — 无效' : ''}</p>
+              <p>lat {ant.lat.toFixed(8)}</p>
+              <p>lon {ant.lon.toFixed(8)}</p>
+              <p>alt {ant.alt.toFixed(3)} m</p>
         </div>
-        <div className="config-data-block space-y-1">
-          <p className="text-slate-500 mb-1">实时 A2（柴油机天线）{a2Ok ? '' : ' — 无效'}</p>
-          <p>lat {(liveData.antenna2?.lat ?? 0).toFixed(8)}</p>
-          <p>lon {(liveData.antenna2?.lon ?? 0).toFixed(8)}</p>
-          <p>alt {(liveData.antenna2?.alt ?? 0).toFixed(3)} m</p>
-        </div>
+          );
+        })}
       </div>
 
       <div className="config-data-block grid grid-cols-3 gap-3 text-xs font-mono text-slate-400">
@@ -596,81 +636,68 @@ function LArmSmartCalibration({
         <div>WS {connStatus}</div>
       </div>
 
-      <SwipeTabs
-        tabs={[
-          { id: 'elec' as const, label: '电气房侧 (A1)' },
-          { id: 'diesel' as const, label: '柴油机侧 (A2)' },
-        ]}
-        active={calibSide}
-        onChange={setCalibSide}
-      />
-
-      <div className="space-y-3">
-        {calibSide === 'elec' ? (
-          <>
-            <label className="section-title">电气房侧作业点（RTK 测量）</label>
-            {renderLpointInputs('elec', lpElec, setLpElec)}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {TIRE_ARMS.map(spec => {
+          const arm = cfg?.[spec.armKey] ?? DEFAULT_ARM;
+          const record = cfg?.l_arm_calibration?.[spec.id];
+          return (
+            <div key={spec.id} className="space-y-3 rounded-xl border border-slate-700/60 p-3">
+              <label className="section-title">{spec.label}（RTK 测量）</label>
+              {renderLpointInputs(spec.id)}
             <button
               type="button"
               disabled={!canCalib || computing !== null}
-              onClick={() => computeSide('elec')}
+                onClick={() => computeTire(spec.id)}
               className="w-full btn-primary py-3 flex items-center justify-center gap-2"
             >
-              {computing === 'elec' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              计算 l_arm_elec
+                {computing === spec.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                计算 {spec.armKey}
             </button>
             {cfg && (
               <ReadOnlyLArmBlock
-                title="当前 l_arm_elec"
-                arm={cfg.l_arm_elec}
-                uncalibrated={!cfg.l_arm_calibration?.elec}
-              />
-            )}
-          </>
-        ) : (
-          <>
-            <label className="section-title">柴油机侧作业点（RTK 测量）</label>
-            {renderLpointInputs('diesel', lpDiesel, setLpDiesel)}
-            <button
-              type="button"
-              disabled={!canCalib || !a2Ok || computing !== null}
-              onClick={() => computeSide('diesel')}
-              className="w-full btn-primary py-3 flex items-center justify-center gap-2"
-            >
-              {computing === 'diesel' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              计算 l_arm_diesel
-            </button>
-            {cfg && (
-              <ReadOnlyLArmBlock
-                title="当前 l_arm_diesel"
-                arm={cfg.l_arm_diesel}
-                uncalibrated={!cfg.l_arm_calibration?.diesel}
-              />
-            )}
-          </>
-        )}
-      </div>
-
-      {cfg?.l_arm_calibration && (
-        <div className="text-[10px] text-slate-500 space-y-0.5">
-          {cfg.l_arm_calibration.elec && (
-            <p>
-              电气房溯源：{cfg.l_arm_calibration.elec.measured_at.slice(0, 19)}
-              {cfg.l_arm_calibration.elec.receiver_id &&
-                ` · 来源 ${cfg.l_arm_calibration.elec.receiver_id} GGA[${cfg.l_arm_calibration.elec.gga_index ?? 0}]`}
-            </p>
-          )}
-          {cfg.l_arm_calibration.diesel && (
-            <p>
-              柴油机溯源：{cfg.l_arm_calibration.diesel.measured_at.slice(0, 19)}
-              {cfg.l_arm_calibration.diesel.receiver_id &&
-                ` · 来源 ${cfg.l_arm_calibration.diesel.receiver_id} GGA[${cfg.l_arm_calibration.diesel.gga_index ?? 1}]`}
+                  title={`当前 ${spec.armKey}`}
+                  arm={arm}
+                  uncalibrated={!record && arm.every(v => Math.abs(v) < 1e-6)}
+                />
+              )}
+              {record && (
+                <p className="text-[10px] text-slate-500">
+                  溯源：{record.measured_at.slice(0, 19)}
+                  {record.receiver_id ? ` · ${record.receiver_id} GGA[${record.gga_index ?? 0}]` : ''}
             </p>
           )}
         </div>
-      )}
+          );
+        })}
+      </div>
     </div>
   );
+}
+
+function endAntenna(
+  live: Pick<RealtimeData, 'gantry_antennas'>,
+  role: 'elec' | 'diesel',
+  end: 'upstream' | 'downstream',
+): { lat: number; lon: number; alt: number; ecef_x?: number; ecef_y?: number; ecef_z?: number } {
+  const ga = live.gantry_antennas;
+  const hit = ga
+    ? Object.values(ga).find((p) => p && p.role === role && p.end === end && p.valid !== false)
+    : undefined;
+    if (hit && (Math.abs(hit.lat) > 1e-6 || Math.abs(hit.lon) > 1e-6)) return hit;
+  return { lat: 0, lon: 0, alt: 0 };
+}
+
+function ggaIndexForEnd(
+  layout: ReceiverLayout,
+  role: 'elec' | 'diesel',
+  end: 'upstream' | 'downstream',
+): number {
+  const elecLeft = (layout.elec_receiver ?? 'left') !== 'right';
+  const primaryEnd = role === 'elec'
+    ? (elecLeft ? layout.left_primary_end : layout.right_primary_end)
+    : (elecLeft ? layout.right_primary_end : layout.left_primary_end);
+  const primaryIsDown = (primaryEnd ?? 'down') !== 'up';
+  return primaryIsDown === (end === 'downstream') ? 0 : 1;
 }
 
 function describeGantryAntennaGaps(ga?: Record<string, GantryAntennaPoint>): string[] {
@@ -716,8 +743,11 @@ function ReceiverLayoutPanel({
       right_port: layout.left_port,
       left_transport: layout.right_transport,
       right_transport: layout.left_transport,
+      elec_receiver: layout.elec_receiver === 'right' ? 'left' : 'right',
+      left_primary_end: layout.right_primary_end ?? 'down',
+      right_primary_end: layout.left_primary_end ?? 'down',
     });
-    showToast('已交换电气侧 ↔ 动力侧配置（含机型）');
+    showToast('已交换左右接收机（含电气侧和主天线上下游）');
   };
 
   const patch = (partial: Partial<ReceiverLayout>) => onChange({ ...layout, ...partial });
@@ -755,7 +785,7 @@ function ReceiverLayoutPanel({
   const sides = [
     {
       key: 'left' as const,
-      title: '电气侧（左）',
+      title: '左侧接收机',
       transport: (layout.left_transport ?? 'tcp') as 'tcp' | 'udp',
       host: layout.left_host ?? '',
       port: layout.left_port,
@@ -764,7 +794,7 @@ function ReceiverLayoutPanel({
     },
     {
       key: 'right' as const,
-      title: '动力侧（右）',
+      title: '右侧接收机',
       transport: (layout.right_transport ?? 'udp') as 'tcp' | 'udp',
       host: layout.right_host ?? '',
       port: layout.right_port,
@@ -784,8 +814,8 @@ function ReceiverLayoutPanel({
             <div className="min-w-0">
               <h3 className="text-sm font-bold text-slate-200">大车接收机（电气 / 动力）</h3>
               <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                一侧为 GNSS EVK（TCP），另一侧为与小车同款的双 GGA（UDP 监听，默认 9002）。
-                机型可切换；主天线 GGA → 该侧作业点。接反了点「交换电气/动力」。
+                电气侧一台接收机，动力侧一台。每台主天线 GGA 和从天线 GGA2 分属上游、下游，可分别选择。
+                协议里 GNSS1 跟随 GGA，GNSS2 跟随 GGA2。航向从下水端指向上水端。
               </p>
             </div>
           </div>
@@ -795,6 +825,19 @@ function ReceiverLayoutPanel({
           </button>
         </div>
 
+        <label className="block text-[11px] text-slate-500">
+          电气侧接收机
+          <select
+            className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+            value={layout.elec_receiver === 'right' ? 'right' : 'left'}
+            onChange={e => patch({ elec_receiver: e.target.value === 'right' ? 'right' : 'left' })}
+          >
+            <option value="left">左侧接收机（端口 {layout.left_port}）</option>
+            <option value="right">右侧接收机（端口 {layout.right_port}）</option>
+          </select>
+          <span className="mt-1 block text-[10px] text-slate-600">另一台是动力侧。四个轮胎中心各自标定，杆臂不能从另一端套用。</span>
+        </label>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {sides.map((side) => {
             const isEvk = side.transport === 'tcp';
@@ -802,7 +845,22 @@ function ReceiverLayoutPanel({
               <div key={side.key} className="rounded-xl border border-slate-700/60 p-4 space-y-3">
                 <p className="text-xs font-bold text-slate-300">
                   {side.title} · {isEvk ? 'EVK TCP' : '双GGA UDP'}
+                  {layout.elec_receiver === side.key ? ' · 电气侧' : ' · 动力侧'}
                 </p>
+                <label className="block text-[11px] text-slate-500">
+                  主天线 GGA
+                  <select
+                    className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+                    value={(side.key === 'left' ? layout.left_primary_end : layout.right_primary_end) === 'up' ? 'up' : 'down'}
+                    onChange={(e) => {
+                      const end = e.target.value === 'up' ? 'up' : 'down';
+                      patch(side.key === 'left' ? { left_primary_end: end } : { right_primary_end: end });
+                    }}
+                  >
+                    <option value="down">下游（从天线 GGA2 为上游）</option>
+                    <option value="up">上游（从天线 GGA2 为下游）</option>
+                  </select>
+                </label>
                 <label className="block text-[11px] text-slate-500">
                   机型
                   <select
@@ -1092,7 +1150,7 @@ function GantryAttitudePanel({
     if (useMock || isMock) return '请关闭模拟模式并选择车辆以建立 WebSocket';
     if (connStatus !== 'connected') return 'WebSocket 未连接';
     if (!fourReady) {
-      return `四天线未齐：${fourGaps.join('、')}。左机需主GGA+副天线(BESTPOS2A)，右机需 GGA+PSAT,GGA2`;
+      return `四天线未齐：${fourGaps.join('、')}。上水、下水两台接收机都要有主 GGA 和副 GGA2`;
     }
     if (!rtkFixed) {
       const left = liveData.receivers.find((r) => r.id === 'gantry_a1');
@@ -1477,8 +1535,12 @@ export default function VehicleConfig({
     try {
       const payload = {
         vehicle_id: cfg.vehicle_id,
-        l_arm_elec: cfg.l_arm_elec,
-        l_arm_diesel: cfg.l_arm_diesel,
+        l_arm_elec: cfg.l_arm_elec_down ?? cfg.l_arm_elec,
+        l_arm_diesel: cfg.l_arm_diesel_down ?? cfg.l_arm_diesel,
+        l_arm_elec_up: cfg.l_arm_elec_up ?? DEFAULT_ARM,
+        l_arm_elec_down: cfg.l_arm_elec_down ?? cfg.l_arm_elec,
+        l_arm_diesel_up: cfg.l_arm_diesel_up ?? DEFAULT_ARM,
+        l_arm_diesel_down: cfg.l_arm_diesel_down ?? cfg.l_arm_diesel,
         l_arm_calibration: alignCalibrationArms(cfg),
         gantry_attitude: attitudeForSave(cfg.gantry_attitude),
         receiver_layout: cfg.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT,

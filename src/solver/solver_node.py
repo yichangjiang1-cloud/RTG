@@ -25,8 +25,20 @@ from src.solver.calibration import BVehicleCalibrator
 from src.solver.calibration_context import CalibrationContextManager
 from src.solver.bay_residual import (
     interpolate_residual,
-    build_bay_positions_from_survey_points,
-    resolve_bay_no_next,
+)
+from src.solver.coordinate_transform import ecef_to_enu, ecef_to_wgs84
+from src.solver.yard_geometry import (
+    en_meters,
+    lane_deviation_m,
+    normalize_boundary,
+    polygon_centroid,
+    resolve_bay_band,
+    resolve_y_axis,
+)
+from src.solver.side_layout import (
+    antenna_ecef_from_dict,
+    parse_side_layout,
+    split_sides,
 )
 from src.solver.motion_speed import (
     DEADBAND_MPS,
@@ -118,6 +130,12 @@ class SolverNode:
         self._last_gantry_time: float = 0.0
         self._last_gantry_any_time: float = 0.0
         self._last_gantry_heading: float = 0.0
+        self._last_upstream_heading: Optional[float] = None
+        layout = cfg.get("receiver_layout") if isinstance(cfg.get("receiver_layout"), dict) else {}
+        self._side = parse_side_layout(layout)
+        self._last_elec_y: Optional[tuple[float, float]] = None
+        self._last_diesel_y: Optional[tuple[float, float]] = None
+        self._last_trolley_x: Optional[tuple[float, float]] = None
 
         # 小车相对速度历史 (t, rel_x, rel_y)
         self._trolley_rel_hist: list[tuple[float, float, float]] = []
@@ -147,9 +165,244 @@ class SolverNode:
         except Exception as exc:
             logger.exception(f"解算异常: {exc}")
 
+    def _sync_side(self, block: dict) -> None:
+        layout = block.get("receiver_layout")
+        if isinstance(layout, dict):
+            self._side = parse_side_layout(layout)
+
+    def _sides(self, ga1, ga2, recv1: bool, recv2: bool):
+        return split_sides(self._side, ga1, ga2, recv1, recv2)
+
+    def _upstream_heading(self, ga1: dict, ga2: dict, recv1: bool, recv2: bool) -> Optional[float]:
+        """航向从下水端两天线中点指向上水端两天线中点。"""
+        elec, diesel, elec_live, diesel_live, elec_down, diesel_down = self._sides(
+            ga1, ga2, recv1, recv2,
+        )
+        if not (elec_live and diesel_live):
+            return self._last_upstream_heading
+        up_e = antenna_ecef_from_dict(elec, not elec_down)
+        down_e = antenna_ecef_from_dict(elec, elec_down)
+        up_d = antenna_ecef_from_dict(diesel, not diesel_down)
+        down_d = antenna_ecef_from_dict(diesel, diesel_down)
+        if up_e is None or down_e is None or up_d is None or down_d is None:
+            return self._last_upstream_heading
+        up = tuple((up_e[i] + up_d[i]) * 0.5 for i in range(3))
+        down = tuple((down_e[i] + down_d[i]) * 0.5 for i in range(3))
+        lat, lon, alt = ecef_to_wgs84(*down)
+        east, north, _up = ecef_to_enu(*up, lat, lon, alt)
+        if math.hypot(east, north) < 1.0:
+            return self._last_upstream_heading
+        heading = math.degrees(math.atan2(east, north)) % 360.0
+        if heading >= 359.95:
+            heading = 0.0
+        self._last_upstream_heading = heading
+        return heading
+
+    def _four_tire_ecef(self, ga1, ga2, roll, pitch, heading, recv1, recv2) -> dict:
+        """一侧一套杆臂，主天线和从天线各算出一个轮胎中心。"""
+        elec, diesel, elec_live, diesel_live, _elec_down, _diesel_down = self._sides(
+            ga1, ga2, recv1, recv2,
+        )
+        out = {"elec1": None, "elec2": None, "diesel1": None, "diesel2": None}
+
+        def solve(solver, g, live, primary):
+            if not live:
+                return None
+            ecef = antenna_ecef_from_dict(g, primary)
+            if ecef is None:
+                return None
+            return tuple(solver.solve(np.array(ecef), roll, pitch, heading))
+
+        out["elec1"] = solve(self._solver_elec, elec, elec_live, True)
+        out["elec2"] = solve(self._solver_elec, elec, elec_live, False)
+        out["diesel1"] = solve(self._solver_diesel, diesel, diesel_live, True)
+        out["diesel2"] = solve(self._solver_diesel, diesel, diesel_live, False)
+        return out
+
+    def _tire_centroid_wgs84(self, tires: dict):
+        pts = [tires[k] for k in ("elec1", "elec2", "diesel1", "diesel2")]
+        if any(p is None for p in pts):
+            return None
+        mean = tuple(sum(p[i] for p in pts) / 4.0 for i in range(3))
+        return ecef_to_wgs84(*mean)
+
+    def _recompute_centers(self, gantry: GantryResult) -> None:
+        def mid(a, a_ok, b, b_ok):
+            if not (a_ok and b_ok):
+                return None
+            return tuple((a[i] + b[i]) * 0.5 for i in range(3))
+
+        elec = mid(gantry.tire_elec1, gantry.tire_elec1_valid, gantry.tire_elec2, gantry.tire_elec2_valid)
+        diesel = mid(
+            gantry.tire_diesel1, gantry.tire_diesel1_valid,
+            gantry.tire_diesel2, gantry.tire_diesel2_valid,
+        )
+        gantry.a1_valid = elec is not None
+        gantry.a2_valid = diesel is not None
+        if elec is not None:
+            gantry.center_elec_side, gantry.center_elec_y = elec[0], elec[1]
+        if diesel is not None:
+            gantry.center_engine_side, gantry.center_engine_y = diesel[0], diesel[1]
+        ready = (
+            gantry.tire_elec1_valid and gantry.tire_elec2_valid
+            and gantry.tire_diesel1_valid and gantry.tire_diesel2_valid
+        )
+        if ready:
+            xs = [gantry.tire_elec1, gantry.tire_elec2, gantry.tire_diesel1, gantry.tire_diesel2]
+            gantry.lpoint_x = sum(p[0] for p in xs) / 4.0
+            gantry.lpoint_y = sum(p[1] for p in xs) / 4.0
+            gantry.lpoint_z = sum(p[2] for p in xs) / 4.0
+
+    def _shift_tires(self, gantry: GantryResult, dx: float, dy: float, dz: float = 0.0) -> None:
+        for name, flag in (
+            ("tire_elec1", "tire_elec1_valid"),
+            ("tire_elec2", "tire_elec2_valid"),
+            ("tire_diesel1", "tire_diesel1_valid"),
+            ("tire_diesel2", "tire_diesel2_valid"),
+        ):
+            if not getattr(gantry, flag):
+                continue
+            x, y, z = getattr(gantry, name)
+            setattr(gantry, name, (x + dx, y + dy, z + dz))
+        self._recompute_centers(gantry)
+
+    def _fill_lane(self, gantry: GantryResult, transform, yard_id: str) -> None:
+        gantry.lane_mm = [0, 0, 0, 0]
+        if transform is None or not transform.axis_ready:
+            return
+        meta = self._yard_manager.get_yard_meta(yard_id or "") or {}
+        ring = normalize_boundary(meta.get("boundary"))
+        if len(ring) < 3:
+            return
+        verts = [
+            transform.wgs84_to_lycs(lat, lon, float(transform.origin_alt))[:2]
+            for lat, lon in ring
+        ]
+        center = polygon_centroid(verts)
+        if center is None:
+            return
+        tires = (
+            (gantry.tire_elec1, gantry.tire_elec1_valid),
+            (gantry.tire_elec2, gantry.tire_elec2_valid),
+            (gantry.tire_diesel1, gantry.tire_diesel1_valid),
+            (gantry.tire_diesel2, gantry.tire_diesel2_valid),
+        )
+        mm = []
+        for point, ok in tires:
+            if not ok:
+                mm.append(0)
+                continue
+            mm.append(int(round(lane_deviation_m(point[0], center[0]) * 1000.0)))
+        gantry.lane_mm = mm
+        gantry.leg_offsets = [v / 1000.0 for v in mm]
+
+    def _side_fix(self, ga1, ga2, recv1, recv2):
+        elec, diesel, elec_live, diesel_live, _ed, _dd = self._sides(ga1, ga2, recv1, recv2)
+
+        def pair(g, live):
+            if not live or not g:
+                return 0, 0
+            primary = int(g.get("fix_quality") or 0)
+            secondary = int(g.get("antenna2_fix_quality") or primary)
+            return primary, secondary
+
+        ep, es = pair(elec, elec_live)
+        dp, ds = pair(diesel, diesel_live)
+        return ep, es, dp, ds
+
+    def _apply_bay_axis(self, transform, survey_pts, yard_meta=None) -> None:
+        pts = []
+        for p in survey_pts or []:
+            bay = p.get("bay_no")
+            if bay is None:
+                continue
+            lat = float(p.get("lat") or 0.0)
+            lon = float(p.get("lon") or 0.0)
+            if abs(lat) < 1e-9 and abs(lon) < 1e-9:
+                continue
+            east, north = en_meters(lat, lon, transform.origin_lat, transform.origin_lon)
+            pts.append((int(bay), east, north))
+        meta = yard_meta or {}
+        axis = resolve_y_axis(
+            pts,
+            meta.get("y_axis_mode"),
+            meta.get("y_axis_points"),
+            transform.origin_lat,
+            transform.origin_lon,
+        )
+        if axis:
+            transform.set_y_axis(*axis)
+        else:
+            transform.reset_axis()
+
+    def _axis_speed(self, slot: str, value: Optional[float], now: float) -> float:
+        prev = getattr(self, slot)
+        speed = 0.0
+        if value is not None and prev is not None:
+            dt = now - prev[1]
+            if 0.05 < dt < 2.0:
+                speed = (value - prev[0]) / dt
+        if value is not None:
+            setattr(self, slot, (value, now))
+        return speed
+
     # ------------------------------------------------------------------
     # 核心解算
     # ------------------------------------------------------------------
+    def _outside_result(
+        self, now, ga1, ga2, tly, recv1, recv2, tly_live, ref, ref_rid,
+        gantry_antennas=None, attitude_compare=None,
+    ) -> PositionResult:
+        """中点不在任何场内，或只有一个轮胎中心在场内：场号空，场内外和场类型发 0。
+
+        作业点没有堆场坐标，但接收机在线状态和定位质量仍要带上，
+        否则前端总状态是 RTK FIXED，接收机列表却全是无数据。
+        """
+        hdg_src = ga1 if recv1 else ga2
+        gantry = GantryResult(
+            timestamp=now,
+            recv1_live=recv1,
+            recv2_live=recv2,
+            heading=float(hdg_src.get("heading") or 0.0),
+            pitch=float(hdg_src.get("pitch") or 0.0),
+            roll=float(hdg_src.get("roll") or 0.0),
+        )
+        trolley = TrolleyResult(timestamp=now, is_valid=bool(tly_live))
+        return PositionResult(
+            timestamp=now,
+            yard_id="",
+            in_yard=False,
+            gantry=gantry,
+            trolley=trolley,
+            latitude=float(ref.get("lat", 0.0)),
+            longitude=float(ref.get("lon", 0.0)),
+            altitude=float(ref.get("alt", 0.0)),
+            ref_ecef_x=float(ref.get("ecef_x", 0.0)),
+            ref_ecef_y=float(ref.get("ecef_y", 0.0)),
+            ref_ecef_z=float(ref.get("ecef_z", 0.0)),
+            ref_receiver_id=ref_rid,
+            antenna2_latitude=float(ga2.get("lat", 0.0)) if recv2 else 0.0,
+            antenna2_longitude=float(ga2.get("lon", 0.0)) if recv2 else 0.0,
+            antenna2_altitude=float(ga2.get("alt", 0.0)) if recv2 else 0.0,
+            antenna2_valid=bool(recv2),
+            gnss_fix_quality=int((ga1 if recv1 else ga2).get("fix_quality", 0)),
+            fix_quality_left=int(ga1.get("fix_quality", 0)) if recv1 else 0,
+            fix_quality_left_ant2=int(ga1.get("antenna2_fix_quality", 0)) if recv1 else 0,
+            fix_quality_right=int(ga2.get("fix_quality", 0)) if recv2 else 0,
+            fix_quality_right_ant2=int(ga2.get("antenna2_fix_quality", 0)) if recv2 else 0,
+            fix_quality_trolley=int(tly.get("fix_quality", 0)) if tly_live else 0,
+            fix_quality_trolley_ant2=int(tly.get("antenna2_fix_quality", 0)) if tly_live else 0,
+            satellites_left=int(ga1.get("num_satellites", 0)) if recv1 else 0,
+            satellites_right=int(ga2.get("num_satellites", 0)) if recv2 else 0,
+            satellites_trolley=int(tly.get("num_satellites", 0)) if tly_live else 0,
+            hdop_left=float(ga1.get("hdop", 99.9)) if recv1 else 99.9,
+            hdop_right=float(ga2.get("hdop", 99.9)) if recv2 else 99.9,
+            hdop_trolley=float(tly.get("hdop", 99.9)) if tly_live else 99.9,
+            gantry_antennas=gantry_antennas or {},
+            gantry_attitude_compare=attitude_compare or {},
+            current_bay_no=0,
+        )
+
     def _solve(self, state: dict) -> Optional[PositionResult]:
         """
         完整解算流程，返回 PositionResult。
@@ -172,13 +425,26 @@ class SolverNode:
         else:
             ref, ref_rid = ga2, "gantry_a2"
 
-        # ---- 1. 识别当前堆场 ----
-        yard_id = self._yard_manager.detect_yard(
-            lat=ref.get("lat", 0.0),
-            lon=ref.get("lon", 0.0),
+        roll = pitch = 0.0
+        if recv1_live:
+            roll = float(ga1.get("roll") or 0.0)
+            pitch = float(ga1.get("pitch") or 0.0)
+        elif recv2_live:
+            roll = float(ga2.get("roll") or 0.0)
+            pitch = float(ga2.get("pitch") or 0.0)
+        heading = self._upstream_heading(ga1, ga2, recv1_live, recv2_live)
+        if heading is None:
+            heading = float((ga1 if recv1_live else ga2).get("heading") or 0.0)
+        ga1 = dict(ga1)
+        ga2 = dict(ga2)
+        ga1["heading"] = heading
+        ga2["heading"] = heading
+
+        tires_ecef = self._four_tire_ecef(
+            ga1, ga2, roll, pitch, heading, recv1_live, recv2_live
         )
-        transform = self._yard_manager.get_transform(yard_id)
-        if transform is None:
+        center_ll = self._tire_centroid_wgs84(tires_ecef)
+        if not self._yard_manager._yard_meta:
             if not self._yard_missing_logged:
                 logger.warning(
                     "无法识别当前堆场（yard_config 无 yards 或未同步 API），"
@@ -187,9 +453,32 @@ class SolverNode:
                 self._yard_missing_logged = True
             return None
 
+        yard_id = self._yard_manager.detect_yard_from_point(
+            center_ll[0] if center_ll else None,
+            center_ll[1] if center_ll else None,
+        )
+        transform = self._yard_manager.get_transform(yard_id) if yard_id else None
+        if transform is None:
+            outside = self._outside_result(
+                now, ga1, ga2, tly, recv1_live, recv2_live, tly_live, ref, ref_rid,
+                state.get("gantry_antennas"),
+                state.get("gantry_attitude_compare"),
+            )
+            ep, es, dp, ds = self._side_fix(ga1, ga2, recv1_live, recv2_live)
+            outside.fix_quality_elec = ep
+            outside.fix_quality_elec_ant2 = es
+            outside.fix_quality_diesel = dp
+            outside.fix_quality_diesel_ant2 = ds
+            return outside
+
+        cal = self._calibration_ctx.get(yard_id or "")
+        survey_pts = cal.survey_points if cal else []
+        yard_meta = self._yard_manager.get_yard_meta(yard_id or "") or {}
+        self._apply_bay_axis(transform, survey_pts, yard_meta)
+
         # ---- 2. 大车解算 ----
         gantry_result = self._solve_gantry(
-            ga1, ga2, transform, yard_id, now, recv1_live, recv2_live
+            ga1, ga2, transform, yard_id, now, recv1_live, recv2_live, tires_ecef,
         )
 
         # ---- 3. 小车解算 ----
@@ -242,20 +531,31 @@ class SolverNode:
 
         cal = self._calibration_ctx.get(yard_id or "")
         survey_pts = cal.survey_points if cal else []
-        bay_positions = build_bay_positions_from_survey_points(
-            survey_pts,
-            transform=transform,
-            bay_spacing=bay_spacing,
+        yard_meta = self._yard_manager.get_yard_meta(yard_id or "") or {}
+        half = float(yard_meta.get("bay_half_width_m") or 0.3)
+        current_bay_no = 0
+        four_tires = (
+            gantry_result.tire_elec1_valid and gantry_result.tire_elec2_valid
+            and gantry_result.tire_diesel1_valid and gantry_result.tire_diesel2_valid
         )
-        current_bay_no = resolve_bay_no_next(
-            float(gantry_result.lpoint_x),
-            bay_positions,
-            float(gantry_result.lpoint_y),
-        )
+        if transform.axis_ready and four_tires:
+            bay_ys = []
+            for pt in survey_pts:
+                bay_no = pt.get("bay_no")
+                if bay_no is None:
+                    continue
+                lat = float(pt.get("lat") or 0.0)
+                lon = float(pt.get("lon") or 0.0)
+                if abs(lat) < 1e-9 and abs(lon) < 1e-9:
+                    continue
+                _x, y, _z = transform.wgs84_to_lycs(lat, lon, float(pt.get("alt") or 0.0))
+                bay_ys.append((int(bay_no), y))
+            current_bay_no = resolve_bay_band(gantry_result.lpoint_y, bay_ys, half)
 
         result = PositionResult(
             timestamp=now,
             yard_id=yard_id or "",
+            in_yard=True,
             gantry=gantry_result,
             trolley=trolley_result,
             latitude=float(ref.get("lat", 0.0)),
@@ -320,6 +620,11 @@ class SolverNode:
             trolley_antenna_secondary=_ant_dict(tly, False) if tly_live else {},
             gantry_attitude_compare=state.get("gantry_attitude_compare") or {},
         )
+        ep, es, dp, ds = self._side_fix(ga1, ga2, recv1_live, recv2_live)
+        result.fix_quality_elec = ep
+        result.fix_quality_elec_ant2 = es
+        result.fix_quality_diesel = dp
+        result.fix_quality_diesel_ant2 = ds
         result.gantry.heading = float(hdg_src.get("heading", 0.0))
         result.gantry.pitch = float(hdg_src.get("pitch", 0.0))
         result.gantry.roll = float(hdg_src.get("roll", 0.0))
@@ -334,91 +639,52 @@ class SolverNode:
         now: float,
         recv1_live: bool,
         recv2_live: bool,
+        tires_ecef: Optional[dict] = None,
     ) -> GantryResult:
         """
-        大车定位（UB482 / 两主点布局）：
-          左接收机 gantry_a1 主 GGA + l_arm_elec   → 电气房侧 L-Point
-          右接收机 gantry_a2 主 GGA + l_arm_diesel → 柴油机侧 L-Point
-        单侧在线时只填对应作业点 valid；另一侧保持无数据。
-        兼容旧布局：若右机不在线但左机有副 GGA，仍可用左机副点作柴油侧。
-        姿态优先左机；仅右机在线时用右机 heading/pitch/roll。
+        四个轮胎中心：电气/动力各用该侧主天线标定的杆臂，套到主天线和从天线。
+        侧中心是该侧两个轮胎的中点，大车中心是四个轮胎的中点。
         """
         gantry = GantryResult(timestamp=now)
         gantry.recv1_live = recv1_live
         gantry.recv2_live = recv2_live
         gantry.a1_valid = False
         gantry.a2_valid = False
-
-        lx_elec = ly_elec = lz_elec = 0.0
-        lx_diesel = ly_diesel = lz_diesel = 0.0
+        gantry.elec_primary_down = self._side.elec_primary_down()
+        gantry.diesel_primary_down = self._side.diesel_primary_down()
 
         roll = pitch = heading = 0.0
         if recv1_live:
-            roll = ga1.get("roll", 0.0)
-            pitch = ga1.get("pitch", 0.0)
-            heading = ga1.get("heading", 0.0)
+            roll = float(ga1.get("roll") or 0.0)
+            pitch = float(ga1.get("pitch") or 0.0)
+            heading = float(ga1.get("heading") or 0.0)
         elif recv2_live:
-            roll = ga2.get("roll", 0.0)
-            pitch = ga2.get("pitch", 0.0)
-            heading = ga2.get("heading", 0.0)
+            roll = float(ga2.get("roll") or 0.0)
+            pitch = float(ga2.get("pitch") or 0.0)
+            heading = float(ga2.get("heading") or 0.0)
 
-        if recv1_live:
-            gps_a1 = np.array([ga1["ecef_x"], ga1["ecef_y"], ga1["ecef_z"]])
-            lp_elec_ecef = self._solver_elec.solve(gps_a1, roll, pitch, heading)
-            lx_elec, ly_elec, lz_elec = transform.ecef_to_lycs(*lp_elec_ecef)
-            gantry.center_elec_side = lx_elec
-            gantry.center_elec_y = ly_elec
-            gantry.a1_valid = True
-
-        if recv2_live:
-            gps_right = np.array([ga2["ecef_x"], ga2["ecef_y"], ga2["ecef_z"]])
-            lp_diesel_ecef = self._solver_diesel.solve(gps_right, roll, pitch, heading)
-            lx_diesel, ly_diesel, lz_diesel = transform.ecef_to_lycs(*lp_diesel_ecef)
-            gantry.center_engine_side = lx_diesel
-            gantry.center_engine_y = ly_diesel
-            gantry.a2_valid = True
-        elif recv1_live and ga1.get("has_antenna2"):
-            # 兼容：旧双 GGA 同机布局（左机副天线 = 柴油侧）
-            gps_a2 = np.array([
-                ga1["antenna2_ecef_x"],
-                ga1["antenna2_ecef_y"],
-                ga1["antenna2_ecef_z"],
-            ])
-            lp_diesel_ecef = self._solver_diesel.solve(gps_a2, roll, pitch, heading)
-            lx_diesel, ly_diesel, lz_diesel = transform.ecef_to_lycs(*lp_diesel_ecef)
-            gantry.center_engine_side = lx_diesel
-            gantry.center_engine_y = ly_diesel
-            gantry.a2_valid = True
-
-        raw_xs, raw_ys, raw_zs = [], [], []
-        if gantry.a1_valid:
-            raw_xs.append(lx_elec)
-            raw_ys.append(ly_elec)
-            raw_zs.append(lz_elec)
-        if gantry.a2_valid:
-            raw_xs.append(lx_diesel)
-            raw_ys.append(ly_diesel)
-            raw_zs.append(lz_diesel)
-
-        raw_lpoint_x = float(np.mean(raw_xs)) if raw_xs else 0.0
-        raw_lpoint_y = float(np.mean(raw_ys)) if raw_ys else 0.0
-        raw_lpoint_z = float(np.mean(raw_zs)) if raw_zs else 0.0
-
-        gantry.lpoint_x = raw_lpoint_x
-        gantry.lpoint_y = raw_lpoint_y
-        gantry.lpoint_z = raw_lpoint_z
-
-        # 门腿 Y：电气房/柴油机侧各用实测作业点 Y，不用跨距推算
-        if gantry.a1_valid and gantry.a2_valid:
-            gantry.leg_offsets = [ly_elec, ly_diesel, ly_elec, ly_diesel]
-        elif gantry.a1_valid:
-            gantry.leg_offsets = [ly_elec, ly_elec, ly_elec, ly_elec]
-        elif gantry.a2_valid:
-            gantry.leg_offsets = [ly_diesel, ly_diesel, ly_diesel, ly_diesel]
-        else:
-            gantry.leg_offsets = [0.0, 0.0, 0.0, 0.0]
+        tires = tires_ecef or self._four_tire_ecef(
+            ga1, ga2, roll, pitch, heading, recv1_live, recv2_live,
+        )
+        slots = (
+            ("elec1", "tire_elec1", "tire_elec1_valid"),
+            ("elec2", "tire_elec2", "tire_elec2_valid"),
+            ("diesel1", "tire_diesel1", "tire_diesel1_valid"),
+            ("diesel2", "tire_diesel2", "tire_diesel2_valid"),
+        )
+        for key, store, flag in slots:
+            ecef = tires.get(key)
+            if ecef is None:
+                continue
+            xyz = transform.ecef_to_lycs(*ecef)
+            setattr(gantry, store, (float(xyz[0]), float(xyz[1]), float(xyz[2])))
+            setattr(gantry, flag, True)
+        self._recompute_centers(gantry)
+        raw_lpoint_x = gantry.lpoint_x
+        raw_lpoint_y = gantry.lpoint_y
 
         gantry = self._apply_calibration_corrections(gantry, yard_id, transform)
+        self._fill_lane(gantry, transform, yard_id)
 
         gnss_speed, course_deg = _pick_gnss_motion(ga1, ga2, recv1_live, recv2_live)
 
@@ -513,6 +779,16 @@ class SolverNode:
         gantry.heading = heading
         gantry.pitch = pitch
         gantry.roll = roll
+        gantry.speed_y_elec = self._axis_speed(
+            "_last_elec_y",
+            gantry.center_elec_y if gantry.a1_valid else None,
+            now,
+        )
+        gantry.speed_y_diesel = self._axis_speed(
+            "_last_diesel_y",
+            gantry.center_engine_y if gantry.a2_valid else None,
+            now,
+        )
         return gantry
 
     def _solve_trolley(
@@ -560,6 +836,7 @@ class SolverNode:
         cy = (y1 + y2) / 2.0
         cz = (z1 + z2) / 2.0
         trolley.center_x, trolley.center_y, trolley.center_z = cx, cy, cz
+        trolley.speed_x = self._axis_speed("_last_trolley_x", cx, now)
 
         bx, by, bz = lycs_to_gantry_body(
             cx, cy, cz,
@@ -680,6 +957,7 @@ class SolverNode:
         if diesel is not None:
             self._solver_diesel.update_l_arm(diesel)
         logger.info("已应用大车双作业点杆臂 elec=%s diesel=%s", elec, diesel)
+        self._sync_side(block)
         trolley_cfg = block.get("trolley")
         if isinstance(trolley_cfg, dict):
             self.apply_trolley_origin_config(trolley_cfg)
@@ -727,15 +1005,8 @@ class SolverNode:
 
         if M is not None:
             ox, oy = gantry.lpoint_x, gantry.lpoint_y
-            gantry.lpoint_x, gantry.lpoint_y = _apply_matrix(M, ox, oy)
-            dx = gantry.lpoint_x - ox
-            dy = gantry.lpoint_y - oy
-            if gantry.a1_valid:
-                gantry.center_elec_side += dx
-                gantry.center_elec_y += dy
-            if gantry.a2_valid:
-                gantry.center_engine_side += dx
-                gantry.center_engine_y += dy
+            nx, ny = _apply_matrix(M, ox, oy)
+            self._shift_tires(gantry, nx - ox, ny - oy)
 
         anchors = []
         if cal:
@@ -751,15 +1022,7 @@ class SolverNode:
             if ref_lat == 0.0 and transform is not None:
                 ref_lat = transform.origin_lat
             rdx, rdy, dz = interpolate_residual(gantry.lpoint_x, anchors)
-            gantry.lpoint_x -= rdx
-            gantry.lpoint_y -= rdy
-            gantry.lpoint_z -= dz
-            if gantry.a1_valid:
-                gantry.center_elec_side -= rdx
-                gantry.center_elec_y -= rdy
-            if gantry.a2_valid:
-                gantry.center_engine_side -= rdx
-                gantry.center_engine_y -= rdy
+            self._shift_tires(gantry, -rdx, -rdy, -dz)
 
         return gantry
 

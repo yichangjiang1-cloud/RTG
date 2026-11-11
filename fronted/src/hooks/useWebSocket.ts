@@ -236,6 +236,12 @@ export function useWebSocket({ url, forceMock, onDiscovery }: UseWebSocketOption
             receiver_right: { ...(prev.gantry.receiver_right ?? { x: 0, y: 0 }), valid: false },
             elec_center: { ...(prev.gantry.elec_center ?? { x: 0, y: 0 }), valid: false },
             diesel_center: { ...(prev.gantry.diesel_center ?? { x: 0, y: 0 }), valid: false },
+            tires: prev.gantry.tires ? {
+              elec_upstream: { ...prev.gantry.tires.elec_upstream, valid: false },
+              elec_downstream: { ...prev.gantry.tires.elec_downstream, valid: false },
+              diesel_upstream: { ...prev.gantry.tires.diesel_upstream, valid: false },
+              diesel_downstream: { ...prev.gantry.tires.diesel_downstream, valid: false },
+            } : prev.gantry.tires,
           },
           trolley: { ...prev.trolley, valid: false },
           antenna2: {

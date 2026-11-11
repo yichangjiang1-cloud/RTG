@@ -259,6 +259,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         origin: [number, number];
         total_bays?: number;
         mapped?: boolean;
+        y_axis_mode?: 'fit' | 'two_point';
+        y_axis_points?: YardInfo['y_axis_points'];
       }> };
       if (json.code === 200 && Array.isArray(json.data) && json.data.length > 0) {
         const yards: YardInfo[] = json.data.map(y => ({
@@ -268,6 +270,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           origin_lon: y.origin[0],
           total_bays: y.total_bays ?? 0,
           mapped: y.mapped ?? false,
+          y_axis_mode: y.y_axis_mode === 'two_point' ? 'two_point' : 'fit',
+          y_axis_points: y.y_axis_points ?? null,
         }));
         logger.info('AppContext', `fetchYards 成功，共 ${yards.length} 个场地`);
         setYards(yards);

@@ -8,6 +8,12 @@ import logging
 import numpy as np
 from typing import Optional, Dict, Any
 from src.solver.coordinate_transform import YardTransform
+from src.solver.yard_geometry import (
+    en_meters,
+    normalize_boundary,
+    point_in_polygon,
+    polygon_area,
+)
 logger = logging.getLogger(__name__)
 
 PLC_YARD_ID_MAX_LEN = 8
@@ -40,6 +46,10 @@ def parse_yard_config_entry(entry: dict) -> Optional[Dict[str, Any]]:
         "origin_alt": origin_alt,
         "bay_spacing": float(entry.get("bay_spacing", 6.0)),
         "bay_count": int(entry.get("bay_count", entry.get("total_bays", 0))),
+        "bay_half_width_m": float(entry.get("bay_half_width_m") or 0.3),
+        "boundary": entry.get("boundary") or [],
+        "y_axis_mode": str(entry.get("y_axis_mode") or "fit"),
+        "y_axis_points": entry.get("y_axis_points") or None,
     }
 
 
@@ -101,6 +111,37 @@ class YardManager:
             )
             self._yard_meta[yid] = parsed
         logger.info("堆场投影已刷新，共 %d 个堆场", len(self._transforms))
+
+    def detect_yard_from_point(
+        self,
+        lat: Optional[float],
+        lon: Optional[float],
+    ) -> Optional[str]:
+        """四个轮胎中心的中点落在多边形内才算在该场。重叠时取面积最小的场。"""
+        if lat is None or lon is None:
+            self._current_yard_id = None
+            return None
+        best_id = None
+        best_area = float("inf")
+        for yid, meta in self._yard_meta.items():
+            ring = normalize_boundary(meta.get("boundary"))
+            if len(ring) < 3:
+                continue
+            lat0 = float(meta["origin_lat"])
+            lon0 = float(meta["origin_lon"])
+            poly = [en_meters(p_lat, p_lon, lat0, lon0) for p_lat, p_lon in ring]
+            east, north = en_meters(float(lat), float(lon), lat0, lon0)
+            if not point_in_polygon(east, north, poly):
+                continue
+            area = polygon_area(poly)
+            if area < best_area:
+                best_area = area
+                best_id = yid
+        if best_id != self._current_yard_id:
+            logger.info("RTG 堆场判定: %s -> %s", self._current_yard_id, best_id or "场外")
+        self._current_yard_id = best_id
+        return best_id
+
     def detect_yard(self, lat: float, lon: float) -> Optional[str]:
         """根据 WGS84 坐标判断所在堆场（取距离最近的堆场原点）。"""
         best_id = None

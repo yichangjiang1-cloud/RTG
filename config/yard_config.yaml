@@ -1,26 +1,50 @@
 meta:
-  synced_at: '2026-11-06T15:11:39+08:00'
+  synced_at: '2026-11-11T23:30:01+08:00'
   vehicle_id: RTG-001
   source: api
 yards:
 - yard_id: A01
-  name: A区堆场
+  name: '1'
   origin_lat: 30.5384792173
   origin_lon: 114.349230567
   origin_alt: 9.8771
   bay_spacing: 0.0
   bay_count: 10
+  bay_half_width_m: 0.3
+  boundary:
+  - lat: 30.5382097239
+    lon: 114.3488133727
+  - lat: 30.5382097239
+    lon: 114.3496477613
+  - lat: 30.5428809421
+    lon: 114.3496477613
+  - lat: 30.5428809421
+    lon: 114.3488133727
+  y_axis_mode: fit
+  y_axis_points: null
   mapped: true
   rtk_point_count: 10
 - yard_id: B01
-  name: B区堆场
-  origin_lat: 30.5384791798
-  origin_lon: 114.3523568284
-  origin_alt: 9.8771
+  name: 电气堆场
+  origin_lat: 32.20097711
+  origin_lon: 119.0541998
+  origin_alt: 9.655
   bay_spacing: 0.0
-  bay_count: 10
+  bay_count: 42
+  bay_half_width_m: 0.5
+  boundary:
+  - lat: 32.20098097
+    lon: 119.054444164
+  - lat: 32.199167503
+    lon: 119.052047394
+  - lat: 32.199504343
+    lon: 119.051694865
+  - lat: 32.201317809
+    lon: 119.054091635
+  y_axis_mode: fit
+  y_axis_points: null
   mapped: true
-  rtk_point_count: 10
+  rtk_point_count: 42
 yard_data:
   A01:
     has_rtk_map: true
@@ -30,16 +54,16 @@ yard_data:
       point_type: mapping
       bay_no: 1
       lat: 30.5384792173
-      lon: 114.3492045148
-      alt: 9.871
+      lon: 114.3491262684
+      alt: 9.8771
       local_x: null
       local_y: null
       local_z: null
     - id: 2
       point_type: mapping
       bay_no: 2
-      lat: 30.5389302302
-      lon: 114.3492045148
+      lat: 30.5389283729
+      lon: 114.3491262684
       alt: 9.8771
       local_x: null
       local_y: null
@@ -47,8 +71,8 @@ yard_data:
     - id: 3
       point_type: mapping
       bay_no: 3
-      lat: 30.5393812432
-      lon: 114.3492045148
+      lat: 30.5393775285
+      lon: 114.3491262684
       alt: 9.8771
       local_x: null
       local_y: null
@@ -56,8 +80,8 @@ yard_data:
     - id: 4
       point_type: mapping
       bay_no: 4
-      lat: 30.5398322561
-      lon: 114.3492045148
+      lat: 30.5398266841
+      lon: 114.3491262684
       alt: 9.8771
       local_x: null
       local_y: null
@@ -65,8 +89,8 @@ yard_data:
     - id: 5
       point_type: mapping
       bay_no: 5
-      lat: 30.540283269
-      lon: 114.3492045148
+      lat: 30.5402758396
+      lon: 114.3491262684
       alt: 9.8771
       local_x: null
       local_y: null
@@ -74,8 +98,8 @@ yard_data:
     - id: 6
       point_type: mapping
       bay_no: 6
-      lat: 30.5407342819
-      lon: 114.3492045148
+      lat: 30.5407249952
+      lon: 114.3491262684
       alt: 9.8771
       local_x: null
       local_y: null
@@ -83,8 +107,8 @@ yard_data:
     - id: 7
       point_type: mapping
       bay_no: 7
-      lat: 30.5411852949
-      lon: 114.3492045148
+      lat: 30.5411741508
+      lon: 114.3491262684
       alt: 9.8771
       local_x: null
       local_y: null
@@ -92,8 +116,8 @@ yard_data:
     - id: 8
       point_type: mapping
       bay_no: 8
-      lat: 30.5416363078
-      lon: 114.3492045148
+      lat: 30.5416233064
+      lon: 114.3491262684
       alt: 9.8771
       local_x: null
       local_y: null
@@ -101,8 +125,8 @@ yard_data:
     - id: 9
       point_type: mapping
       bay_no: 9
-      lat: 30.5420873207
-      lon: 114.3492045148
+      lat: 30.542072462
+      lon: 114.3491262684
       alt: 9.8771
       local_x: null
       local_y: null
@@ -110,432 +134,397 @@ yard_data:
     - id: 10
       point_type: mapping
       bay_no: 10
-      lat: 30.5425383337
-      lon: 114.3492045148
+      lat: 30.5425216176
+      lon: 114.3491262684
       alt: 9.8771
       local_x: null
       local_y: null
       local_z: null
-    calibration_status: completed
-    calibration_mode: skip
-    m_matrix:
-      mode: full
-      steps: 10
-      transform_list:
-      - bay_no: 1
-        ref:
-          lat: 30.5384792173
-          lon: 114.3492045148
-          alt: 9.871
-        measured:
-          lat: 30.538479217302665
-          lon: 114.349230567
-          alt: 9.87711525708437
-          local_x: 2.9223548764113206e-07
-          local_y: 3.9679104446577185e-10
-          local_z: 1.5255586765100784e-05
-        delta:
-          lat: 2.6645352591003757e-12
-          lon: 2.6052200013282345e-05
-          alt: 0.006115257084369219
-      - bay_no: 2
-        ref:
-          lat: 30.5389302302
-          lon: 114.3492045148
-          alt: 9.8771
-        measured:
-          lat: 30.538930311629755
-          lon: 114.349230567
-          alt: 9.877036526799202
-          local_x: 50.00910371971031
-          local_y: 1.891087286765014e-11
-          local_z: -0.00026033815962241537
-        delta:
-          lat: 8.142975715941247e-08
-          lon: 2.6052200013282345e-05
-          alt: -6.347320079846952e-05
-      - bay_no: 3
-        ref:
-          lat: 30.5393812432
-          lon: 114.3492045148
-          alt: 9.8771
-        measured:
-          lat: 30.53938125279017
-          lon: 114.349230567
-          alt: 9.876957821659744
-          local_x: 100.00123028249077
-          local_y: 1.9403079143387458e-10
-          local_z: -0.0009293635562512159
-        delta:
-          lat: 9.59017043555832e-09
-          lon: 2.6052200013282345e-05
-          alt: -0.000142178340256649
-      - bay_no: 4
-        ref:
-          lat: 30.5398322561
-          lon: 114.3492045148
-          alt: 9.8771
-        measured:
-          lat: 30.53983225461725
-          lon: 114.349230567
-          alt: 9.876879106275737
-          local_x: 150.00008591599385
-          local_y: 2.625171191539266e-10
-          local_z: -0.0019920177722910896
-        delta:
-          lat: -1.4827499228431407e-09
-          lon: 2.6052200013282345e-05
-          alt: -0.00022089372426314924
-      - bay_no: 5
-        ref:
-          lat: 30.540283269
-          lon: 114.3492045148
-          alt: 9.8771
-        measured:
-          lat: 30.540283237777654
-          lon: 114.349230567
-          alt: 9.876800394617021
-          local_x: 199.9968755831173
-          local_y: 4.514524309939816e-10
-          local_z: -0.0034481671355450355
-        delta:
-          lat: -3.122234559782555e-08
-          lon: 2.6052200013282345e-05
-          alt: -0.000299605382979351
-      - bay_no: 6
-        ref:
-          lat: 30.5407342819
-          lon: 114.3492045148
-          alt: 9.8771
-        measured:
-          lat: 30.54073438427137
-          lon: 114.349230567
-          alt: 9.876721655018628
-          local_x: 250.01177612352183
-          local_y: 6.112472750174902e-10
-          local_z: -0.005298590273494109
-        delta:
-          lat: 1.0237137004764918e-07
-          lon: 2.6052200013282345e-05
-          alt: -0.00037834498137279127
-      - bay_no: 7
-        ref:
-          lat: 30.5411852949
-          lon: 114.3492045148
-          alt: 9.8771
-        measured:
-          lat: 30.54118530126511
-          lon: 114.349230567
-          alt: 9.876642956398427
-          local_x: 300.0012373366558
-          local_y: 4.707019218841424e-10
-          local_z: -0.00754158652884527
-        delta:
-          lat: 6.365109328498875e-09
-          lon: 2.6052200013282345e-05
-          alt: -0.00045704360157294843
-      - bay_no: 8
-        ref:
-          lat: 30.5416363078
-          lon: 114.3492045148
-          alt: 9.8771
-        measured:
-          lat: 30.54163631975883
-          lon: 114.349230567
-          alt: 9.876564236357808
-          local_x: 350.00195446411954
-          local_y: 3.3858449377532907e-10
-          local_z: -0.01017863965579484
-        delta:
-          lat: 1.1958828594060833e-08
-          lon: 2.6052200013282345e-05
-          alt: -0.0005357636421923218
-      - bay_no: 9
-        ref:
-          lat: 30.5420873207
-          lon: 114.3492045148
-          alt: 9.8771
-        measured:
-          lat: 30.542087387585884
-          lon: 114.349230567
-          alt: 9.876485510729253
-          local_x: 400.008144215441
-          local_y: 4.769180605990186e-10
-          local_z: -0.013209638419268087
-        delta:
-          lat: 6.688588527481443e-08
-          lon: 2.6052200013282345e-05
-          alt: -0.0006144892707471428
-      - bay_no: 10
-        ref:
-          lat: 30.5425383337
-          lon: 114.3492045148
-          alt: 9.8771
-        measured:
-          lat: 30.54253836391293
-          lon: 114.349230567
-          alt: 9.876406801864505
-          local_x: 450.00419355249227
-          local_y: 2.235054363808331e-10
-          local_z: -0.01663358152943345
-        delta:
-          lat: 3.021292727112268e-08
-          lon: 2.6052200013282345e-05
-          alt: -0.0006931981354956207
+    calibration_status: none
+    calibration_mode: full
+    m_matrix: null
     source_vehicle_id: null
-    transform_list: &id001
-    - bay_no: 1
-      ref:
-        lat: 30.5384792173
-        lon: 114.3492045148
-        alt: 9.871
-      measured:
-        lat: 30.538479217302665
-        lon: 114.349230567
-        alt: 9.87711525708437
-        local_x: 2.9223548764113206e-07
-        local_y: 3.9679104446577185e-10
-        local_z: 1.5255586765100784e-05
-      delta:
-        lat: 2.6645352591003757e-12
-        lon: 2.6052200013282345e-05
-        alt: 0.006115257084369219
-    - bay_no: 2
-      ref:
-        lat: 30.5389302302
-        lon: 114.3492045148
-        alt: 9.8771
-      measured:
-        lat: 30.538930311629755
-        lon: 114.349230567
-        alt: 9.877036526799202
-        local_x: 50.00910371971031
-        local_y: 1.891087286765014e-11
-        local_z: -0.00026033815962241537
-      delta:
-        lat: 8.142975715941247e-08
-        lon: 2.6052200013282345e-05
-        alt: -6.347320079846952e-05
-    - bay_no: 3
-      ref:
-        lat: 30.5393812432
-        lon: 114.3492045148
-        alt: 9.8771
-      measured:
-        lat: 30.53938125279017
-        lon: 114.349230567
-        alt: 9.876957821659744
-        local_x: 100.00123028249077
-        local_y: 1.9403079143387458e-10
-        local_z: -0.0009293635562512159
-      delta:
-        lat: 9.59017043555832e-09
-        lon: 2.6052200013282345e-05
-        alt: -0.000142178340256649
-    - bay_no: 4
-      ref:
-        lat: 30.5398322561
-        lon: 114.3492045148
-        alt: 9.8771
-      measured:
-        lat: 30.53983225461725
-        lon: 114.349230567
-        alt: 9.876879106275737
-        local_x: 150.00008591599385
-        local_y: 2.625171191539266e-10
-        local_z: -0.0019920177722910896
-      delta:
-        lat: -1.4827499228431407e-09
-        lon: 2.6052200013282345e-05
-        alt: -0.00022089372426314924
-    - bay_no: 5
-      ref:
-        lat: 30.540283269
-        lon: 114.3492045148
-        alt: 9.8771
-      measured:
-        lat: 30.540283237777654
-        lon: 114.349230567
-        alt: 9.876800394617021
-        local_x: 199.9968755831173
-        local_y: 4.514524309939816e-10
-        local_z: -0.0034481671355450355
-      delta:
-        lat: -3.122234559782555e-08
-        lon: 2.6052200013282345e-05
-        alt: -0.000299605382979351
-    - bay_no: 6
-      ref:
-        lat: 30.5407342819
-        lon: 114.3492045148
-        alt: 9.8771
-      measured:
-        lat: 30.54073438427137
-        lon: 114.349230567
-        alt: 9.876721655018628
-        local_x: 250.01177612352183
-        local_y: 6.112472750174902e-10
-        local_z: -0.005298590273494109
-      delta:
-        lat: 1.0237137004764918e-07
-        lon: 2.6052200013282345e-05
-        alt: -0.00037834498137279127
-    - bay_no: 7
-      ref:
-        lat: 30.5411852949
-        lon: 114.3492045148
-        alt: 9.8771
-      measured:
-        lat: 30.54118530126511
-        lon: 114.349230567
-        alt: 9.876642956398427
-        local_x: 300.0012373366558
-        local_y: 4.707019218841424e-10
-        local_z: -0.00754158652884527
-      delta:
-        lat: 6.365109328498875e-09
-        lon: 2.6052200013282345e-05
-        alt: -0.00045704360157294843
-    - bay_no: 8
-      ref:
-        lat: 30.5416363078
-        lon: 114.3492045148
-        alt: 9.8771
-      measured:
-        lat: 30.54163631975883
-        lon: 114.349230567
-        alt: 9.876564236357808
-        local_x: 350.00195446411954
-        local_y: 3.3858449377532907e-10
-        local_z: -0.01017863965579484
-      delta:
-        lat: 1.1958828594060833e-08
-        lon: 2.6052200013282345e-05
-        alt: -0.0005357636421923218
-    - bay_no: 9
-      ref:
-        lat: 30.5420873207
-        lon: 114.3492045148
-        alt: 9.8771
-      measured:
-        lat: 30.542087387585884
-        lon: 114.349230567
-        alt: 9.876485510729253
-        local_x: 400.008144215441
-        local_y: 4.769180605990186e-10
-        local_z: -0.013209638419268087
-      delta:
-        lat: 6.688588527481443e-08
-        lon: 2.6052200013282345e-05
-        alt: -0.0006144892707471428
-    - bay_no: 10
-      ref:
-        lat: 30.5425383337
-        lon: 114.3492045148
-        alt: 9.8771
-      measured:
-        lat: 30.54253836391293
-        lon: 114.349230567
-        alt: 9.876406801864505
-        local_x: 450.00419355249227
-        local_y: 2.235054363808331e-10
-        local_z: -0.01663358152943345
-      delta:
-        lat: 3.021292727112268e-08
-        lon: 2.6052200013282345e-05
-        alt: -0.0006931981354956207
-    source_transform_list: *id001
+    transform_list: []
+    source_transform_list: []
   B01:
     has_rtk_map: true
-    rtk_point_count: 10
+    rtk_point_count: 42
     survey_points:
     - id: 11
       point_type: mapping
       bay_no: 1
-      lat: 30.5384791798
-      lon: 114.3523568284
-      alt: 9.8771
+      lat: 32.200977111
+      lon: 119.05419975
+      alt: 9.655
       local_x: null
       local_y: null
       local_z: null
     - id: 12
       point_type: mapping
       bay_no: 2
-      lat: 30.5388697676
-      lon: 114.3526173512
-      alt: 9.8771
+      lat: 32.200938306
+      lon: 119.054148833
+      alt: 9.723
       local_x: null
       local_y: null
       local_z: null
     - id: 13
       point_type: mapping
       bay_no: 3
-      lat: 30.5392603548
-      lon: 114.3528778761
-      alt: 9.8771
+      lat: 32.200899528
+      lon: 119.054097722
+      alt: 9.74
       local_x: null
       local_y: null
       local_z: null
     - id: 14
       point_type: mapping
       bay_no: 4
-      lat: 30.5396509415
-      lon: 114.3531384031
-      alt: 9.8771
+      lat: 32.200860833
+      lon: 119.054046444
+      alt: 9.688
       local_x: null
       local_y: null
       local_z: null
     - id: 15
       point_type: mapping
       bay_no: 5
-      lat: 30.5400415276
-      lon: 114.3533989322
-      alt: 9.8771
+      lat: 32.200806361
+      lon: 119.053974611
+      alt: 9.624
       local_x: null
       local_y: null
       local_z: null
     - id: 16
       point_type: mapping
       bay_no: 6
-      lat: 30.5404321132
-      lon: 114.3536594633
-      alt: 9.8771
+      lat: 32.200767972
+      lon: 119.053923194
+      alt: 9.626
       local_x: null
       local_y: null
       local_z: null
     - id: 17
       point_type: mapping
       bay_no: 7
-      lat: 30.5408226983
-      lon: 114.3539199966
-      alt: 9.8771
+      lat: 32.200729306
+      lon: 119.053872167
+      alt: 9.624
       local_x: null
       local_y: null
       local_z: null
     - id: 18
       point_type: mapping
       bay_no: 8
-      lat: 30.5412132828
-      lon: 114.3541805319
-      alt: 9.8771
+      lat: 32.200690417
+      lon: 119.053820833
+      alt: 9.645
       local_x: null
       local_y: null
       local_z: null
     - id: 19
       point_type: mapping
       bay_no: 9
-      lat: 30.5416038667
-      lon: 114.3544410693
-      alt: 9.8771
+      lat: 32.200651667
+      lon: 119.053769694
+      alt: 9.659
       local_x: null
       local_y: null
       local_z: null
     - id: 20
       point_type: mapping
       bay_no: 10
-      lat: 30.5419944501
-      lon: 114.3547016088
-      alt: 9.8771
+      lat: 32.200613083
+      lon: 119.053718361
+      alt: 9.648
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 21
+      point_type: mapping
+      bay_no: 11
+      lat: 32.200574278
+      lon: 119.053667111
+      alt: 9.637
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 22
+      point_type: mapping
+      bay_no: 12
+      lat: 32.200535556
+      lon: 119.05361575
+      alt: 9.667
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 23
+      point_type: mapping
+      bay_no: 13
+      lat: 32.200496889
+      lon: 119.053564639
+      alt: 9.656
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 24
+      point_type: mapping
+      bay_no: 14
+      lat: 32.200458139
+      lon: 119.05351375
+      alt: 9.643
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 25
+      point_type: mapping
+      bay_no: 15
+      lat: 32.200419306
+      lon: 119.053462333
+      alt: 9.657
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 26
+      point_type: mapping
+      bay_no: 16
+      lat: 32.200380472
+      lon: 119.053411389
+      alt: 9.68
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 27
+      point_type: mapping
+      bay_no: 17
+      lat: 32.20034175
+      lon: 119.053360167
+      alt: 9.666
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 28
+      point_type: mapping
+      bay_no: 18
+      lat: 32.200303083
+      lon: 119.053308972
+      alt: 9.664
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 29
+      point_type: mapping
+      bay_no: 19
+      lat: 32.200264361
+      lon: 119.053257694
+      alt: 9.699
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 30
+      point_type: mapping
+      bay_no: 20
+      lat: 32.200225528
+      lon: 119.0532065
+      alt: 9.703
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 31
+      point_type: mapping
+      bay_no: 21
+      lat: 32.200186778
+      lon: 119.053155333
+      alt: 9.698
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 32
+      point_type: mapping
+      bay_no: 22
+      lat: 32.200148028
+      lon: 119.053103889
+      alt: 9.708
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 33
+      point_type: mapping
+      bay_no: 23
+      lat: 32.200109389
+      lon: 119.053053
+      alt: 9.687
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 34
+      point_type: mapping
+      bay_no: 24
+      lat: 32.200070694
+      lon: 119.053001806
+      alt: 9.66
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 35
+      point_type: mapping
+      bay_no: 25
+      lat: 32.20003175
+      lon: 119.052950583
+      alt: 9.651
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 36
+      point_type: mapping
+      bay_no: 26
+      lat: 32.199993028
+      lon: 119.052899389
+      alt: 9.672
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 37
+      point_type: mapping
+      bay_no: 27
+      lat: 32.199954306
+      lon: 119.052848417
+      alt: 9.637
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 38
+      point_type: mapping
+      bay_no: 28
+      lat: 32.199915528
+      lon: 119.0527975
+      alt: 9.619
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 39
+      point_type: mapping
+      bay_no: 29
+      lat: 32.199876639
+      lon: 119.052746028
+      alt: 9.626
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 40
+      point_type: mapping
+      bay_no: 30
+      lat: 32.199838139
+      lon: 119.052694833
+      alt: 9.647
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 41
+      point_type: mapping
+      bay_no: 31
+      lat: 32.199799278
+      lon: 119.052643889
+      alt: 9.649
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 42
+      point_type: mapping
+      bay_no: 32
+      lat: 32.199760556
+      lon: 119.052592667
+      alt: 9.652
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 43
+      point_type: mapping
+      bay_no: 33
+      lat: 32.199721694
+      lon: 119.052541417
+      alt: 9.649
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 44
+      point_type: mapping
+      bay_no: 34
+      lat: 32.199683083
+      lon: 119.052490139
+      alt: 9.641
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 45
+      point_type: mapping
+      bay_no: 35
+      lat: 32.199644528
+      lon: 119.052438833
+      alt: 9.67
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 46
+      point_type: mapping
+      bay_no: 36
+      lat: 32.199605861
+      lon: 119.052387444
+      alt: 9.689
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 47
+      point_type: mapping
+      bay_no: 37
+      lat: 32.199567167
+      lon: 119.052336583
+      alt: 9.66
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 48
+      point_type: mapping
+      bay_no: 38
+      lat: 32.199528361
+      lon: 119.052285028
+      alt: 9.673
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 49
+      point_type: mapping
+      bay_no: 39
+      lat: 32.199489639
+      lon: 119.052234028
+      alt: 9.68
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 50
+      point_type: mapping
+      bay_no: 40
+      lat: 32.199450972
+      lon: 119.052182778
+      alt: 9.69
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 51
+      point_type: mapping
+      bay_no: 41
+      lat: 32.199412278
+      lon: 119.052131694
+      alt: 9.651
+      local_x: null
+      local_y: null
+      local_z: null
+    - id: 52
+      point_type: mapping
+      bay_no: 42
+      lat: 32.199373472
+      lon: 119.052080278
+      alt: 9.676
       local_x: null
       local_y: null
       local_z: null
