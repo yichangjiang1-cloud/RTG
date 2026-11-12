@@ -17,7 +17,14 @@ from app.utils.calibration_mode import (
     get_reference_vehicle_id,
 )
 from app.utils.constants import MQTT_TOPIC_CONTROL
-from app.utils.yard_geometry import en_meters, resolve_y_axis, spacing_violation, to_yard_xy
+from app.utils.yard_geometry import (
+    en_meters,
+    is_electrical_bay,
+    normalize_bay_side,
+    resolve_y_axis,
+    spacing_violation,
+    to_yard_xy,
+)
 from app.utils.logger import get_logger
 
 RTK_VEHICLE_ID = "RTK_HANDHELD"
@@ -72,13 +79,25 @@ def _parse_bay_no(bay_id: str) -> int | None:
     return None
 
 
-def _rtk_bay_numbers(db: Session, yard_id: str) -> set[int]:
-    rows = db.query(SurveyPoint.bay_no).filter(
+def _mapping_points(db: Session, yard_id: str) -> list[SurveyPoint]:
+    return db.query(SurveyPoint).filter(
         SurveyPoint.yard_id == yard_id,
         SurveyPoint.point_type == "mapping",
         SurveyPoint.bay_no.isnot(None),
     ).all()
-    return {r[0] for r in rows}
+
+
+def _points_on_side(points: list[SurveyPoint], side: str) -> list[SurveyPoint]:
+    want = normalize_bay_side(side)
+    return [p for p in points if normalize_bay_side(p.bay_side) == want]
+
+
+def _rtk_bay_numbers(db: Session, yard_id: str) -> set[int]:
+    """校准要覆盖的贝位号，以电气侧为准。两侧同号只算一个贝位。"""
+    return {
+        int(p.bay_no)
+        for p in _points_on_side(_mapping_points(db, yard_id), "elec")
+    }
 
 
 def _required_calibration_bays(db: Session, vehicle_id: str, yard_id: str) -> tuple[int, int]:
@@ -101,37 +120,102 @@ def _required_calibration_bays(db: Session, vehicle_id: str, yard_id: str) -> tu
     return rtk_count, rtk_count
 
 
-def _reject_close_bays(db: Session, yard_id: str) -> None:
-    """相邻贝位沿拟合 Y 的间距必须不小于 2 倍半宽。"""
-    yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
-    if yard is None:
-        return
-    half = float(yard.bay_half_width_m if yard.bay_half_width_m is not None else 0.3)
-    points = db.query(SurveyPoint).filter(
-        SurveyPoint.yard_id == yard_id,
-        SurveyPoint.point_type == "mapping",
-        SurveyPoint.bay_no.isnot(None),
-    ).all()
-    en_pts = []
+def _en_of(points: list[SurveyPoint], origin_lat: float, origin_lon: float):
+    out = []
     for p in points:
-        east, north = en_meters(p.lat, p.lon, yard.origin_lat, yard.origin_lon)
-        en_pts.append((int(p.bay_no), east, north))
+        east, north = en_meters(p.lat, p.lon, origin_lat, origin_lon)
+        out.append((int(p.bay_no), east, north))
+    return out
+
+
+def _yard_axis(yard: Yard, elec_pts, diesel_pts):
     axis = resolve_y_axis(
-        en_pts,
+        elec_pts,
         yard.y_axis_mode,
         yard.y_axis_points,
         yard.origin_lat,
         yard.origin_lon,
     )
+    if axis is None and diesel_pts:
+        axis = resolve_y_axis(
+            diesel_pts, "fit", None, yard.origin_lat, yard.origin_lon,
+        )
+    return axis
+
+
+def _reject_close_bays(db: Session, yard_id: str) -> None:
+    """每一侧各自检查相邻贝位沿 +Y 的间距。两侧不会混在一次比较里。"""
+    yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
+    if yard is None:
+        return
+    half = float(yard.bay_half_width_m if yard.bay_half_width_m is not None else 0.3)
+    rows = _mapping_points(db, yard_id)
+    elec = _en_of(_points_on_side(rows, "elec"), yard.origin_lat, yard.origin_lon)
+    diesel = _en_of(_points_on_side(rows, "diesel"), yard.origin_lat, yard.origin_lon)
+    axis = _yard_axis(yard, elec, diesel)
     if axis is None:
         return
-    bay_ys = [
-        (bay, to_yard_xy(east, north, axis[0], axis[1])[1])
-        for bay, east, north in en_pts
-    ]
-    message = spacing_violation(bay_ys, half)
-    if message:
-        raise HTTPException(status_code=400, detail=message)
+    for label, group in (("电气侧", elec), ("动力侧", diesel)):
+        bay_ys = [
+            (bay, to_yard_xy(east, north, axis[0], axis[1])[1])
+            for bay, east, north in group
+        ]
+        message = spacing_violation(bay_ys, half)
+        if message:
+            raise HTTPException(status_code=400, detail=f"{label}{message}")
+
+
+def _pair_warnings(db: Session, yard_id: str) -> list[str]:
+    """两侧贝位号应一一对应，同一号沿贝位方向不能差太远。"""
+    yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
+    if yard is None:
+        return []
+    rows = _mapping_points(db, yard_id)
+    elec_rows = _points_on_side(rows, "elec")
+    diesel_rows = _points_on_side(rows, "diesel")
+    if not diesel_rows:
+        return []
+    elec_nos = {int(p.bay_no) for p in elec_rows}
+    diesel_nos = {int(p.bay_no) for p in diesel_rows}
+    warnings: list[str] = []
+
+    def _preview(nums: set[int]) -> str:
+        ordered = sorted(nums)
+        text = "、".join(str(n) for n in ordered[:8])
+        if len(ordered) > 8:
+            text += f" 等 {len(ordered)} 个"
+        return text
+
+    only_diesel = diesel_nos - elec_nos
+    only_elec = elec_nos - diesel_nos
+    if only_diesel:
+        warnings.append(f"动力侧贝位 {_preview(only_diesel)} 在电气侧还没有对应点")
+    if only_elec:
+        warnings.append(f"电气侧贝位 {_preview(only_elec)} 还没有动力侧对应点")
+
+    elec_en = _en_of(elec_rows, yard.origin_lat, yard.origin_lon)
+    diesel_en = _en_of(diesel_rows, yard.origin_lat, yard.origin_lon)
+    axis = _yard_axis(yard, elec_en, diesel_en)
+    if axis is None:
+        return warnings
+    half = float(yard.bay_half_width_m if yard.bay_half_width_m is not None else 0.3)
+    limit = max(2.0, 4.0 * half)
+    elec_y = {
+        bay: to_yard_xy(east, north, axis[0], axis[1])[1]
+        for bay, east, north in elec_en
+    }
+    far = []
+    for bay, east, north in diesel_en:
+        if bay not in elec_y:
+            continue
+        dy = abs(to_yard_xy(east, north, axis[0], axis[1])[1] - elec_y[bay])
+        if dy > limit:
+            far.append(bay)
+    if far:
+        warnings.append(
+            f"贝位 {_preview(set(far))} 两侧沿贝位方向相差超过 {limit:.1f} m，请核对是不是同一个号"
+        )
+    return warnings
 
 
 def _mark_yard_rtk_ready(db: Session, yard_id: str) -> None:
@@ -147,22 +231,29 @@ def _mark_yard_rtk_ready(db: Session, yard_id: str) -> None:
 
 
 def _upsert_mapping_point(db: Session, req: SurveyConfirmRequest, bay_no: int | None):
+    side = normalize_bay_side(req.bay_side)
     existing = None
     if bay_no is not None:
-        existing = db.query(SurveyPoint).filter(
+        candidates = db.query(SurveyPoint).filter(
             SurveyPoint.yard_id == req.yard_id,
             SurveyPoint.point_type == "mapping",
             SurveyPoint.bay_no == bay_no,
-        ).first()
+        ).all()
+        existing = next(
+            (p for p in candidates if normalize_bay_side(p.bay_side) == side),
+            None,
+        )
     if existing:
         existing.lat = req.lat
         existing.lon = req.lon
         existing.alt = req.alt
+        existing.bay_side = side
         return existing
     sp = SurveyPoint(
         yard_id=req.yard_id,
         point_type="mapping",
         bay_no=bay_no,
+        bay_side=side,
         lat=req.lat,
         lon=req.lon,
         alt=req.alt,
@@ -177,15 +268,21 @@ def _upsert_calibration_transform(
     if bay_no is None:
         raise HTTPException(status_code=400, detail="无法解析贝位编号")
 
-    rtk = db.query(SurveyPoint).filter(
-        SurveyPoint.yard_id == req.yard_id,
-        SurveyPoint.point_type == "mapping",
-        SurveyPoint.bay_no == bay_no,
-    ).first()
+    rtk = next(
+        (
+            p for p in db.query(SurveyPoint).filter(
+                SurveyPoint.yard_id == req.yard_id,
+                SurveyPoint.point_type == "mapping",
+                SurveyPoint.bay_no == bay_no,
+            ).all()
+            if is_electrical_bay(p)
+        ),
+        None,
+    )
     if not rtk:
         raise HTTPException(
             status_code=400,
-            detail=f"贝位 {req.bay_id} 尚无 RTK 真值，请先完成 RTK 建图",
+            detail=f"贝位 {req.bay_id} 尚无电气侧 RTK 真值，请先完成电气侧建图",
         )
 
     cal_mode = resolve_calibration_mode(db, req.vehicle_id, req.yard_id)
@@ -274,6 +371,7 @@ async def confirm_survey_point(
             survey_point = _upsert_mapping_point(db, req, bay_no)
             _reject_close_bays(db, req.yard_id)
             _mark_yard_rtk_ready(db, req.yard_id)
+            warnings = _pair_warnings(db, req.yard_id)
             db.commit()
             rtk_count = db.query(SurveyPoint).filter(
                 SurveyPoint.yard_id == req.yard_id,
@@ -288,6 +386,8 @@ async def confirm_survey_point(
                     "yard_id": req.yard_id,
                     "bay_id": req.bay_id,
                     "bay_no": bay_no,
+                    "bay_side": normalize_bay_side(req.bay_side),
+                    "warnings": warnings,
                     "survey_id": survey_point.id,
                     "rtk_point_count": rtk_count,
                     "mapped": bool(yard and yard.mapped),
@@ -535,25 +635,38 @@ async def finalize_survey(
 @router.delete("/rtk_points", response_model=ApiResponse)
 async def clear_rtk_points(
     yard_id: str,
+    bay_side: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """清空场地的 RTK 真值（mapping 点），用于重新打点"""
+    """清空 RTK 真值。bay_side=elec 或 diesel 只清一侧；不传则两侧都清。"""
     try:
-        deleted = db.query(SurveyPoint).filter(
+        rows = db.query(SurveyPoint).filter(
             SurveyPoint.yard_id == yard_id,
             SurveyPoint.point_type == "mapping",
-        ).delete(synchronize_session=False)
+        ).all()
+        side = normalize_bay_side(bay_side) if bay_side else None
+        deleted = 0
+        for point in rows:
+            if side is not None and normalize_bay_side(point.bay_side) != side:
+                continue
+            db.delete(point)
+            deleted += 1
 
+        db.flush()
+        remaining = db.query(SurveyPoint).filter(
+            SurveyPoint.yard_id == yard_id,
+            SurveyPoint.point_type == "mapping",
+        ).count()
         yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
         if yard:
-            yard.mapped = False
+            yard.mapped = remaining > 0
 
         db.commit()
-        logger.info(f"清空 RTK 真值: yard={yard_id}, deleted={deleted}")
+        logger.info(f"清空 RTK 真值: yard={yard_id}, side={side or 'all'}, deleted={deleted}")
         return ApiResponse(
             code=200,
             message=f"已清空 {deleted} 个 RTK 真值点",
-            data={"yard_id": yard_id, "deleted": deleted},
+            data={"yard_id": yard_id, "deleted": deleted, "bay_side": side or "all"},
         )
     except Exception as e:
         db.rollback()
@@ -629,7 +742,9 @@ async def get_survey_history(
             query = query.filter(SurveyPoint.point_type == point_type)
 
         points = query.order_by(
-            SurveyPoint.bay_no.asc(), SurveyPoint.created_at.asc()
+            SurveyPoint.bay_side.asc(),
+            SurveyPoint.bay_no.asc(),
+            SurveyPoint.created_at.asc(),
         ).all()
 
         return ApiResponse(
@@ -640,6 +755,7 @@ async def get_survey_history(
                     "id": p.id,
                     "point_type": p.point_type,
                     "bay_no": p.bay_no,
+                    "bay_side": normalize_bay_side(p.bay_side),
                     "bay_id": f"Bay_{p.bay_no:02d}" if p.bay_no is not None else None,
                     "lat": p.lat,
                     "lon": p.lon,
@@ -677,29 +793,45 @@ async def batch_import_survey_points(
         if req.mode != "mapping":
             raise HTTPException(status_code=400, detail="批量导入仅支持 RTK 真值 (mode=mapping)")
 
+        side = normalize_bay_side(req.bay_side)
+        seen: dict[int, int] = {}
         for p in req.points:
             bay_no = _parse_bay_no(p.bay_id)
+            if bay_no is not None:
+                seen[bay_no] = seen.get(bay_no, 0) + 1
             fake_req = SurveyConfirmRequest(
                 vehicle_id=RTK_VEHICLE_ID,
                 yard_id=req.yard_id,
                 bay_id=p.bay_id,
+                bay_side=side,
                 mode="mapping",
                 lat=p.lat,
                 lon=p.lon,
                 alt=p.alt,
             )
             _upsert_mapping_point(db, fake_req, bay_no)
-            created.append({"bay_id": p.bay_id, "bay_no": bay_no})
+            created.append({"bay_id": p.bay_id, "bay_no": bay_no, "bay_side": side})
 
         _reject_close_bays(db, req.yard_id)
         _mark_yard_rtk_ready(db, req.yard_id)
+        warnings = _pair_warnings(db, req.yard_id)
+        repeated = sorted(n for n, count in seen.items() if count > 1)
+        if repeated:
+            warnings.insert(0, f"贝位 {'、'.join(str(n) for n in repeated[:8])} 在本次文件里出现多次，同一侧保留最后一条")
         db.commit()
-        logger.info(f"批量导入完成: {len(created)} 条记录")
+        logger.info(f"批量导入完成: {len(created)} 条记录 side={side}")
 
+        side_name = "电气侧" if side == "elec" else "动力侧"
         return ApiResponse(
             code=200,
-            message=f"成功导入 {len(created)} 个贝位坐标",
-            data={"yard_id": req.yard_id, "count": len(created), "points": created}
+            message=f"成功导入 {len(created)} 个{side_name}贝位坐标",
+            data={
+                "yard_id": req.yard_id,
+                "bay_side": side,
+                "count": len(created),
+                "points": created,
+                "warnings": warnings,
+            },
         )
     except HTTPException:
         raise

@@ -4,36 +4,15 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="问题一堆">
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="修正一堆">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/vehicle_params.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/vehicle_params.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/system.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/system.yaml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/config/yard_config.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/yard_config.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/fronted/src/components/Dashboard.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Dashboard.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/fronted/src/components/Mapping.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Mapping.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/fronted/src/components/Settings.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Settings.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/fronted/src/components/VehicleConfig.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/VehicleConfig.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/fronted/src/context/AppContext.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/context/AppContext.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/fronted/src/hooks/useWebSocket.ts" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/hooks/useWebSocket.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/fronted/src/types/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/types/index.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/server/app/api/routers/survey.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/api/routers/survey.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/server/app/api/routers/yard.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/api/routers/yard.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/server/app/database.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/database.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/server/app/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/models.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/server/app/utils/antenna_body_calibration.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/utils/antenna_body_calibration.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/server/app/utils/l_arm_calibration.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/utils/l_arm_calibration.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/server/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/server/docker-compose.yml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/bridge/telemetry.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/telemetry.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/fusion/antenna_body_calibration.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/fusion/antenna_body_calibration.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/bridge/bridge_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/bridge_node.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/bridge/plc_protocol_v1.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/plc_protocol_v1.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/models/positioning.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/positioning.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/solver/attitude.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/attitude.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/solver/coordinate_transform.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/coordinate_transform.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/solver/solver_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/solver_node.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/solver/yard_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/yard_manager.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/utils/vehicle_params_backup.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/vehicle_params_backup.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/utils/yard_backup.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/yard_backup.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/test_antenna_body_calibration.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_antenna_body_calibration.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/test_gantry_attitude.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_gantry_attitude.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/test_protocol.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_protocol.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tools/sim_plc_server.py" beforeDir="false" afterPath="$PROJECT_DIR$/tools/sim_plc_server.py" afterDir="false" />
     </list>
@@ -271,7 +250,15 @@
       <option name="project" value="LOCAL" />
       <updated>1793954983260</updated>
     </task>
-    <option name="localTasksCounter" value="8" />
+    <task id="LOCAL-00008" summary="修正一堆">
+      <option name="closed" value="true" />
+      <created>1794411119768</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1794411119768</updated>
+    </task>
+    <option name="localTasksCounter" value="9" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -299,7 +286,8 @@
     <MESSAGE value="差分接入、evk设备连接等" />
     <MESSAGE value="同时兼容R61、MC10、UB482等接收机设备" />
     <MESSAGE value="问题一堆" />
-    <option name="LAST_COMMIT_MESSAGE" value="问题一堆" />
+    <MESSAGE value="修正一堆" />
+    <option name="LAST_COMMIT_MESSAGE" value="修正一堆" />
   </component>
   <component name="github-copilot-workspace">
     <instructionFileLocations>

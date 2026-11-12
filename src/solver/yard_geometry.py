@@ -7,6 +7,21 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 Point = Tuple[float, float]
 BayEN = Tuple[int, float, float]  # bay_no, east_m, north_m
 
+_DIESEL_SIDE = {"diesel", "dsl", "power", "动力", "动力侧", "动力房"}
+
+
+def is_electrical_bay(point) -> bool:
+    """未标侧别的旧点算电气侧。动力侧不参与 +Y 和当前贝位号。"""
+    if isinstance(point, dict):
+        raw = point.get("bay_side", point.get("side", ""))
+    else:
+        raw = getattr(point, "bay_side", "")
+    return str(raw or "").strip().lower() not in _DIESEL_SIDE
+
+
+def electrical_bays(points):
+    return [p for p in (points or []) if is_electrical_bay(p)]
+
 # 与 coordinate_transform 同一套 WGS84，避免拟合 +Y 和定位解算各用一套米制
 _A = 6378137.0
 _F = 1 / 298.257223563

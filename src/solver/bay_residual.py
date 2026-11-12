@@ -8,6 +8,8 @@ import math
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
+from src.solver.yard_geometry import is_electrical_bay
+
 
 @dataclass
 class BayAnchor:
@@ -39,6 +41,8 @@ def build_bay_positions_from_survey_points(
     positions: List[BayPosition] = []
     spacing = max(float(bay_spacing), 0.1)
     for pt in survey_points:
+        if not is_electrical_bay(pt):
+            continue
         bay_no = pt.get("bay_no")
         if bay_no is None:
             continue

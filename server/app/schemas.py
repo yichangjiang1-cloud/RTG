@@ -169,6 +169,7 @@ class SurveyConfirmRequest(BaseModel):
     vehicle_id: str
     yard_id: str
     bay_id: str
+    bay_side: str = "elec"  # mapping：elec 电气侧 / diesel 动力侧
     mode: str = "mapping"  # 'mapping' (RTK 真值) or 'calibration' (车载对比)
     lat: float = 0.0
     lon: float = 0.0
@@ -186,6 +187,7 @@ class SurveyBatchPoint(BaseModel):
 class SurveyBatchImportRequest(BaseModel):
     yard_id: str
     mode: str = "mapping"
+    bay_side: str = "elec"  # 整批 CSV 属于哪一侧，文件格式不变
     points: List[SurveyBatchPoint]
 
 class SurveyFinalizeRequest(BaseModel):

@@ -146,6 +146,12 @@ export interface RealtimeData {
   trolley: TrolleyData;
   /** 四天线实时坐标（左列 a1/a2，右列 b1/b2） */
   gantry_antennas?: Record<string, GantryAntennaPoint>;
+  /** 小车两根天线。中控重启后才有。 */
+  trolley_antennas?: {
+    primary?: GantryAntennaPoint;
+    secondary?: GantryAntennaPoint;
+  };
+  yard_id?: string;
 }
 
 export interface ReceiverStatus {
@@ -322,6 +328,7 @@ export interface SurveyPoint {
   id: string;
   bay_id: string;
   bay_no?: number;
+  bay_side?: 'elec' | 'diesel';
   yard_id: string;
   lat: number;
   lon: number;
@@ -372,4 +379,4 @@ export interface ApiResponse<T> {
   message?: string;
 }
 
-export type TabId = 'dashboard' | 'settings' | 'config' | 'mapping' | 'calibration' | 'manual';
+export type TabId = 'dashboard' | 'live' | 'settings' | 'config' | 'mapping' | 'calibration' | 'manual';

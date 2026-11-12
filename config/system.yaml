@@ -65,7 +65,7 @@ plc:
   port: 5000
   reconnect_interval_s: 3
   yard_in_out: 1
-vehicle_id: RTG-001
+vehicle_id: RTG-002
 yard_backup:
   path: config/yard_config.yaml
 yard_map:

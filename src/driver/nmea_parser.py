@@ -64,10 +64,17 @@ def verify_checksum(sentence: str) -> bool:
     if "*" not in sentence:
         return False
     data, checksum = sentence.strip().lstrip("$").rsplit("*", 1)
+    checksum = checksum.strip()
+    if len(checksum) < 2:
+        return False
+    try:
+        given = int(checksum[:2], 16)
+    except ValueError:
+        return False
     calc = 0
     for ch in data:
         calc ^= ord(ch)
-    return calc == int(checksum[:2], 16)
+    return calc == given
 
 
 def _lat_lon_to_decimal(value: str, direction: str) -> float:

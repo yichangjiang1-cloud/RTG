@@ -168,6 +168,20 @@ class YardTransform:
         ], dtype=float)
         self.axis_ready = True
 
+    @property
+    def y_axis_east(self) -> float:
+        """+Y 在东向的分量。坐标轴未拟合时为 0。"""
+        if not self.axis_ready:
+            return 0.0
+        return float(self._R2d[1, 0])
+
+    @property
+    def y_axis_north(self) -> float:
+        """+Y 在北向的分量。坐标轴未拟合时为 0。"""
+        if not self.axis_ready:
+            return 0.0
+        return float(self._R2d[1, 1])
+
     def reset_axis(self) -> None:
         self._R2d = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=float)
         self.axis_ready = False

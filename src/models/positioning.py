@@ -180,6 +180,8 @@ class PositionResult:
     yard_origin_lat: float = 0.0      # 堆场原点（六天线 XYZ 基准站，与 yard_config 一致）
     yard_origin_lon: float = 0.0
     yard_origin_alt: float = 0.0
+    yard_axis_east: float = 0.0       # 堆场 +Y 的东向分量；未拟合时为 0
+    yard_axis_north: float = 0.0      # 堆场 +Y 的北向分量；未拟合时为 0
     bay_spacing_m: float = 6.0
     current_bay_no: int = 0           # PLC 字段 10，由 RTK 贝位表「下一贝」规则得出
     fix_quality_left: int = 0         # 左列接收机主天线

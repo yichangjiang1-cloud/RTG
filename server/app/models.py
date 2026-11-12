@@ -52,6 +52,7 @@ class SurveyPoint(Base):
     yard_id = Column(String(50), index=True, nullable=False)
     point_type = Column(String(20), nullable=False)  # 'origin', 'bay', 'magnet'
     bay_no = Column(Integer, nullable=True)
+    bay_side = Column(String(10), nullable=False, default="elec")  # elec | diesel
     lat = Column(Float, nullable=False)
     lon = Column(Float, nullable=False)
     alt = Column(Float, nullable=False)
@@ -63,6 +64,11 @@ class SurveyPoint(Base):
 
     __table_args__ = (
         Index('idx_yard_type', 'yard_id', 'point_type'),
+        Index(
+            'idx_survey_bay_side',
+            'yard_id', 'point_type', 'bay_no', 'bay_side',
+            unique=True,
+        ),
     )
 
 class VehicleConfig(Base):

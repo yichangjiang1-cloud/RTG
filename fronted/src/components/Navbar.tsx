@@ -15,6 +15,7 @@ interface NavbarProps {
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'dashboard',   label: '仪表盘' },
+  { id: 'live',        label: '现场' },
   { id: 'settings',    label: '工作配置' },
   { id: 'config',      label: '参数配置' },
   { id: 'mapping',     label: '场地建图' },

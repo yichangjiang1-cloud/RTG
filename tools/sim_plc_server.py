@@ -19,8 +19,9 @@
   # 3) 重启中控
 
   python tools/sim_plc_server.py --host 0.0.0.0 --port 5000
-  python tools/sim_plc_server.py --reply-hz 10          # 默认按协议表打印全部字段
-  python tools/sim_plc_server.py --reply-hz 10 --quiet  # 只打一行摘要
+  python tools/sim_plc_server.py                        # 收到一帧上行就回一帧
+  python tools/sim_plc_server.py --reply-hz 10          # 改为自己按 10 Hz 发
+  python tools/sim_plc_server.py --quiet                # 只打一行摘要
 """
 
 from __future__ import annotations
@@ -305,11 +306,11 @@ def format_uplink_full(f: dict) -> str:
     xyz_no = 24
     for ant in antennas:
         lines.append(f"  {xyz_no:<2} {ant['name']}天线X = {_fmt_signed_u32(ant['x_mm'])}")
-        lines.append("     含义：以基准站为原点坐标，单位 mm")
+        lines.append("     含义：堆场坐标 X，朝贝位增大方向看时右侧为正，原点为堆场原点，单位 mm")
         lines.append(f"  {xyz_no + 1:<2} {ant['name']}天线Y = {_fmt_signed_u32(ant['y_mm'])}")
-        lines.append("     含义：以基准站为原点坐标，单位 mm")
+        lines.append("     含义：堆场坐标 Y，沿贝位号增大方向为正，原点为堆场原点，单位 mm")
         lines.append(f"  {xyz_no + 2:<2} {ant['name']}天线Z = {ant['z_mm']} mm")
-        lines.append("     含义：以基准站为原点坐标，单位 mm")
+        lines.append("     含义：相对堆场原点的高度，单位 mm")
         xyz_no += 3
     lines.append("  42 预留（无符短整型 × 20）")
     lines.append("     含义：预留")
@@ -332,8 +333,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--reply-hz",
         type=float,
-        default=10.0,
-        help="PLC→GNSS 下行发送频率（Hz），0=仅在收到上行后回一帧",
+        default=0.0,
+        help="默认 0：收到一帧上行就回一帧；大于 0 则按该频率自己发",
     )
     p.add_argument("--yard", default="A01", help="下行场号")
     p.add_argument("--rtg", default="RTG-001", help="下行 RTG ID")
@@ -405,6 +406,14 @@ class PlcSession:
             self.uplink_count += 1
             n = self.uplink_count
 
+        # 先回包，再打印。控制台输出和 --quiet 的提前返回都不能把回包丢掉。
+        if self.args.reply_hz <= 0:
+            try:
+                self.send_downlink()
+            except OSError as e:
+                print(f"下行发送失败: {e}", flush=True)
+                self.stop.set()
+
         now = time.monotonic()
         if self.args.quiet:
             if now - self._last_print < 1.0:
@@ -414,14 +423,6 @@ class PlcSession:
         else:
             print(f"[{self.addr[0]}] ↑GNSS #{n}", flush=True)
             print(format_uplink_full(parsed), flush=True)
-
-        # reply-hz=0：每收到一帧立刻回一帧
-        if self.args.reply_hz <= 0:
-            try:
-                self.send_downlink()
-            except OSError as e:
-                print(f"下行发送失败: {e}", flush=True)
-                self.stop.set()
 
     def recv_loop(self) -> None:
         self.sock.settimeout(0.2)
@@ -491,9 +492,13 @@ def main() -> int:
 
     srv.listen(1)
     srv.settimeout(1.0)
+    if args.reply_hz <= 0:
+        reply_desc = "收到上行后立即回一帧"
+    else:
+        reply_desc = f"按 {args.reply_hz} Hz 自己发"
     print(
         f"模拟 PLC 已启动（服务端）监听 {args.host}:{args.port}\n"
-        f"  下行 {args.reply_hz} Hz | 场号={args.yard} RTG={args.rtg}\n"
+        f"  下行：{reply_desc} | 场号={args.yard} RTG={args.rtg}\n"
         f"  收到的 GNSS→PLC 默认按协议表逐字段打印（加 --quiet 只打摘要）\n"
         f"  请将 system.yaml → plc.enabled=true, plc.host=本机IP, plc.port={args.port}\n"
         f"  然后重启中控。Ctrl+C 退出。",

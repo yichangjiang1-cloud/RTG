@@ -12,6 +12,7 @@ from app.schemas import ApiResponse
 from app.utils.logger import get_logger
 from app.utils.calibration_mode import resolve_calibration_mode
 from app.utils.yard_id import validate_yard_id
+from app.utils.yard_geometry import is_electrical_bay, normalize_bay_side
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/yard", tags=["yard"])
@@ -162,6 +163,7 @@ async def set_yard_axis(req: YardAxisRequest, db: Session = Depends(get_db)):
                         SurveyPoint.point_type == "mapping",
                         SurveyPoint.bay_no.isnot(None),
                     ).all()
+                    if is_electrical_bay(p)
                 }
                 missing = [n for n in (int(req.from_bay), int(req.to_bay)) if n not in have]
                 if missing:
@@ -178,6 +180,8 @@ async def set_yard_axis(req: YardAxisRequest, db: Session = Depends(get_db)):
                 SurveyPoint.point_type == "mapping",
                 SurveyPoint.bay_no.isnot(None),
             ).all():
+                if not is_electrical_bay(p):
+                    continue
                 east, north = en_meters(p.lat, p.lon, yard.origin_lat, yard.origin_lon)
                 en_pts.append((int(p.bay_no), east, north))
             if resolve_y_axis(en_pts, mode, spec, yard.origin_lat, yard.origin_lon) is None:
@@ -281,6 +285,7 @@ async def get_yard_map(
                         "id": p.id,
                         "point_type": p.point_type,
                         "bay_no": p.bay_no,
+                        "bay_side": normalize_bay_side(p.bay_side),
                         "lat": p.lat, "lon": p.lon, "alt": p.alt,
                         "local_x": p.local_x, "local_y": p.local_y, "local_z": p.local_z,
                     }

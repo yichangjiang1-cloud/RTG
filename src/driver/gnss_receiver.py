@@ -623,7 +623,16 @@ class GnssReceiver(threading.Thread):
             text = data
 
         sentences = list(_iter_nmea_lines(text))
-        parsed = [parse_sentence(s) for s in sentences]
+        parsed = []
+        for sentence in sentences:
+            try:
+                parsed.append(parse_sentence(sentence))
+            except Exception:
+                logger.debug(
+                    "[%s] 语句解析失败，已丢弃: %s",
+                    self.receiver_id,
+                    sentence[:80],
+                )
         parsed = [r for r in parsed if r is not None]
         gga_total = sum(1 for r in parsed if r.get("type") == "GGA")
 

@@ -175,6 +175,10 @@ def position_result_to_realtime(result: PositionResult) -> dict:
         },
         "status": _gnss_status(result.gnss_fix_quality, result.imu_coasting_active),
         "gantry_antennas": result.gantry_antennas or {},
+        "trolley_antennas": {
+            "primary": result.trolley_antenna_primary or {},
+            "secondary": result.trolley_antenna_secondary or {},
+        },
         "receivers": _build_receivers(result),
         "gantry": {
             "receiver_left": {

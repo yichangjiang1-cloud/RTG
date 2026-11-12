@@ -1,6 +1,6 @@
 meta:
-  synced_at: '2026-11-11T23:30:01+08:00'
-  vehicle_id: RTG-001
+  synced_at: '2026-11-12T15:12:35+08:00'
+  vehicle_id: RTG-002
   source: api
 yards:
 - yard_id: A01
@@ -44,7 +44,7 @@ yards:
   y_axis_mode: fit
   y_axis_points: null
   mapped: true
-  rtk_point_count: 42
+  rtk_point_count: 84
 yard_data:
   A01:
     has_rtk_map: true
@@ -53,6 +53,7 @@ yard_data:
     - id: 1
       point_type: mapping
       bay_no: 1
+      bay_side: elec
       lat: 30.5384792173
       lon: 114.3491262684
       alt: 9.8771
@@ -62,6 +63,7 @@ yard_data:
     - id: 2
       point_type: mapping
       bay_no: 2
+      bay_side: elec
       lat: 30.5389283729
       lon: 114.3491262684
       alt: 9.8771
@@ -71,6 +73,7 @@ yard_data:
     - id: 3
       point_type: mapping
       bay_no: 3
+      bay_side: elec
       lat: 30.5393775285
       lon: 114.3491262684
       alt: 9.8771
@@ -80,6 +83,7 @@ yard_data:
     - id: 4
       point_type: mapping
       bay_no: 4
+      bay_side: elec
       lat: 30.5398266841
       lon: 114.3491262684
       alt: 9.8771
@@ -89,6 +93,7 @@ yard_data:
     - id: 5
       point_type: mapping
       bay_no: 5
+      bay_side: elec
       lat: 30.5402758396
       lon: 114.3491262684
       alt: 9.8771
@@ -98,6 +103,7 @@ yard_data:
     - id: 6
       point_type: mapping
       bay_no: 6
+      bay_side: elec
       lat: 30.5407249952
       lon: 114.3491262684
       alt: 9.8771
@@ -107,6 +113,7 @@ yard_data:
     - id: 7
       point_type: mapping
       bay_no: 7
+      bay_side: elec
       lat: 30.5411741508
       lon: 114.3491262684
       alt: 9.8771
@@ -116,6 +123,7 @@ yard_data:
     - id: 8
       point_type: mapping
       bay_no: 8
+      bay_side: elec
       lat: 30.5416233064
       lon: 114.3491262684
       alt: 9.8771
@@ -125,6 +133,7 @@ yard_data:
     - id: 9
       point_type: mapping
       bay_no: 9
+      bay_side: elec
       lat: 30.542072462
       lon: 114.3491262684
       alt: 9.8771
@@ -134,6 +143,7 @@ yard_data:
     - id: 10
       point_type: mapping
       bay_no: 10
+      bay_side: elec
       lat: 30.5425216176
       lon: 114.3491262684
       alt: 9.8771
@@ -148,380 +158,842 @@ yard_data:
     source_transform_list: []
   B01:
     has_rtk_map: true
-    rtk_point_count: 42
+    rtk_point_count: 84
     survey_points:
+    - id: 53
+      point_type: mapping
+      bay_no: 1
+      bay_side: diesel
+      lat: 32.2011255
+      lon: 119.054044611
+      alt: 9.739
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 11
       point_type: mapping
       bay_no: 1
+      bay_side: elec
       lat: 32.200977111
       lon: 119.05419975
       alt: 9.655
       local_x: null
       local_y: null
       local_z: null
+    - id: 54
+      point_type: mapping
+      bay_no: 2
+      bay_side: diesel
+      lat: 32.201086639
+      lon: 119.0539935
+      alt: 9.799
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 12
       point_type: mapping
       bay_no: 2
+      bay_side: elec
       lat: 32.200938306
       lon: 119.054148833
       alt: 9.723
       local_x: null
       local_y: null
       local_z: null
+    - id: 55
+      point_type: mapping
+      bay_no: 3
+      bay_side: diesel
+      lat: 32.20104775
+      lon: 119.053942222
+      alt: 9.806
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 13
       point_type: mapping
       bay_no: 3
+      bay_side: elec
       lat: 32.200899528
       lon: 119.054097722
       alt: 9.74
       local_x: null
       local_y: null
       local_z: null
+    - id: 56
+      point_type: mapping
+      bay_no: 4
+      bay_side: diesel
+      lat: 32.201009167
+      lon: 119.053891083
+      alt: 9.828
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 14
       point_type: mapping
       bay_no: 4
+      bay_side: elec
       lat: 32.200860833
       lon: 119.054046444
       alt: 9.688
       local_x: null
       local_y: null
       local_z: null
+    - id: 57
+      point_type: mapping
+      bay_no: 5
+      bay_side: diesel
+      lat: 32.200954889
+      lon: 119.053819528
+      alt: 9.769
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 15
       point_type: mapping
       bay_no: 5
+      bay_side: elec
       lat: 32.200806361
       lon: 119.053974611
       alt: 9.624
       local_x: null
       local_y: null
       local_z: null
+    - id: 58
+      point_type: mapping
+      bay_no: 6
+      bay_side: diesel
+      lat: 32.200916333
+      lon: 119.053768528
+      alt: 9.751
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 16
       point_type: mapping
       bay_no: 6
+      bay_side: elec
       lat: 32.200767972
       lon: 119.053923194
       alt: 9.626
       local_x: null
       local_y: null
       local_z: null
+    - id: 59
+      point_type: mapping
+      bay_no: 7
+      bay_side: diesel
+      lat: 32.200877389
+      lon: 119.053717167
+      alt: 9.772
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 17
       point_type: mapping
       bay_no: 7
+      bay_side: elec
       lat: 32.200729306
       lon: 119.053872167
       alt: 9.624
       local_x: null
       local_y: null
       local_z: null
+    - id: 60
+      point_type: mapping
+      bay_no: 8
+      bay_side: diesel
+      lat: 32.200838722
+      lon: 119.053665889
+      alt: 9.795
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 18
       point_type: mapping
       bay_no: 8
+      bay_side: elec
       lat: 32.200690417
       lon: 119.053820833
       alt: 9.645
       local_x: null
       local_y: null
       local_z: null
+    - id: 61
+      point_type: mapping
+      bay_no: 9
+      bay_side: diesel
+      lat: 32.200799889
+      lon: 119.053614639
+      alt: 9.788
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 19
       point_type: mapping
       bay_no: 9
+      bay_side: elec
       lat: 32.200651667
       lon: 119.053769694
       alt: 9.659
       local_x: null
       local_y: null
       local_z: null
+    - id: 62
+      point_type: mapping
+      bay_no: 10
+      bay_side: diesel
+      lat: 32.200761306
+      lon: 119.053563472
+      alt: 9.81
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 20
       point_type: mapping
       bay_no: 10
+      bay_side: elec
       lat: 32.200613083
       lon: 119.053718361
       alt: 9.648
       local_x: null
       local_y: null
       local_z: null
+    - id: 63
+      point_type: mapping
+      bay_no: 11
+      bay_side: diesel
+      lat: 32.200722556
+      lon: 119.053512306
+      alt: 9.772
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 21
       point_type: mapping
       bay_no: 11
+      bay_side: elec
       lat: 32.200574278
       lon: 119.053667111
       alt: 9.637
       local_x: null
       local_y: null
       local_z: null
+    - id: 64
+      point_type: mapping
+      bay_no: 12
+      bay_side: diesel
+      lat: 32.200683833
+      lon: 119.053460972
+      alt: 9.789
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 22
       point_type: mapping
       bay_no: 12
+      bay_side: elec
       lat: 32.200535556
       lon: 119.05361575
       alt: 9.667
       local_x: null
       local_y: null
       local_z: null
+    - id: 65
+      point_type: mapping
+      bay_no: 13
+      bay_side: diesel
+      lat: 32.200645111
+      lon: 119.053409944
+      alt: 9.796
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 23
       point_type: mapping
       bay_no: 13
+      bay_side: elec
       lat: 32.200496889
       lon: 119.053564639
       alt: 9.656
       local_x: null
       local_y: null
       local_z: null
+    - id: 66
+      point_type: mapping
+      bay_no: 14
+      bay_side: diesel
+      lat: 32.20060625
+      lon: 119.053358333
+      alt: 9.805
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 24
       point_type: mapping
       bay_no: 14
+      bay_side: elec
       lat: 32.200458139
       lon: 119.05351375
       alt: 9.643
       local_x: null
       local_y: null
       local_z: null
+    - id: 67
+      point_type: mapping
+      bay_no: 15
+      bay_side: diesel
+      lat: 32.200567556
+      lon: 119.0533075
+      alt: 9.819
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 25
       point_type: mapping
       bay_no: 15
+      bay_side: elec
       lat: 32.200419306
       lon: 119.053462333
       alt: 9.657
       local_x: null
       local_y: null
       local_z: null
+    - id: 68
+      point_type: mapping
+      bay_no: 16
+      bay_side: diesel
+      lat: 32.20052875
+      lon: 119.053256139
+      alt: 9.803
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 26
       point_type: mapping
       bay_no: 16
+      bay_side: elec
       lat: 32.200380472
       lon: 119.053411389
       alt: 9.68
       local_x: null
       local_y: null
       local_z: null
+    - id: 69
+      point_type: mapping
+      bay_no: 17
+      bay_side: diesel
+      lat: 32.20049
+      lon: 119.053205028
+      alt: 9.81
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 27
       point_type: mapping
       bay_no: 17
+      bay_side: elec
       lat: 32.20034175
       lon: 119.053360167
       alt: 9.666
       local_x: null
       local_y: null
       local_z: null
+    - id: 70
+      point_type: mapping
+      bay_no: 18
+      bay_side: diesel
+      lat: 32.200451278
+      lon: 119.053154056
+      alt: 9.809
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 28
       point_type: mapping
       bay_no: 18
+      bay_side: elec
       lat: 32.200303083
       lon: 119.053308972
       alt: 9.664
       local_x: null
       local_y: null
       local_z: null
+    - id: 71
+      point_type: mapping
+      bay_no: 19
+      bay_side: diesel
+      lat: 32.200412472
+      lon: 119.053102861
+      alt: 9.835
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 29
       point_type: mapping
       bay_no: 19
+      bay_side: elec
       lat: 32.200264361
       lon: 119.053257694
       alt: 9.699
       local_x: null
       local_y: null
       local_z: null
+    - id: 72
+      point_type: mapping
+      bay_no: 20
+      bay_side: diesel
+      lat: 32.200373583
+      lon: 119.053051556
+      alt: 9.819
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 30
       point_type: mapping
       bay_no: 20
+      bay_side: elec
       lat: 32.200225528
       lon: 119.0532065
       alt: 9.703
       local_x: null
       local_y: null
       local_z: null
+    - id: 73
+      point_type: mapping
+      bay_no: 21
+      bay_side: diesel
+      lat: 32.200334944
+      lon: 119.053000556
+      alt: 9.813
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 31
       point_type: mapping
       bay_no: 21
+      bay_side: elec
       lat: 32.200186778
       lon: 119.053155333
       alt: 9.698
       local_x: null
       local_y: null
       local_z: null
+    - id: 74
+      point_type: mapping
+      bay_no: 22
+      bay_side: diesel
+      lat: 32.200296278
+      lon: 119.052949333
+      alt: 9.829
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 32
       point_type: mapping
       bay_no: 22
+      bay_side: elec
       lat: 32.200148028
       lon: 119.053103889
       alt: 9.708
       local_x: null
       local_y: null
       local_z: null
+    - id: 75
+      point_type: mapping
+      bay_no: 23
+      bay_side: diesel
+      lat: 32.200257417
+      lon: 119.052898139
+      alt: 9.808
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 33
       point_type: mapping
       bay_no: 23
+      bay_side: elec
       lat: 32.200109389
       lon: 119.053053
       alt: 9.687
       local_x: null
       local_y: null
       local_z: null
+    - id: 76
+      point_type: mapping
+      bay_no: 24
+      bay_side: diesel
+      lat: 32.200218667
+      lon: 119.052847
+      alt: 9.766
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 34
       point_type: mapping
       bay_no: 24
+      bay_side: elec
       lat: 32.200070694
       lon: 119.053001806
       alt: 9.66
       local_x: null
       local_y: null
       local_z: null
+    - id: 77
+      point_type: mapping
+      bay_no: 25
+      bay_side: diesel
+      lat: 32.200179944
+      lon: 119.052795528
+      alt: 9.832
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 35
       point_type: mapping
       bay_no: 25
+      bay_side: elec
       lat: 32.20003175
       lon: 119.052950583
       alt: 9.651
       local_x: null
       local_y: null
       local_z: null
+    - id: 78
+      point_type: mapping
+      bay_no: 26
+      bay_side: diesel
+      lat: 32.200141389
+      lon: 119.052744472
+      alt: 9.825
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 36
       point_type: mapping
       bay_no: 26
+      bay_side: elec
       lat: 32.199993028
       lon: 119.052899389
       alt: 9.672
       local_x: null
       local_y: null
       local_z: null
+    - id: 79
+      point_type: mapping
+      bay_no: 27
+      bay_side: diesel
+      lat: 32.200102583
+      lon: 119.05269325
+      alt: 9.814
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 37
       point_type: mapping
       bay_no: 27
+      bay_side: elec
       lat: 32.199954306
       lon: 119.052848417
       alt: 9.637
       local_x: null
       local_y: null
       local_z: null
+    - id: 80
+      point_type: mapping
+      bay_no: 28
+      bay_side: diesel
+      lat: 32.200063722
+      lon: 119.052642
+      alt: 9.822
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 38
       point_type: mapping
       bay_no: 28
+      bay_side: elec
       lat: 32.199915528
       lon: 119.0527975
       alt: 9.619
       local_x: null
       local_y: null
       local_z: null
+    - id: 81
+      point_type: mapping
+      bay_no: 29
+      bay_side: diesel
+      lat: 32.200025
+      lon: 119.05259075
+      alt: 9.842
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 39
       point_type: mapping
       bay_no: 29
+      bay_side: elec
       lat: 32.199876639
       lon: 119.052746028
       alt: 9.626
       local_x: null
       local_y: null
       local_z: null
+    - id: 82
+      point_type: mapping
+      bay_no: 30
+      bay_side: diesel
+      lat: 32.199986417
+      lon: 119.052539583
+      alt: 9.836
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 40
       point_type: mapping
       bay_no: 30
+      bay_side: elec
       lat: 32.199838139
       lon: 119.052694833
       alt: 9.647
       local_x: null
       local_y: null
       local_z: null
+    - id: 83
+      point_type: mapping
+      bay_no: 31
+      bay_side: diesel
+      lat: 32.199947667
+      lon: 119.052488417
+      alt: 9.835
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 41
       point_type: mapping
       bay_no: 31
+      bay_side: elec
       lat: 32.199799278
       lon: 119.052643889
       alt: 9.649
       local_x: null
       local_y: null
       local_z: null
+    - id: 84
+      point_type: mapping
+      bay_no: 32
+      bay_side: diesel
+      lat: 32.19990875
+      lon: 119.052437167
+      alt: 9.829
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 42
       point_type: mapping
       bay_no: 32
+      bay_side: elec
       lat: 32.199760556
       lon: 119.052592667
       alt: 9.652
       local_x: null
       local_y: null
       local_z: null
+    - id: 85
+      point_type: mapping
+      bay_no: 33
+      bay_side: diesel
+      lat: 32.19987025
+      lon: 119.052386056
+      alt: 9.833
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 43
       point_type: mapping
       bay_no: 33
+      bay_side: elec
       lat: 32.199721694
       lon: 119.052541417
       alt: 9.649
       local_x: null
       local_y: null
       local_z: null
+    - id: 86
+      point_type: mapping
+      bay_no: 34
+      bay_side: diesel
+      lat: 32.199831389
+      lon: 119.05233475
+      alt: 9.813
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 44
       point_type: mapping
       bay_no: 34
+      bay_side: elec
       lat: 32.199683083
       lon: 119.052490139
       alt: 9.641
       local_x: null
       local_y: null
       local_z: null
+    - id: 87
+      point_type: mapping
+      bay_no: 35
+      bay_side: diesel
+      lat: 32.199792667
+      lon: 119.052283528
+      alt: 9.807
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 45
       point_type: mapping
       bay_no: 35
+      bay_side: elec
       lat: 32.199644528
       lon: 119.052438833
       alt: 9.67
       local_x: null
       local_y: null
       local_z: null
+    - id: 88
+      point_type: mapping
+      bay_no: 36
+      bay_side: diesel
+      lat: 32.199753917
+      lon: 119.052232222
+      alt: 9.811
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 46
       point_type: mapping
       bay_no: 36
+      bay_side: elec
       lat: 32.199605861
       lon: 119.052387444
       alt: 9.689
       local_x: null
       local_y: null
       local_z: null
+    - id: 89
+      point_type: mapping
+      bay_no: 37
+      bay_side: diesel
+      lat: 32.199715278
+      lon: 119.052181333
+      alt: 9.812
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 47
       point_type: mapping
       bay_no: 37
+      bay_side: elec
       lat: 32.199567167
       lon: 119.052336583
       alt: 9.66
       local_x: null
       local_y: null
       local_z: null
+    - id: 90
+      point_type: mapping
+      bay_no: 38
+      bay_side: diesel
+      lat: 32.199676528
+      lon: 119.052129861
+      alt: 9.809
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 48
       point_type: mapping
       bay_no: 38
+      bay_side: elec
       lat: 32.199528361
       lon: 119.052285028
       alt: 9.673
       local_x: null
       local_y: null
       local_z: null
+    - id: 91
+      point_type: mapping
+      bay_no: 39
+      bay_side: diesel
+      lat: 32.199637806
+      lon: 119.05207875
+      alt: 9.827
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 49
       point_type: mapping
       bay_no: 39
+      bay_side: elec
       lat: 32.199489639
       lon: 119.052234028
       alt: 9.68
       local_x: null
       local_y: null
       local_z: null
+    - id: 92
+      point_type: mapping
+      bay_no: 40
+      bay_side: diesel
+      lat: 32.199599083
+      lon: 119.052027444
+      alt: 9.839
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 50
       point_type: mapping
       bay_no: 40
+      bay_side: elec
       lat: 32.199450972
       lon: 119.052182778
       alt: 9.69
       local_x: null
       local_y: null
       local_z: null
+    - id: 93
+      point_type: mapping
+      bay_no: 41
+      bay_side: diesel
+      lat: 32.199560194
+      lon: 119.051976361
+      alt: 9.822
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 51
       point_type: mapping
       bay_no: 41
+      bay_side: elec
       lat: 32.199412278
       lon: 119.052131694
       alt: 9.651
       local_x: null
       local_y: null
       local_z: null
+    - id: 94
+      point_type: mapping
+      bay_no: 42
+      bay_side: diesel
+      lat: 32.199521472
+      lon: 119.051924917
+      alt: 9.796
+      local_x: null
+      local_y: null
+      local_z: null
     - id: 52
       point_type: mapping
       bay_no: 42
+      bay_side: elec
       lat: 32.199373472
       lon: 119.052080278
       alt: 9.676

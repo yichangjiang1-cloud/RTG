@@ -2,8 +2,10 @@
 import unittest
 
 from src.solver.yard_geometry import (
+    electrical_bays,
     en_meters,
     fit_y_axis,
+    is_electrical_bay,
     lane_deviation_m,
     point_in_polygon,
     polygon_centroid,
@@ -101,6 +103,23 @@ class TestYardGeometry(unittest.TestCase):
         self.assertAlmostEqual(north, n, places=4)
         self.assertAlmostEqual(east, 0.0, places=3)
         self.assertGreater(north, 11.0)
+
+    def test_diesel_bays_do_not_tilt_the_electrical_axis(self):
+        self.assertTrue(is_electrical_bay({"bay_no": 1}))
+        self.assertTrue(is_electrical_bay({"bay_side": "elec"}))
+        self.assertFalse(is_electrical_bay({"bay_side": "diesel"}))
+        mixed = [
+            {"bay_no": 1, "bay_side": "elec", "east": 0.0},
+            {"bay_no": 2, "bay_side": "elec", "east": 50.0},
+            {"bay_no": 1, "bay_side": "diesel", "east": 20.0},
+            {"bay_no": 2, "bay_side": "diesel", "east": 70.0},
+        ]
+        elec = electrical_bays(mixed)
+        points = [(p["bay_no"], p["east"], 0.0) for p in elec]
+        ye, yn = fit_y_axis(points)
+        self.assertAlmostEqual(ye, 1.0, places=5)
+        self.assertAlmostEqual(yn, 0.0, places=5)
+        self.assertEqual([p["bay_side"] for p in elec], ["elec", "elec"])
 
 
 if __name__ == "__main__":

@@ -257,7 +257,15 @@ class BridgeNode:
 
 
 
-            if result is None or not self._plc_client:
+            if (
+
+                result is None
+
+                or not self._plc_client
+
+                or not self._plc_client.is_connected
+
+            ):
 
                 next_send_time += self._send_interval
 

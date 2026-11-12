@@ -57,6 +57,7 @@ def _sqlite_migrate():
         ("yards", "boundary", "JSON"),
         ("yards", "y_axis_mode", "VARCHAR(20)"),
         ("yards", "y_axis_points", "JSON"),
+        ("survey_points", "bay_side", "VARCHAR(10) NOT NULL DEFAULT 'elec'"),
     ]
     conn = sqlite3.connect(db_path)
     try:
@@ -65,6 +66,13 @@ def _sqlite_migrate():
             if column not in cols:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
                 print(f"[DEBUG] 迁移: {table}.{column} 已添加")
+        try:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_survey_bay_side "
+                "ON survey_points(yard_id, point_type, bay_no, bay_side)"
+            )
+        except sqlite3.IntegrityError as exc:
+            print(f"[DEBUG] 贝位侧别唯一索引未建立: {exc}")
         conn.commit()
     finally:
         conn.close()

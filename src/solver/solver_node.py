@@ -28,6 +28,7 @@ from src.solver.bay_residual import (
 )
 from src.solver.coordinate_transform import ecef_to_enu, ecef_to_wgs84
 from src.solver.yard_geometry import (
+    electrical_bays,
     en_meters,
     lane_deviation_m,
     normalize_boundary,
@@ -312,7 +313,7 @@ class SolverNode:
 
     def _apply_bay_axis(self, transform, survey_pts, yard_meta=None) -> None:
         pts = []
-        for p in survey_pts or []:
+        for p in electrical_bays(survey_pts):
             bay = p.get("bay_no")
             if bay is None:
                 continue
@@ -540,7 +541,7 @@ class SolverNode:
         )
         if transform.axis_ready and four_tires:
             bay_ys = []
-            for pt in survey_pts:
+            for pt in electrical_bays(survey_pts):
                 bay_no = pt.get("bay_no")
                 if bay_no is None:
                     continue
@@ -602,6 +603,8 @@ class SolverNode:
             yard_origin_lat=float(transform.origin_lat),
             yard_origin_lon=float(transform.origin_lon),
             yard_origin_alt=float(transform.origin_alt),
+            yard_axis_east=float(transform.y_axis_east),
+            yard_axis_north=float(transform.y_axis_north),
             bay_spacing_m=bay_spacing,
             current_bay_no=current_bay_no,
             fix_quality_left=fq_left,

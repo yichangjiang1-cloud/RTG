@@ -2,6 +2,7 @@
 单元测试：PLC 通信协议 V1.0.0（xlsx）
 """
 
+import math
 import struct
 import sys
 import unittest
@@ -138,6 +139,43 @@ class TestPlcProtocolV1(unittest.TestCase):
         parsed = decode_frame(raw)
         self.assertIsNotNone(parsed)
         self.assertEqual(parsed.gantry_run_status, 1)
+
+    def test_antenna_xy_uses_yard_axes(self):
+        from src.solver.coordinate_transform import YardTransform, wgs84_to_ecef
+
+        origin = (32.200977111, 119.054199750, 9.655)
+        heading = 228.335
+        y_east = math.sin(math.radians(heading))
+        y_north = math.cos(math.radians(heading))
+        tf = YardTransform(*origin)
+        tf.set_y_axis(y_east, y_north)
+        lat, lon, alt = tf.lycs_to_wgs84(0.0, -2.5, 0.0)
+        ex, ey, ez = wgs84_to_ecef(lat, lon, alt)
+        result = PositionResult(
+            yard_origin_lat=origin[0],
+            yard_origin_lon=origin[1],
+            yard_origin_alt=origin[2],
+            yard_axis_east=y_east,
+            yard_axis_north=y_north,
+            gantry_antennas={
+                "a1": {"ecef_x": ex, "ecef_y": ey, "ecef_z": ez, "valid": True},
+            },
+        )
+        frame = encode_gnss_to_plc(result, PlcProtocolContext())
+        off = 8 + struct.calcsize("<HHHH8sHHhhhhIIHhhhHH")
+        x_u, y_u, z_mm = struct.unpack_from("<IIH", frame, off)
+        x_mm = struct.unpack("<i", struct.pack("<I", x_u))[0]
+        y_mm = struct.unpack("<i", struct.pack("<I", y_u))[0]
+        self.assertAlmostEqual(x_mm, 0, delta=30)
+        self.assertAlmostEqual(y_mm, -2500, delta=30)
+        self.assertEqual(z_mm, 0)
+
+    def test_lane_deviation_sign_is_sent(self):
+        result = PositionResult()
+        result.gantry.lane_mm = [-120, 80, -30, 40]
+        frame = encode_gnss_to_plc(result, PlcProtocolContext())
+        lane = struct.unpack_from("<hhhh", frame, 8 + struct.calcsize("<HHHH8sHH"))
+        self.assertEqual(lane, (-120, 80, -30, 40))
 
     def test_base_station_uses_yard_origin(self):
         ctx = PlcProtocolContext(base_station_mode="yard_origin")

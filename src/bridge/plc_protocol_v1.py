@@ -158,19 +158,23 @@ def _rtg_mode(result: PositionResult) -> int:
     return 0
 
 
-def _antenna_enu_mm(
-    ecef_x: float,
-    ecef_y: float,
-    ecef_z: float,
-    base_lat: float,
-    base_lon: float,
-    base_alt: float,
-) -> Tuple[int, int, int]:
-    """天线相对基准站 ENU → (E_mm, N_mm, U_mm)。"""
-    if abs(ecef_x) < 1e-6 and abs(ecef_y) < 1e-6:
-        return 0, 0, 0
-    e, n, u = ecef_to_enu(ecef_x, ecef_y, ecef_z, base_lat, base_lon, base_alt)
-    return _m_to_mm(e), _m_to_mm(n), _m_to_mm(u)
+def _yard_xy_from_enu(
+    east_m: float,
+    north_m: float,
+    y_east: float,
+    y_north: float,
+) -> Optional[Tuple[float, float]]:
+    """东、北 → 堆场 X、Y。+Y 沿贝位增大方向，+X 在朝 +Y 看时的右侧。"""
+    ye = float(y_east)
+    yn = float(y_north)
+    norm = math.hypot(ye, yn)
+    if norm < 1e-9:
+        return None
+    ye /= norm
+    yn /= norm
+    x = east_m * yn - north_m * ye
+    y = east_m * ye + north_m * yn
+    return x, y
 
 
 def _antenna_triplet_from_dict(
@@ -178,7 +182,10 @@ def _antenna_triplet_from_dict(
     base_lat: float,
     base_lon: float,
     base_alt: float,
+    y_east: float,
+    y_north: float,
 ) -> Tuple[int, int, int]:
+    """天线相对堆场原点的 X/Y/Z（mm）。没有堆场坐标轴时发 0，不发东、北。"""
     if not ant:
         return 0, 0, 0
     ex = float(ant.get("ecef_x", 0.0))
@@ -192,8 +199,13 @@ def _antenna_triplet_from_dict(
             from src.solver.coordinate_transform import wgs84_to_ecef
 
             ex, ey, ez = wgs84_to_ecef(lat, lon, alt)
-    emm, nmm, umm = _antenna_enu_mm(ex, ey, ez, base_lat, base_lon, base_alt)
-    return _pack_mm_u32(emm), _pack_mm_u32(nmm), _clamp_u16(umm)
+    if abs(ex) < 1e-6 and abs(ey) < 1e-6:
+        return 0, 0, 0
+    east, north, up = ecef_to_enu(ex, ey, ez, base_lat, base_lon, base_alt)
+    xy = _yard_xy_from_enu(east, north, y_east, y_north)
+    if xy is None:
+        return 0, 0, 0
+    return _pack_mm_u32(_m_to_mm(xy[0])), _pack_mm_u32(_m_to_mm(xy[1])), _clamp_u16(_m_to_mm(up))
 
 
 def _resolve_base_station(
@@ -235,8 +247,12 @@ def encode_gnss_to_plc(
     """将 PositionResult 编码为 GNSS→PLC 帧（158 B）。"""
     g = result.gantry
     t = result.trolley
-    # 12-15 门腿偏差：待现场确认，暂发 0（int16 x4）
-    leg_mm = [0, 0, 0, 0]
+    # 12-15：电气 GGA、电气 GGA2、动力 GGA、动力 GGA2。
+    # 横向偏离，朝堆场内部为负，朝外部为正。
+    lane = list(getattr(g, "lane_mm", None) or [0, 0, 0, 0])
+    while len(lane) < 4:
+        lane.append(0)
+    leg_mm = lane[:4]
     ants = result.gantry_antennas or {}
     base_lat, base_lon, base_alt = _resolve_base_station(result, ctx)
 
@@ -263,15 +279,20 @@ def encode_gnss_to_plc(
     gantry_dsl_mm = _planar_dist_mm(g.center_engine_side, g.center_engine_y)
     trolley_travel_mm = abs(_m_to_mm(t.travel_distance))
 
-    a_elec1 = _antenna_triplet_from_dict(ants.get("a1"), base_lat, base_lon, base_alt)
-    a_elec2 = _antenna_triplet_from_dict(ants.get("a2"), base_lat, base_lon, base_alt)
-    a_dsl1 = _antenna_triplet_from_dict(ants.get("b1"), base_lat, base_lon, base_alt)
-    a_dsl2 = _antenna_triplet_from_dict(ants.get("b2"), base_lat, base_lon, base_alt)
+    # 24-41：堆场坐标。X 朝 +Y 的右侧，Y 沿贝位增大方向，Z 为相对原点的高度。
+    y_east = float(getattr(result, "yard_axis_east", 0.0))
+    y_north = float(getattr(result, "yard_axis_north", 0.0))
+    a_elec1 = _antenna_triplet_from_dict(ants.get("a1"), base_lat, base_lon, base_alt, y_east, y_north)
+    a_elec2 = _antenna_triplet_from_dict(ants.get("a2"), base_lat, base_lon, base_alt, y_east, y_north)
+    a_dsl1 = _antenna_triplet_from_dict(ants.get("b1"), base_lat, base_lon, base_alt, y_east, y_north)
+    a_dsl2 = _antenna_triplet_from_dict(ants.get("b2"), base_lat, base_lon, base_alt, y_east, y_north)
     tly1 = _antenna_triplet_from_dict(
-        getattr(result, "trolley_antenna_primary", None) or {}, base_lat, base_lon, base_alt
+        getattr(result, "trolley_antenna_primary", None) or {},
+        base_lat, base_lon, base_alt, y_east, y_north,
     )
     tly2 = _antenna_triplet_from_dict(
-        getattr(result, "trolley_antenna_secondary", None) or {}, base_lat, base_lon, base_alt
+        getattr(result, "trolley_antenna_secondary", None) or {},
+        base_lat, base_lon, base_alt, y_east, y_north,
     )
 
     body = struct.pack(
