@@ -125,6 +125,8 @@ class FusionNode:
         att_block = cfg.get("gantry.attitude", {})
         self._gantry_att_cfg = GantryAttitudeConfig.from_dict(att_block)
         self._last_gantry_att_source: str = ""
+        self._att_missing = False
+        self._att_missing_log_ts = 0.0
 
         # 订阅事件
         self._bus.subscribe(EventBus.TOPIC_GNSS_RAW, self._on_gnss)
@@ -553,7 +555,27 @@ class FusionNode:
         )
         att = compare.primary
         if att is None:
+            now = time.time()
+            if (not self._att_missing) or now - self._att_missing_log_ts >= 30.0:
+                logger.warning(
+                    "大车姿态不可用: mode=%s four_ready=%s a1_live=%s a2_live=%s a1_ant2=%s a2_ant2=%s",
+                    self._gantry_att_cfg.mode,
+                    compare.four_ready,
+                    ga1_live,
+                    ga2_live,
+                    bool(ga1 is not None and ga1.has_antenna2),
+                    bool(ga2 is not None and ga2.has_antenna2),
+                )
+                self._att_missing = True
+                self._att_missing_log_ts = now
             return compare.to_dict()
+        if self._att_missing:
+            logger.info(
+                "大车姿态恢复: method=%s hdg=%.2f",
+                compare.primary_method,
+                att.heading_deg,
+            )
+            self._att_missing = False
 
         for d in (d_a1, d_a2):
             d["heading"] = att.heading_deg

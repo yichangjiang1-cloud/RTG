@@ -4,17 +4,28 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="修正一堆">
+    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="前端页面Ui修正">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/config/system.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/system.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/vehicle_params.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/vehicle_params.yaml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/config/yard_config.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/yard_config.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Mapping.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Mapping.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Settings.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Settings.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/VehicleConfig.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/VehicleConfig.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/YardLive.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/YardLive.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/main.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/main.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/utils/logger.ts" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/utils/logger.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logs/.gitkeep" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/utils/logger.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/utils/logger.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/bridge/bridge_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/bridge_node.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/bridge/plc_protocol_v1.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/plc_protocol_v1.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/models/positioning.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/positioning.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/solver/coordinate_transform.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/coordinate_transform.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/driver/gnss_receiver.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/gnss_receiver.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/driver/nmea_parser.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/nmea_parser.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/fusion/fusion_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/fusion/fusion_node.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/solver/solver_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/solver_node.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/test_protocol.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_protocol.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tools/sim_plc_server.py" beforeDir="false" afterPath="$PROJECT_DIR$/tools/sim_plc_server.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/solver/yard_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/yard_manager.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_psat_gga2.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_psat_gga2.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -258,7 +269,15 @@
       <option name="project" value="LOCAL" />
       <updated>1794411119768</updated>
     </task>
-    <option name="localTasksCounter" value="9" />
+    <task id="LOCAL-00009" summary="前端页面Ui修正">
+      <option name="closed" value="true" />
+      <created>1794468156745</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1794468156745</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -287,7 +306,8 @@
     <MESSAGE value="同时兼容R61、MC10、UB482等接收机设备" />
     <MESSAGE value="问题一堆" />
     <MESSAGE value="修正一堆" />
-    <option name="LAST_COMMIT_MESSAGE" value="修正一堆" />
+    <MESSAGE value="前端页面Ui修正" />
+    <option name="LAST_COMMIT_MESSAGE" value="前端页面Ui修正" />
   </component>
   <component name="github-copilot-workspace">
     <instructionFileLocations>

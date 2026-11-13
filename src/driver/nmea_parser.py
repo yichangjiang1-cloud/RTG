@@ -171,9 +171,15 @@ def parse_psat_gga2(sentence: str) -> Optional[dict]:
         return None
 
     try:
+        # 无解时接收机会发 $PSAT,GGA2,time,,,,,0,,,,M。空字段不能当成 0°，
+        # 否则会把副天线放到赤道，和主天线一平均就飞出几十万米。
+        if not parts[3] or not parts[5]:
+            return None
+        fix_quality = int(parts[7]) if parts[7] else 0
+        if fix_quality <= 0:
+            return None
         lat = _lat_lon_to_decimal(parts[3], parts[4])
         lon = _lat_lon_to_decimal(parts[5], parts[6])
-        fix_quality = int(parts[7]) if parts[7] else 0
         num_sats = int(parts[8]) if parts[8] else 0
         hdop = float(parts[9]) if parts[9] else 99.9
         alt = float(parts[10]) if parts[10] else 0.0

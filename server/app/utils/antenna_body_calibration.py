@@ -2,9 +2,9 @@
 四天线 ECEF → 车体系安装坐标标定（后端 API 独立实现，与中控公式一致）。
 
 约定：
-  - 上水接收机：GGA[0]=电气房(a1)，GGA[1]=动力房(a2)
-  - 下水接收机：GGA[0]=电气房(b1)，GGA[1]=动力房(b2)
-  - 车体系：X 指向上水，Y 指向电气房，Z 上；原点 a1
+  - a1/a2 = 左侧接收机主天线 / 从天线，b1/b2 = 右侧
+  - 主天线在下水、从天线在上水
+  - 车体系：X 从下水端中心指向上水端中心，Y 从右侧指向左侧，Z 上；原点 a1
 """
 
 from __future__ import annotations
@@ -125,18 +125,18 @@ def compute_antenna_body_from_ecef(
     def _mean(p: Vec3, q: Vec3) -> Vec3:
         return ((p[0] + q[0]) * 0.5, (p[1] + q[1]) * 0.5, (p[2] + q[2]) * 0.5)
 
-    up = _mean(pts["a1"], pts["a2"])
-    down = _mean(pts["b1"], pts["b2"])
+    down = _mean(pts["a1"], pts["b1"])
+    up = _mean(pts["a2"], pts["b2"])
     x_vec = _sub(up, down)
     baseline_m = _norm(x_vec)
     if baseline_m < 0.5:
         raise ValueError("上下水两端距离过短，无法建立车体系")
     x_hat = _scale(x_vec, 1.0 / baseline_m)
-    y_raw = _sub(_mean(pts["a1"], pts["b1"]), _mean(pts["a2"], pts["b2"]))
+    y_raw = _sub(_mean(pts["a1"], pts["a2"]), _mean(pts["b1"], pts["b2"]))
     y_raw = _sub(y_raw, _scale(x_hat, _dot(y_raw, x_hat)))
     y_norm = _norm(y_raw)
     if y_norm < 0.3:
-        raise ValueError("电气房与动力房距离过短，无法确定横向轴")
+        raise ValueError("左右两侧距离过短，无法确定横向轴")
     y_hat = _scale(y_raw, 1.0 / y_norm)
     z_hat = _cross(x_hat, y_hat)
     r_be = (x_hat, y_hat, z_hat)

@@ -69,6 +69,7 @@ class RTGSystem:
         self._pos_logger = get_position_logger()
         self._pos_log_interval_s = float(cfg.get("logging.position_log_interval_s", 1.0))
         self._last_pos_log_ts = 0.0
+        self._mqtt_telemetry_paused = False
         logger.info("=" * 60)
         logger.info("RTG 高精度自动定位系统启动")
         logger.info("配置文件: %s", self._system_yaml_path)
@@ -301,8 +302,13 @@ class RTGSystem:
         self._log_position_snapshot(result)
 
         if not self._mqtt_client.is_connected():
-            logger.debug("MQTT 未连接，跳过定位结果推送")
+            if not self._mqtt_telemetry_paused:
+                logger.warning("MQTT 未连接，遥测暂停推送")
+                self._mqtt_telemetry_paused = True
             return
+        if self._mqtt_telemetry_paused:
+            logger.info("MQTT 已连接，遥测恢复推送")
+            self._mqtt_telemetry_paused = False
 
         telemetry = position_result_to_realtime(result)
         self._mqtt_client.publish_telemetry(telemetry)
@@ -321,13 +327,20 @@ class RTGSystem:
         method = cmp.get("primary_method") or primary.get("source") or "-"
 
         self._pos_logger.info(
-            "yard=%s fix=%s method=%s | "
+            "yard=%s in_yard=%s tires=%d/4 fix=%s method=%s | "
             "LPoint LYCS=(%.4f,%.4f,%.4f) WGS84=(%.8f,%.8f,%.3f) | "
             "elec=%s(%.4f,%.4f) diesel=%s(%.4f,%.4f) | "
             "att hdg=%.2f pitch=%.3f roll=%.3f | "
             "trolley valid=%s travel=%.3f body=(%.3f,%.3f,%.3f) spd=%.3f | "
             "recv live a1=%s a2=%s",
             result.yard_id or "-",
+            result.in_yard,
+            sum(1 for ok in (
+                g.tire_elec1_valid,
+                g.tire_elec2_valid,
+                g.tire_diesel1_valid,
+                g.tire_diesel2_valid,
+            ) if ok),
             result.gnss_fix_quality,
             method,
             g.lpoint_x,

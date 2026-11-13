@@ -1,10 +1,10 @@
 """
 从四天线 ECEF 反算车体系安装坐标（标定用）。
 
-约定（与现场一致）：
-  - 上水接收机：GGA[0]=电气房(a1)，GGA[1]=动力房(a2)
-  - 下水接收机：GGA[0]=电气房(b1)，GGA[1]=动力房(b2)
-  - 车体系：X 指向上水（下水端中心→上水端中心），Y 指向电气房，Z 上；原点 a1
+约定（与现场接线一致）：
+  - a1/a2 = 左侧接收机主天线 / 从天线，b1/b2 = 右侧
+  - 主天线在下水、从天线在上水
+  - 车体系：X 从下水端中心指向上水端中心，Y 从右侧指向左侧，Z 上；原点 a1
 """
 
 from __future__ import annotations
@@ -44,18 +44,18 @@ def compute_antenna_body_from_ecef(
         "b1": _enu_delta(*b1, a1, ref_lla),
         "b2": _enu_delta(*b2, a1, ref_lla),
     }
-    up = (pts["a1"] + pts["a2"]) * 0.5
-    down = (pts["b1"] + pts["b2"]) * 0.5
+    down = (pts["a1"] + pts["b1"]) * 0.5
+    up = (pts["a2"] + pts["b2"]) * 0.5
     x_vec = up - down
     baseline_m = float(np.linalg.norm(x_vec))
     if baseline_m < 0.5:
         raise ValueError("上下水两端距离过短，无法建立车体系")
     x_hat = x_vec / baseline_m
-    y_raw = (pts["a1"] + pts["b1"]) * 0.5 - (pts["a2"] + pts["b2"]) * 0.5
+    y_raw = (pts["a1"] + pts["a2"]) * 0.5 - (pts["b1"] + pts["b2"]) * 0.5
     y_raw = y_raw - x_hat * float(np.dot(y_raw, x_hat))
     y_norm = float(np.linalg.norm(y_raw))
     if y_norm < 0.3:
-        raise ValueError("电气房与动力房距离过短，无法确定横向轴")
+        raise ValueError("左右两侧距离过短，无法确定横向轴")
     y_hat = y_raw / y_norm
     z_hat = np.cross(x_hat, y_hat)
     r_be = np.column_stack([x_hat, y_hat, z_hat])

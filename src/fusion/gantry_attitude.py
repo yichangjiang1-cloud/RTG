@@ -419,7 +419,22 @@ def solve_four_antenna_attitude(
     if r_be is None:
         return None
 
-    roll, pitch, heading = body_enu_to_nmea_euler(r_be)
+    roll, _pitch_x, _heading_x = body_enu_to_nmea_euler(r_be)
+    # 航向、俯仰沿天线摆放方向：下水主天线（a1、b1）→ 上水从天线（a2、b2）。
+    # 不读安装表的 +X。表的 +X 在「一侧一台接收机」时会落到横梁上，航向会变成 138°。
+    down = (enu[0] + enu[2]) * 0.5
+    up = (enu[1] + enu[3]) * 0.5
+    delta = up - down
+    horiz = float(math.hypot(delta[0], delta[1]))
+    span = float(math.hypot(horiz, delta[2]))
+    if horiz >= 1.0 and span > 1e-6:
+        heading = math.degrees(math.atan2(float(delta[0]), float(delta[1]))) % 360.0
+        if heading >= 359.95:
+            heading = 0.0
+        pitch = math.degrees(math.asin(max(-1.0, min(1.0, float(delta[2]) / span))))
+    else:
+        heading = _heading_x
+        pitch = _pitch_x
     return GantryAttitudeResult(
         heading_deg=normalize_heading_deg(heading),
         pitch_deg=float(pitch),

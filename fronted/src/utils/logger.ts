@@ -54,6 +54,73 @@ function isDuplicate(key: string): boolean {
   return false;
 }
 
+interface StoredEntry {
+  level: Level;
+  module: string;
+  message: string;
+  detail: string;
+  page: string;
+  time: string;
+}
+
+const storedQueue: StoredEntry[] = [];
+const storedAt = new Map<string, number>();
+let flushTimer = 0;
+
+function detailText(args: unknown[]): string {
+  if (!args.length) return '';
+  try {
+    return args.map((item) => {
+      if (item instanceof Error) return item.message;
+      if (typeof item === 'string') return item;
+      return JSON.stringify(item);
+    }).join(' ').slice(0, 800);
+  } catch {
+    return '';
+  }
+}
+
+function shouldStore(level: Level, msg: string): boolean {
+  if (level === 'debug') return false;
+  if (level === 'warn' || level === 'error') return true;
+  return !msg.includes('← 帧') && !msg.startsWith('GET ') && !msg.startsWith('POST ');
+}
+
+function flushStored() {
+  if (flushTimer) {
+    window.clearTimeout(flushTimer);
+    flushTimer = 0;
+  }
+  if (!storedQueue.length) return;
+  const entries = storedQueue.splice(0, 40);
+  fetch('/api/client-log', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entries }),
+    keepalive: true,
+  }).catch(() => { /* 后端不可达时放弃，避免再写一条失败日志 */ });
+}
+
+function store(level: Level, module: string, msg: string, time: string, args: unknown[]) {
+  if (typeof window === 'undefined' || !shouldStore(level, msg)) return;
+  const key = `${level}|${module}|${msg}`;
+  const now = Date.now();
+  const last = storedAt.get(key);
+  if (last && now - last < 10000) return;
+  storedAt.set(key, now);
+  storedQueue.push({
+    level,
+    module,
+    message: msg.slice(0, 1000),
+    detail: detailText(args),
+    page: window.location.hash || window.location.pathname,
+    time,
+  });
+  if (storedQueue.length > 200) storedQueue.splice(0, storedQueue.length - 200);
+  if (storedQueue.length >= 20) flushStored();
+  else if (!flushTimer) flushTimer = window.setTimeout(flushStored, 2000);
+}
+
 function log(level: Level, module: string, msg: string, ...args: unknown[]) {
   const dbg = wsDebugEnabled();
   if (!isDev && level === 'debug' && !dbg) return;
@@ -65,6 +132,15 @@ function log(level: Level, module: string, msg: string, ...args: unknown[]) {
            : console.log;
   fn(`%c${time}%c %c[${module}]%c ${msg}`, 'color:#64748b', '', STYLES[level], '', ...args);
   if (isDev) sendToTerminal(level, module, time, msg, args);
+  store(level, module, msg, time, args);
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => {
+    if (!storedQueue.length) return;
+    const body = JSON.stringify({ entries: storedQueue.splice(0, 40) });
+    navigator.sendBeacon?.('/api/client-log', new Blob([body], { type: 'application/json' }));
+  });
 }
 
 export const logger = {
@@ -75,3 +151,18 @@ export const logger = {
   /** 当前是否开启 WebSocket 调试输出 */
   isWsDebug: wsDebugEnabled,
 };
+
+/** 把脚本错误和未接住的 Promise 也写入前端日志文件。 */
+export function installClientLogCapture() {
+  if (typeof window === 'undefined') return;
+  window.addEventListener('error', (event) => {
+    logger.error('window', event.message || '脚本错误', {
+      file: event.filename,
+      line: event.lineno,
+    });
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason instanceof Error ? event.reason.message : String(event.reason);
+    logger.error('window', '未处理的 Promise', reason);
+  });
+}

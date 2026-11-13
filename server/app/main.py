@@ -1,18 +1,19 @@
 """FastAPI 应用主入口"""
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, status
+from fastapi import FastAPI, WebSocket, Query, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 import asyncio
-import json
 
 from app.config import settings
 from app.database import init_db
-from app.utils.logger import setup_logging, get_logger
+from app.utils.logger import setup_logging, get_logger, get_frontend_file_logger
 from app.mqtt.client import MqttClient
 from app.mqtt.handlers import MqttMessageHandler
 from app.api.ws import WebSocketManager
-from app.api.routers import vehicle, yard, survey, health, calibration
+from app.api.routers import vehicle, yard, survey, health, calibration, client_log
 
 logger = None
 mqtt_client = None
@@ -67,6 +68,7 @@ async def lifespan(app: FastAPI):
     vehicle.set_mqtt_client(mqtt_client)
     survey.set_mqtt_client(mqtt_client)
 
+    get_frontend_file_logger()
     logger.info(f"监听端口: {settings.BACKEND_HOST}:{settings.BACKEND_PORT}")
     logger.info("=" * 60)
 
@@ -87,6 +89,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+class RequestErrorLogMiddleware(BaseHTTPMiddleware):
+    """失败请求写入 backend.log。成功请求和前端日志上报本身不记。"""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if response.status_code < 400 or path == "/api/client-log":
+            return response
+        active = logger or get_logger("app.main")
+        active.warning(
+            "HTTP %s %s %s",
+            response.status_code,
+            request.method,
+            path,
+        )
+        return response
+
+
 # CORS 中间件
 app.add_middleware(
     CORSMiddleware,
@@ -95,6 +115,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(RequestErrorLogMiddleware)
 
 # 注册路由
 app.include_router(vehicle.router)
@@ -102,6 +123,7 @@ app.include_router(yard.router)
 app.include_router(survey.router)
 app.include_router(calibration.router)
 app.include_router(health.router)
+app.include_router(client_log.router)
 
 # ==================== WebSocket 端点 ====================
 
@@ -146,12 +168,16 @@ async def get_version():
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
     """全局异常处理"""
-    logger.error(f"未处理异常: {exc}")
-    return {
-        "code": 500,
-        "message": "内部服务器错误",
-        "detail": str(exc) if settings.DEBUG else "internal error",
-    }
+    active = logger or get_logger("app.main")
+    active.exception("未处理异常 %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "code": 500,
+            "message": "内部服务器错误",
+            "detail": str(exc) if settings.DEBUG else "internal error",
+        },
+    )
 
 if __name__ == "__main__":
     import uvicorn

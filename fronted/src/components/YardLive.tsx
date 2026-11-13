@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { httpBase } from '../utils/backendUrl';
 import type { GantryAntennaPoint, RealtimeData } from '../types';
+import GaodeYardMap from './GaodeYardMap';
+import { logger } from '../utils/logger';
 
 const A = 6378137;
 const E2 = 0.00669437999014;
@@ -11,7 +13,12 @@ interface En {
   north: number;
 }
 
-interface BayPoint extends En {
+interface GeoPoint extends En {
+  lat: number;
+  lon: number;
+}
+
+interface BayPoint extends GeoPoint {
   bay: number;
   side: 'elec' | 'diesel';
 }
@@ -22,7 +29,7 @@ interface Scene {
   originLat: number;
   originLon: number;
   originAlt: number;
-  boundary: En[];
+  boundary: GeoPoint[];
   bays: BayPoint[];
 }
 
@@ -92,10 +99,23 @@ export default function YardLive({ data }: { data: RealtimeData }) {
   const [loadError, setLoadError] = useState('');
   const [follow, setFollow] = useState(true);
   const [hud, setHud] = useState('等待场地和天线');
+  const [basemap, setBasemap] = useState<'canvas' | 'gaode'>(() => (
+    localStorage.getItem('rtg.live.basemap') === 'gaode' ? 'gaode' : 'canvas'
+  ));
+  const [mapCmd, setMapCmd] = useState<{ id: number; type: 'in' | 'out' | 'fit' } | null>(null);
 
   useEffect(() => {
     viewRef.current.follow = follow;
   }, [follow]);
+
+  useEffect(() => {
+    localStorage.setItem('rtg.live.basemap', basemap);
+  }, [basemap]);
+
+  const releaseFollow = useCallback(() => {
+    viewRef.current.follow = false;
+    setFollow(false);
+  }, []);
 
   useEffect(() => {
     if (yards.length > 0) return;
@@ -153,9 +173,9 @@ export default function YardLive({ data }: { data: RealtimeData }) {
             const lat = Number(p.lat);
             const lon = Number(p.lon);
             if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-            return toEn(lat, lon, originAlt, draft);
+            return { ...toEn(lat, lon, originAlt, draft), lat, lon };
           })
-          .filter((p: En | null): p is En => p !== null);
+          .filter((p: GeoPoint | null): p is GeoPoint => p !== null);
         const points = mapJson.data?.survey_points || [];
         draft.bays = points
           .map((p: { bay_no?: number; bay_side?: string; lat?: number; lon?: number; alt?: number }) => {
@@ -166,6 +186,8 @@ export default function YardLive({ data }: { data: RealtimeData }) {
             return {
               bay: Number(p.bay_no),
               side: p.bay_side === 'diesel' ? 'diesel' as const : 'elec' as const,
+              lat,
+              lon,
               ...en,
             };
           })
@@ -179,7 +201,11 @@ export default function YardLive({ data }: { data: RealtimeData }) {
           fitTo(viewRef.current, draft, []);
         }
       } catch (err) {
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : '场地加载失败');
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : '场地加载失败';
+          setLoadError(message);
+          logger.error('YardLive', `场地加载失败 yard=${selectedYardId}`, message);
+        }
       }
     })();
     return () => {
@@ -208,6 +234,34 @@ export default function YardLive({ data }: { data: RealtimeData }) {
     }
     return marks;
   }, [data, scene]);
+
+  useEffect(() => {
+    const marks = scene ? antennaMarks() : [];
+    const gantry = marks.filter((m) => m.label.startsWith('电气') || m.label.startsWith('动力'));
+    const center = mean(gantry);
+    const elecBays = scene ? scene.bays.filter((b) => b.side !== 'diesel') : [];
+    const bayLine = elecBays.length ? elecBays : (scene?.bays ?? []);
+    let nearest = '';
+    if (scene && center && bayLine.length) {
+      let best = bayLine[0];
+      let bestD = Infinity;
+      for (const bay of bayLine) {
+        const d = Math.hypot(bay.east - center.east, bay.north - center.north);
+        if (d < bestD) {
+          best = bay;
+          bestD = d;
+        }
+      }
+      nearest = `最近贝位 ${best.bay}，${bestD.toFixed(1)} m`;
+    }
+    const text = scene
+      ? `${scene.name}  天线 ${gantry.length}/4  航向 ${Number.isFinite(data.heading) ? data.heading.toFixed(1) : '—'}°  ${nearest}`
+      : '未选场地';
+    if (hudRef.current !== text) {
+      hudRef.current = text;
+      setHud(text);
+    }
+  }, [antennaMarks, data.heading, scene]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -368,33 +422,12 @@ export default function YardLive({ data }: { data: RealtimeData }) {
       ctx.lineTo(tip.x, tip.y);
       ctx.stroke();
     }
-
-    let nearest = '';
-    const bayLine = elecBays.length ? elecBays : (scene?.bays ?? []);
-    if (scene && center && bayLine.length) {
-      let best = bayLine[0];
-      let bestD = Infinity;
-      for (const bay of bayLine) {
-        const d = Math.hypot(bay.east - center.east, bay.north - center.north);
-        if (d < bestD) {
-          best = bay;
-          bestD = d;
-        }
-      }
-      nearest = `最近贝位 ${best.bay}，${bestD.toFixed(1)} m`;
-    }
-    const text = scene
-      ? `${scene.name}  天线 ${gantry.length}/4  航向 ${Number.isFinite(data.heading) ? data.heading.toFixed(1) : '—'}°  ${nearest}`
-      : '未选场地';
-    if (hudRef.current !== text) {
-      hudRef.current = text;
-      setHud(text);
-    }
   }, [antennaMarks, data.heading, scene]);
 
   useEffect(() => {
+    if (basemap !== 'canvas') return;
     draw();
-  }, [draw, follow]);
+  }, [draw, follow, basemap]);
 
   useEffect(() => {
     const onResize = () => draw();
@@ -421,6 +454,7 @@ export default function YardLive({ data }: { data: RealtimeData }) {
   }, [draw]);
 
   useEffect(() => {
+    if (basemap !== 'canvas') return;
     const el = wrapRef.current;
     if (!el) return;
     const onWheel = (event: WheelEvent) => {
@@ -431,10 +465,15 @@ export default function YardLive({ data }: { data: RealtimeData }) {
     };
     el.addEventListener('wheel', onWheel, { passive: false, capture: true });
     return () => el.removeEventListener('wheel', onWheel, { capture: true });
-  }, [zoomAt]);
+  }, [zoomAt, basemap]);
 
   const fitAll = () => {
     if (!scene) return;
+    if (basemap === 'gaode') {
+      releaseFollow();
+      setMapCmd({ id: Date.now(), type: 'fit' });
+      return;
+    }
     const marks = antennaMarks().filter((m) => m.label.startsWith('电气') || m.label.startsWith('动力'));
     fitTo(viewRef.current, scene, marks);
     viewRef.current.follow = false;
@@ -485,15 +524,37 @@ export default function YardLive({ data }: { data: RealtimeData }) {
         <div className="inline-flex overflow-hidden rounded-lg border border-slate-600">
           <button
             type="button"
+            className={`px-2.5 py-1.5 text-sm ${basemap === 'canvas' ? 'bg-blue-600/30 text-blue-100' : 'text-slate-300 hover:bg-slate-800'}`}
+            onClick={() => setBasemap('canvas')}
+          >
+            自绘底图
+          </button>
+          <button
+            type="button"
+            className={`px-2.5 py-1.5 text-sm border-l border-slate-600 ${basemap === 'gaode' ? 'bg-blue-600/30 text-blue-100' : 'text-slate-300 hover:bg-slate-800'}`}
+            onClick={() => setBasemap('gaode')}
+          >
+            高德底图
+          </button>
+        </div>
+        <div className="inline-flex overflow-hidden rounded-lg border border-slate-600">
+          <button
+            type="button"
             className="px-2.5 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
-            onClick={() => zoomAt(1.25)}
+            onClick={() => {
+              if (basemap === 'gaode') setMapCmd({ id: Date.now(), type: 'in' });
+              else zoomAt(1.25);
+            }}
           >
             放大
           </button>
           <button
             type="button"
             className="px-2.5 py-1.5 text-sm text-slate-200 border-l border-slate-600 hover:bg-slate-800"
-            onClick={() => zoomAt(0.8)}
+            onClick={() => {
+              if (basemap === 'gaode') setMapCmd({ id: Date.now(), type: 'out' });
+              else zoomAt(0.8);
+            }}
           >
             缩小
           </button>
@@ -501,6 +562,15 @@ export default function YardLive({ data }: { data: RealtimeData }) {
         <span className="text-xs text-slate-400">{hud}</span>
       </div>
       {loadError && <p className="text-sm text-red-400">{loadError}</p>}
+      {basemap === 'gaode' ? (
+        <GaodeYardMap
+          scene={scene}
+          data={data}
+          follow={follow}
+          onReleaseFollow={releaseFollow}
+          command={mapCmd}
+        />
+      ) : (
       <div ref={wrapRef} className="h-[32rem] rounded-xl overflow-hidden border border-slate-700 touch-none overscroll-none">
         <canvas
           className="block w-full h-full"
@@ -525,9 +595,11 @@ export default function YardLive({ data }: { data: RealtimeData }) {
           }}
         />
       </div>
+      )}
       <p className="text-xs text-slate-500">
-        北向上、东向右，相对所选场地原点。黄框是场地区域，青色是电气侧贝位，橙色是动力侧贝位，白十字是原点，紫线是电气侧贝位增大方向。
-        绿点是电气房侧天线，橙点是动力房侧天线。蓝色小车天线要等中控重启后才有。拖动平移，滚轮或放大按钮只缩放地图。
+        {basemap === 'gaode'
+          ? '高德底图上的点、线和文字由本系统叠加上去。画到高德上之前才把 WGS84 转成火星坐标，贝位、校准和 PLC 仍用原来的坐标。拖动地图会取消跟随。'
+          : '北向上、东向右，相对所选场地原点。黄框是场地区域，青色是电气侧贝位，橙色是动力侧贝位，白十字是原点，紫线是电气侧贝位增大方向。绿点是电气房侧天线，橙点是动力房侧天线。蓝色小车天线要等中控重启后才有。拖动平移，滚轮或放大按钮只缩放地图。'}
       </p>
     </div>
   );

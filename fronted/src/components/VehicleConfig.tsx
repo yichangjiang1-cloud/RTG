@@ -495,7 +495,7 @@ function LArmSmartCalibration({
     }
     const layout = cfg.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT;
     const elecLeft = (layout.elec_receiver ?? 'left') !== 'right';
-    const antennaSrc = endAntenna(liveData, spec.role, spec.end);
+    const antennaSrc = endAntenna(liveData, layout, spec.role, spec.end);
     if (Math.abs(antennaSrc.lat) < 1e-6 && Math.abs(antennaSrc.lon) < 1e-6) {
       showToast(`${spec.label}的天线无效`, 'error');
       return;
@@ -614,7 +614,8 @@ function LArmSmartCalibration({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs font-mono">
         {TIRE_ARMS.map(spec => {
-          const ant = endAntenna(liveData, spec.role, spec.end);
+          const layout = cfg?.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT;
+          const ant = endAntenna(liveData, layout, spec.role, spec.end);
           const missing = Math.abs(ant.lat) < 1e-6 && Math.abs(ant.lon) < 1e-6;
           return (
             <div key={spec.id} className="config-data-block space-y-1">
@@ -674,16 +675,26 @@ function LArmSmartCalibration({
   );
 }
 
+function antennaKeyForEnd(
+  layout: ReceiverLayout,
+  role: 'elec' | 'diesel',
+  end: 'upstream' | 'downstream',
+): 'a1' | 'a2' | 'b1' | 'b2' {
+  const elecLeft = (layout.elec_receiver ?? 'left') !== 'right';
+  const onLeft = role === 'elec' ? elecLeft : !elecLeft;
+  const index = ggaIndexForEnd(layout, role, end);
+  if (onLeft) return index === 0 ? 'a1' : 'a2';
+  return index === 0 ? 'b1' : 'b2';
+}
+
 function endAntenna(
   live: Pick<RealtimeData, 'gantry_antennas'>,
+  layout: ReceiverLayout,
   role: 'elec' | 'diesel',
   end: 'upstream' | 'downstream',
 ): { lat: number; lon: number; alt: number; ecef_x?: number; ecef_y?: number; ecef_z?: number } {
-  const ga = live.gantry_antennas;
-  const hit = ga
-    ? Object.values(ga).find((p) => p && p.role === role && p.end === end && p.valid !== false)
-    : undefined;
-    if (hit && (Math.abs(hit.lat) > 1e-6 || Math.abs(hit.lon) > 1e-6)) return hit;
+  const hit = live.gantry_antennas?.[antennaKeyForEnd(layout, role, end)];
+  if (hit && hit.valid !== false && (Math.abs(hit.lat) > 1e-6 || Math.abs(hit.lon) > 1e-6)) return hit;
   return { lat: 0, lon: 0, alt: 0 };
 }
 
@@ -1232,7 +1243,9 @@ function GantryAttitudePanel({
       });
       showToast(`四天线安装坐标已标定：baseline ${baseline_m.toFixed(2)} m`);
     } catch (e) {
-      showToast(e instanceof Error ? e.message : '四天线标定失败', 'error');
+      const message = e instanceof Error ? e.message : '四天线标定失败';
+      logger.error('VehicleConfig', '四天线标定失败', message);
+      showToast(message, 'error');
     } finally {
       setCapturing(false);
     }

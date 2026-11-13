@@ -140,10 +140,12 @@ class SolverNode:
 
         # 小车相对速度历史 (t, rel_x, rel_y)
         self._trolley_rel_hist: list[tuple[float, float, float]] = []
+        self._trolley_last_c2: Optional[tuple[float, float, float]] = None
 
         # 订阅融合状态
         self._bus.subscribe(EventBus.TOPIC_FUSED_STATE, self._on_fused_state)
         self._yard_missing_logged = False
+        self._solve_place = ""
         logger.info("SolverNode 初始化完成")
 
     # ------------------------------------------------------------------
@@ -165,6 +167,17 @@ class SolverNode:
                 self._bus.publish(EventBus.TOPIC_POSITION_RESULT, result)
         except Exception as exc:
             logger.exception(f"解算异常: {exc}")
+
+    def _note_solve_place(self, place: str) -> None:
+        """场内/场外只在状态变化时记一条，避免每帧刷屏。"""
+        if place == self._solve_place:
+            return
+        previous = self._solve_place or "启动"
+        self._solve_place = place
+        if place.startswith("场外"):
+            logger.warning("解算位置: %s → %s", previous, place)
+        else:
+            logger.info("解算位置: %s → %s", previous, place)
 
     def _sync_side(self, block: dict) -> None:
         layout = block.get("receiver_layout")
@@ -470,8 +483,15 @@ class SolverNode:
             outside.fix_quality_elec_ant2 = es
             outside.fix_quality_diesel = dp
             outside.fix_quality_diesel_ant2 = ds
+            reason = (
+                "轮胎中心不齐，无法判断是否在场内"
+                if center_ll is None
+                else "轮胎中心不在任一堆场多边形内"
+            )
+            self._note_solve_place(f"场外（{reason}）")
             return outside
 
+        self._note_solve_place(f"场内 {yard_id}")
         cal = self._calibration_ctx.get(yard_id or "")
         survey_pts = cal.survey_points if cal else []
         yard_meta = self._yard_manager.get_yard_meta(yard_id or "") or {}
@@ -821,6 +841,19 @@ class SolverNode:
         a2z = float(tly.get("antenna2_ecef_z", 0.0))
         if has_a2 and not (a2x == 0.0 and a2y == 0.0 and a2z == 0.0):
             c2 = (a2x, a2y, a2z)
+            # 副天线无解时会被收成赤道 ECEF（约 6378137,0,0）。
+            # 和主天线相距远超横梁时丢掉，避免中心被拉到几十万米。
+            sep = math.hypot(c2[0] - c1[0], c2[1] - c1[1], c2[2] - c1[2])
+            # 大于 40 m：空语句被收成赤道。小于 0.5 m：副天线被写成了主天线。
+            # 这两种都沿用上一次正常的副天线，中心不再跳。
+            if sep > 40.0 or sep < 0.5:
+                if self._trolley_last_c2 is not None:
+                    c2 = self._trolley_last_c2
+                else:
+                    c2 = c1
+                    has_a2 = False
+            else:
+                self._trolley_last_c2 = c2
         else:
             # 单天线：中心 = 主天线（双 GGA 未开时的降级）
             c2 = c1
@@ -870,6 +903,12 @@ class SolverNode:
         # 相对速度 = 仪表盘 ΔX/ΔY 在约 0.4 s 内的变化率。
         # 大车移动而相对零点不动 → 0。不用 GNSS 地速。
         _REL_WINDOW_S = 0.4
+        # 副天线空语句会把相对位置打飞。这一帧不拿去算速度，否则接下来
+        # 0.4 秒里好位置也会显示出几百万米每秒。
+        if self._trolley_rel_hist:
+            _prev_t, prev_x, prev_y = self._trolley_rel_hist[-1]
+            if math.hypot(trolley.rel_x - prev_x, trolley.rel_y - prev_y) > 3.0:
+                self._trolley_rel_hist = []
         self._trolley_rel_hist.append((now, trolley.rel_x, trolley.rel_y))
         self._trolley_rel_hist = [
             p for p in self._trolley_rel_hist if now - p[0] <= 1.0

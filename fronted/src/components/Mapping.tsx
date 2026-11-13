@@ -143,7 +143,9 @@ export default function Mapping({ liveData: _liveData }: MappingProps) {
       await fetchYards();
       showToast(axisMode === 'fit' ? '已改为全部贝位拟合 +Y' : '已用两点确定 +Y');
     } catch (e) {
-      showToast(e instanceof Error ? e.message : '保存 Y 轴失败', 'error');
+      const message = e instanceof Error ? e.message : '保存 Y 轴失败';
+      logger.error('Mapping', '保存 Y 轴失败', message);
+      showToast(message, 'error');
     } finally {
       setSavingAxis(false);
     }

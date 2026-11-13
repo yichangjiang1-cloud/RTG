@@ -141,6 +141,8 @@ class GnssReceiver(threading.Thread):
         self._last_data_time: float = 0.0
         self._ever_received: bool = False
         self._last_timeout_warn: float = 0.0
+        self._parse_fail_count = 0
+        self._parse_fail_log_ts = 0.0
         self._peer_addr: Optional[tuple] = None
         # 副天线最近一次有效 GGA（跨 UDP 包保留，供「一行一 GGA」类接收机/模拟器）
         self._cached_antenna2: Optional[dict] = None
@@ -628,11 +630,17 @@ class GnssReceiver(threading.Thread):
             try:
                 parsed.append(parse_sentence(sentence))
             except Exception:
-                logger.debug(
-                    "[%s] 语句解析失败，已丢弃: %s",
-                    self.receiver_id,
-                    sentence[:80],
-                )
+                self._parse_fail_count += 1
+                now = time.time()
+                if now - self._parse_fail_log_ts >= 30.0:
+                    logger.warning(
+                        "[%s] %d 条语句解析失败，最近一条: %s",
+                        self.receiver_id,
+                        self._parse_fail_count,
+                        sentence[:80],
+                    )
+                    self._parse_fail_count = 0
+                    self._parse_fail_log_ts = now
         parsed = [r for r in parsed if r is not None]
         gga_total = sum(1 for r in parsed if r.get("type") == "GGA")
 
@@ -690,10 +698,24 @@ class GnssReceiver(threading.Thread):
         self._cache_ntrip_gga(parsed)
 
     def _apply_secondary_gga(self, parsed: dict) -> None:
-        self._frame.antenna2_latitude = parsed["lat"]
-        self._frame.antenna2_longitude = parsed["lon"]
+        lat = float(parsed.get("lat") or 0.0)
+        lon = float(parsed.get("lon") or 0.0)
+        fix = int(parsed.get("fix_quality") or 0)
+        # 无坐标或无解不能覆盖上一帧有效副天线，否则缓存会被 0,0 冲掉。
+        if fix <= 0 or (abs(lat) < 1e-7 and abs(lon) < 1e-7):
+            return
+        # 一个 UDP 包里如果叠了两个历元，第 2 条 GGA 是下一历元的主天线，
+        # 和当前主天线几乎重合。不能把它写成副天线，否则小车2会跳到小车1上。
+        if self._frame.latitude is not None and self._frame.longitude is not None:
+            dist = self._horizontal_distance_m(
+                self._frame.latitude, self._frame.longitude, lat, lon,
+            )
+            if dist < 0.5:
+                return
+        self._frame.antenna2_latitude = lat
+        self._frame.antenna2_longitude = lon
         self._frame.antenna2_altitude = parsed["alt"]
-        self._frame.antenna2_fix_quality = FixQuality(parsed["fix_quality"])
+        self._frame.antenna2_fix_quality = FixQuality(fix)
         self._frame.antenna2_num_satellites = parsed["num_sats"]
         self._frame.antenna2_hdop = parsed["hdop"]
         self._cached_antenna2 = parsed

@@ -127,6 +127,8 @@ class BridgeNode:
 
         self._plc_lock = threading.Lock()
 
+        self._plc_hold_reason: Optional[str] = None
+
 
 
         self._send_thread: Optional[threading.Thread] = None
@@ -257,15 +259,31 @@ class BridgeNode:
 
 
 
-            if (
+            if result is None:
 
-                result is None
+                hold = "尚无解算结果"
 
-                or not self._plc_client
+            elif not self._plc_client or not self._plc_client.is_connected:
 
-                or not self._plc_client.is_connected
+                hold = "PLC 未连接"
 
-            ):
+            else:
+
+                hold = None
+
+            if hold != self._plc_hold_reason:
+
+                if hold:
+
+                    logger.warning("PLC 发帧暂停: %s", hold)
+
+                elif self._plc_hold_reason:
+
+                    logger.info("PLC 发帧恢复")
+
+                self._plc_hold_reason = hold
+
+            if hold:
 
                 next_send_time += self._send_interval
 

@@ -119,6 +119,11 @@ class YardManager:
     ) -> Optional[str]:
         """四个轮胎中心的中点落在多边形内才算在该场。重叠时取面积最小的场。"""
         if lat is None or lon is None:
+            if self._current_yard_id is not None:
+                logger.info(
+                    "RTG 堆场判定: %s -> 场外（轮胎中心不齐，无法判断是否在场内）",
+                    self._current_yard_id,
+                )
             self._current_yard_id = None
             return None
         best_id = None

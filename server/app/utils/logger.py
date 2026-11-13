@@ -43,3 +43,28 @@ def setup_logging():
 def get_logger(name: str) -> logging.Logger:
     """获取指定名称的日志记录器"""
     return logging.getLogger(name)
+
+
+def get_frontend_file_logger() -> logging.Logger:
+    """浏览器上报的日志，单独写入 logs/frontend.log，不进 backend.log。"""
+    log = logging.getLogger("rtg.frontend")
+    if log.handlers:
+        return log
+    log_dir = os.path.dirname(settings.LOG_FILE) or "logs"
+    os.makedirs(log_dir, exist_ok=True)
+    path = os.path.join(log_dir, "frontend.log")
+    handler = RotatingFileHandler(
+        path,
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    log.setLevel(logging.INFO)
+    log.addHandler(handler)
+    log.propagate = False
+    log.info("前端日志文件已打开: %s", path)
+    return log

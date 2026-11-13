@@ -5,6 +5,7 @@ import { useAppContext } from '../context/AppContext';
 import { clsx } from 'clsx';
 import { normalizeYardIdInput, validateYardId, PLC_YARD_ID_MAX_LEN } from '../utils/yardId';
 import { httpBase } from '../utils/backendUrl';
+import { logger } from '../utils/logger';
 
 // ── 新建场地弹窗 ──────────────────────────────────────
 function CreateYardModal({ backendBase, onClose, onDone }: {
@@ -64,6 +65,7 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
       onDone();
     } catch (e) {
       const msg = e instanceof Error ? e.message : '创建失败，请检查后端连接';
+      logger.error('Settings', '新建场地失败', msg);
       showToast(msg, 'error');
     } finally {
       setSaving(false);
