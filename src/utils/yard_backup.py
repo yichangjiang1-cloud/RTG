@@ -95,6 +95,7 @@ def fetch_from_api(api: "ApiClient", vehicle_id: str) -> Optional[dict]:
             "source_vehicle_id": map_payload.get("source_vehicle_id"),
             "transform_list": map_payload.get("transform_list") or [],
             "source_transform_list": map_payload.get("source_transform_list") or [],
+            "lane_corrections": map_payload.get("lane_corrections") or [],
         }
 
     return {
@@ -181,6 +182,7 @@ def map_snapshot_for_yard(backup: dict, yard_id: str) -> Optional[dict]:
         "transform_list": block.get("transform_list") or [],
         "source_transform_list": block.get("source_transform_list") or [],
         "survey_points": block.get("survey_points") or [],
+        "lane_corrections": block.get("lane_corrections") or [],
         "has_rtk_map": block.get("has_rtk_map", False),
         "rtk_point_count": block.get("rtk_point_count", 0),
     }

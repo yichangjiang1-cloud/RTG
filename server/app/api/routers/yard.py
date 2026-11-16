@@ -6,7 +6,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.database import get_db
-from app.models import Yard, CalibrationData, SurveyPoint, VehicleBayTransform
+from app.models import Yard, CalibrationData, SurveyPoint, VehicleBayTransform, LaneCorrection
 from sqlalchemy import func
 from app.schemas import ApiResponse
 from app.utils.logger import get_logger
@@ -261,6 +261,24 @@ async def get_yard_map(
                 for t in transforms
             ]
 
+        lane_corrections = []
+        if vehicle_id:
+            rows = db.query(LaneCorrection).filter(
+                LaneCorrection.vehicle_id == vehicle_id,
+                LaneCorrection.yard_id == yard_id,
+            ).order_by(LaneCorrection.y_m.asc()).all()
+            lane_corrections = [
+                {
+                    "id": row.id,
+                    "y_m": row.y_m,
+                    "elec1_m": row.elec1_m,
+                    "elec2_m": row.elec2_m,
+                    "diesel1_m": row.diesel1_m,
+                    "diesel2_m": row.diesel2_m,
+                }
+                for row in rows
+            ]
+
         cal_mode = "none"
         if vehicle_id:
             cal_mode = resolve_calibration_mode(db, vehicle_id, yard_id)
@@ -280,6 +298,7 @@ async def get_yard_map(
                     calibration.source_vehicle_id if calibration else None
                 ),
                 "transform_list": transform_list,
+                "lane_corrections": lane_corrections,
                 "survey_points": [
                     {
                         "id": p.id,

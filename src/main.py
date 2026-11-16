@@ -288,6 +288,8 @@ class RTGSystem:
                 self._handle_start_svd(cmd)
             elif cmd_type == "CALIBRATION_FINALIZED":
                 self._handle_calibration_finalized(cmd)
+            elif cmd_type == "LANE_CORRECTION_UPDATED":
+                self._handle_calibration_finalized(cmd)
             elif cmd_type == "SET_TROLLEY_ORIGIN":
                 self._handle_set_trolley_origin(cmd)
             else:

@@ -194,6 +194,46 @@ class TestYardGeometry(unittest.TestCase):
         self.assertIsNone(node._side_reference_x(_Transform(), "B01", "elec"))
         self.assertIsNone(node._side_reference_x(_Transform(), "B01", "diesel"))
 
+    def test_lane_shift_holds_outside_the_ends_and_splits_when_a_middle_point_is_added(self):
+        from src.solver.yard_geometry import interpolate_lane_shifts
+
+        ends = [(0.0, (0.10, 0.0, 0.0, 0.0)), (10.0, (0.0, 0.0, 0.0, 0.0))]
+        self.assertAlmostEqual(interpolate_lane_shifts(-5.0, ends)[0], 0.10)
+        self.assertAlmostEqual(interpolate_lane_shifts(2.0, ends)[0], 0.08)
+        self.assertAlmostEqual(interpolate_lane_shifts(20.0, ends)[0], 0.0)
+        with_middle = ends + [(4.0, (-0.05, 0.0, 0.0, 0.0))]
+        self.assertAlmostEqual(interpolate_lane_shifts(0.0, with_middle)[0], 0.10)
+        self.assertAlmostEqual(interpolate_lane_shifts(2.0, with_middle)[0], 0.025)
+        self.assertAlmostEqual(interpolate_lane_shifts(4.0, with_middle)[0], -0.05)
+        self.assertAlmostEqual(interpolate_lane_shifts(10.0, with_middle)[0], 0.0)
+        self.assertEqual(interpolate_lane_shifts(3.0, []), (0.0, 0.0, 0.0, 0.0))
+
+    def test_additional_centimeters_accumulate_on_the_correction_already_in_effect(self):
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
+        from app.utils.lane_correction import absolute_with_additional, interpolate_lane_shifts
+
+        first = absolute_with_additional(0.0, [], (0.60, 0.60, 0.60, 0.60))
+        self.assertEqual(first, (0.60, 0.60, 0.60, 0.60))
+        points = [(0.0, first)]
+        second = absolute_with_additional(100.0, points, (0.05, 0.0, 0.0, 0.0))
+        self.assertAlmostEqual(second[0], 0.65)
+        self.assertAlmostEqual(second[1], 0.60)
+        both = points + [(100.0, second)]
+        self.assertAlmostEqual(interpolate_lane_shifts(50.0, both)[0], 0.625)
+        self.assertAlmostEqual(interpolate_lane_shifts(50.0, both)[1], 0.60)
+
+    def test_signed_deviation_moves_toward_the_yard_interior(self):
+        from src.solver.yard_geometry import deviation_adjust_to_dx
+
+        # 场心在 +X，朝场内 5 cm 应把轮胎往 +X 移
+        self.assertAlmostEqual(deviation_adjust_to_dx(-0.05, 10.0, 1.5), 0.05)
+        # 场心在贝位线的 -X 一侧，朝场内 5 cm 应往 -X 移
+        self.assertAlmostEqual(deviation_adjust_to_dx(-0.05, 10.0, 20.0), -0.05)
+        self.assertAlmostEqual(deviation_adjust_to_dx(0.05, 10.0, 20.0), 0.05)
+
 
 if __name__ == "__main__":
     unittest.main()

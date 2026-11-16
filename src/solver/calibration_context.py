@@ -30,6 +30,7 @@ class YardCalibrationState:
     own_anchors: List[BayAnchor] = field(default_factory=list)
     source_anchors: List[BayAnchor] = field(default_factory=list)
     survey_points: List[dict] = field(default_factory=list)
+    lane_corrections: List[tuple] = field(default_factory=list)
     bay_spacing: float = 6.0
     ref_lat_deg: float = 0.0
 
@@ -134,6 +135,7 @@ class CalibrationContextManager:
                 p for p in (raw.get("survey_points") or [])
                 if p.get("bay_no") is not None
             ],
+            lane_corrections=_lane_corrections(raw.get("lane_corrections")),
             bay_spacing=spacing,
             ref_lat_deg=ref_lat_deg,
         )
@@ -156,6 +158,12 @@ class CalibrationContextManager:
                 mode,
                 status,
             )
+        if state.lane_corrections:
+            logger.info(
+                "横向修正已加载 yard=%s 停留点=%d",
+                yard_id,
+                len(state.lane_corrections),
+            )
         return state
 
     def apply_b_matrix(self, yard_id: str, M: np.ndarray) -> None:
@@ -177,3 +185,20 @@ def _parse_matrix(raw) -> Optional[np.ndarray]:
         except (TypeError, ValueError):
             return None
     return None
+
+
+def _lane_corrections(raw) -> list:
+    """停留点修正：(沿贝位 Y, (电气1, 电气2, 动力1, 动力2))，单位米。"""
+    out = []
+    keys = ("elec1_m", "elec2_m", "diesel1_m", "diesel2_m")
+    for item in raw or []:
+        if not isinstance(item, dict) or item.get("y_m") is None:
+            continue
+        try:
+            y = float(item["y_m"])
+            shifts = tuple(float(item.get(key) or 0.0) for key in keys)
+        except (TypeError, ValueError):
+            continue
+        out.append((y, shifts))
+    out.sort(key=lambda row: row[0])
+    return out

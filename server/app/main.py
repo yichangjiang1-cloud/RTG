@@ -67,6 +67,7 @@ async def lifespan(app: FastAPI):
     health.set_ws_manager(ws_manager)
     vehicle.set_mqtt_client(mqtt_client)
     survey.set_mqtt_client(mqtt_client)
+    calibration.set_mqtt_client(mqtt_client)
 
     get_frontend_file_logger()
     logger.info(f"监听端口: {settings.BACKEND_HOST}:{settings.BACKEND_PORT}")

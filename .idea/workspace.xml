@@ -4,8 +4,26 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="引入高德地图、车辆、堆场实时情况展示">
+    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="高德地图相关内容">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/vehicle_params.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/vehicle_params.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/yard_config.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/yard_config.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Calibration.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Calibration.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/api/routers/calibration.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/api/routers/calibration.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/api/routers/survey.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/api/routers/survey.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/api/routers/yard.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/api/routers/yard.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/models.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/schemas.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/schemas.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/bridge/plc_protocol_v1.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/plc_protocol_v1.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/solver/calibration_context.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/calibration_context.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/solver/solver_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/solver_node.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/solver/yard_geometry.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/yard_geometry.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/utils/yard_backup.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/yard_backup.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_protocol.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_protocol.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_yard_geometry.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_yard_geometry.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tools/sim_plc_server.py" beforeDir="false" afterPath="$PROJECT_DIR$/tools/sim_plc_server.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -265,7 +283,23 @@
       <option name="project" value="LOCAL" />
       <updated>1794555137454</updated>
     </task>
-    <option name="localTasksCounter" value="11" />
+    <task id="LOCAL-00011" summary="杆臂标定处理">
+      <option name="closed" value="true" />
+      <created>1794793823557</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1794793823557</updated>
+    </task>
+    <task id="LOCAL-00012" summary="高德地图相关内容">
+      <option name="closed" value="true" />
+      <created>1794794241630</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1794794241630</updated>
+    </task>
+    <option name="localTasksCounter" value="13" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -296,7 +330,9 @@
     <MESSAGE value="修正一堆" />
     <MESSAGE value="前端页面Ui修正" />
     <MESSAGE value="引入高德地图、车辆、堆场实时情况展示" />
-    <option name="LAST_COMMIT_MESSAGE" value="引入高德地图、车辆、堆场实时情况展示" />
+    <MESSAGE value="杆臂标定处理" />
+    <MESSAGE value="高德地图相关内容" />
+    <option name="LAST_COMMIT_MESSAGE" value="高德地图相关内容" />
   </component>
   <component name="github-copilot-workspace">
     <instructionFileLocations>

@@ -1,6 +1,7 @@
 """打点管理接口"""
 
 import json
+import math
 import re
 from typing import Optional
 
@@ -9,14 +10,21 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.models import SurveyPoint, CalibrationData, VehicleBayTransform, Yard
-from app.schemas import SurveyConfirmRequest, SurveyFinalizeRequest, SurveyBatchImportRequest, ApiResponse
+from app.models import SurveyPoint, CalibrationData, VehicleBayTransform, Yard, LaneCorrection
+from app.schemas import (
+    SurveyConfirmRequest,
+    SurveyFinalizeRequest,
+    SurveyBatchImportRequest,
+    LaneCorrectionRequest,
+    ApiResponse,
+)
 from app.utils.calibration_matrix import compute_transform_matrix
 from app.utils.calibration_mode import (
     resolve_calibration_mode,
     get_reference_vehicle_id,
 )
 from app.utils.constants import MQTT_TOPIC_CONTROL
+from app.utils.lane_correction import absolute_with_additional
 from app.utils.yard_geometry import (
     en_meters,
     is_electrical_bay,
@@ -842,3 +850,127 @@ async def batch_import_survey_points(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
+
+
+_LANE_MAX_M = 2.0
+_LANE_TOTAL_MAX_M = 5.0
+_LANE_SAME_Y_M = 0.5
+_LANE_KEYS = ("elec1_m", "elec2_m", "diesel1_m", "diesel2_m")
+_LANE_LABELS = ("电气 GNSS1", "电气 GNSS2", "动力 GNSS1", "动力 GNSS2")
+
+
+def _lane_shift(name: str, value: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{name} 不是数字")
+    if not math.isfinite(number) or abs(number) > _LANE_MAX_M:
+        raise HTTPException(status_code=400, detail=f"{name} 需在 ±{_LANE_MAX_M:.0f} 米以内")
+    return number
+
+
+def _lane_row(row: LaneCorrection) -> dict:
+    return {
+        "id": row.id,
+        "vehicle_id": row.vehicle_id,
+        "yard_id": row.yard_id,
+        "y_m": row.y_m,
+        "elec1_m": row.elec1_m,
+        "elec2_m": row.elec2_m,
+        "diesel1_m": row.diesel1_m,
+        "diesel2_m": row.diesel2_m,
+    }
+
+
+def _notify_lane_correction(vehicle_id: str, yard_id: str) -> None:
+    """通知中控重新拉取堆场，使停留点修正立即参与定位。"""
+    if not _mqtt_client or not _mqtt_client.is_connected():
+        logger.warning("MQTT 未连接，停留点修正已保存，中控需重新同步后生效")
+        return
+    topic = MQTT_TOPIC_CONTROL.format(vehicle_id=vehicle_id)
+    payload = json.dumps(
+        {
+            "cmd": "CALIBRATION_FINALIZED",
+            "data": {"vehicle_id": vehicle_id, "yard_id": yard_id},
+        },
+        ensure_ascii=False,
+    )
+    _mqtt_client.publish(topic, payload, qos=settings.MQTT_QOS_CONTROL)
+    logger.info(f"已下发横向修正更新: {topic} yard={yard_id}")
+
+
+@router.get("/lane_corrections", response_model=ApiResponse)
+def list_lane_corrections(
+    vehicle_id: str,
+    yard_id: str,
+    db: Session = Depends(get_db),
+):
+    rows = db.query(LaneCorrection).filter(
+        LaneCorrection.vehicle_id == vehicle_id,
+        LaneCorrection.yard_id == yard_id,
+    ).order_by(LaneCorrection.y_m.asc()).all()
+    return ApiResponse(code=200, message="获取成功", data=[_lane_row(row) for row in rows])
+
+
+@router.post("/lane_corrections", response_model=ApiResponse)
+def save_lane_correction(req: LaneCorrectionRequest, db: Session = Depends(get_db)):
+    if not req.vehicle_id or not req.yard_id:
+        raise HTTPException(status_code=400, detail="需要车辆和场地")
+    if not math.isfinite(float(req.y_m)):
+        raise HTTPException(status_code=400, detail="沿贝位位置无效")
+    additional = tuple(
+        _lane_shift(label, getattr(req, key))
+        for label, key in zip(_LANE_LABELS, _LANE_KEYS)
+    )
+    existing = db.query(LaneCorrection).filter(
+        LaneCorrection.vehicle_id == req.vehicle_id,
+        LaneCorrection.yard_id == req.yard_id,
+    ).all()
+    points = [
+        (item.y_m, (item.elec1_m, item.elec2_m, item.diesel1_m, item.diesel2_m))
+        for item in existing
+    ]
+    totals = absolute_with_additional(float(req.y_m), points, additional)
+    for label, total in zip(_LANE_LABELS, totals):
+        if abs(total) > _LANE_TOTAL_MAX_M:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{label} 累计后为 {total * 100:.1f} cm，超过 ±{_LANE_TOTAL_MAX_M * 100:.0f} cm",
+            )
+    row = next((item for item in existing if abs(item.y_m - float(req.y_m)) <= _LANE_SAME_Y_M), None)
+    updated = row is not None
+    if row is None:
+        row = LaneCorrection(vehicle_id=req.vehicle_id, yard_id=req.yard_id, y_m=float(req.y_m))
+        db.add(row)
+    row.y_m = float(req.y_m)
+    for key, value in zip(_LANE_KEYS, totals):
+        setattr(row, key, value)
+    db.commit()
+    db.refresh(row)
+    _notify_lane_correction(req.vehicle_id, req.yard_id)
+    changed = [
+        f"{label} {total * 100:.1f} cm"
+        for label, extra, total in zip(_LANE_LABELS, additional, totals)
+        if abs(extra) >= 5e-4
+    ]
+    if changed:
+        message = ("已更新。" if updated else "已记录。") + "这一点累计为 " + "，".join(changed)
+    else:
+        message = "没有追加厘米数，该位置保持现有修正"
+    return ApiResponse(code=200, message=message, data=_lane_row(row))
+
+
+@router.delete("/lane_corrections/{row_id}", response_model=ApiResponse)
+def delete_lane_correction(
+    row_id: int,
+    vehicle_id: str,
+    db: Session = Depends(get_db),
+):
+    row = db.query(LaneCorrection).filter(LaneCorrection.id == row_id).first()
+    if row is None or row.vehicle_id != vehicle_id:
+        raise HTTPException(status_code=404, detail="修正点不存在")
+    yard_id = row.yard_id
+    db.delete(row)
+    db.commit()
+    _notify_lane_correction(vehicle_id, yard_id)
+    return ApiResponse(code=200, message="已删除", data={"id": row_id})

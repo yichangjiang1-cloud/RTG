@@ -313,13 +313,9 @@ def format_uplink_full(f: dict) -> str:
         lines.append("     含义：相对堆场原点的高度，单位 mm")
         xyz_no += 3
     lines.append("  42 预留（无符短整型 × 20）")
-    lines.append("     含义：预留")
+    lines.append("     含义：预留，全部为 0，不承载大车航向")
     for i, value in enumerate(f["reserved"], start=1):
-        extra = ""
-        if i == 1:
-            heading = int(value) / 100.0
-            extra = f"    当前中控把第 1 个字用作大车航向 {heading:.2f}°（0.01°，0～35999）"
-        lines.append(f"     [{i:02d}] {value}{extra}")
+        lines.append(f"     [{i:02d}] {value}")
     lines.append("  43 包尾 = 0x0A0D")
     lines.append("     含义：帧尾，示例 0x0A0D")
     lines.append("==========================================================")

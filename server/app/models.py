@@ -135,3 +135,23 @@ class VehicleBayTransform(Base):
     __table_args__ = (
         Index('idx_vehicle_yard_bay', 'vehicle_id', 'yard_id', 'bay_no', unique=True),
     )
+
+
+class LaneCorrection(Base):
+    """任意停留点的横向修正。负值朝场内，正值朝场外，单位米。沿贝位位置 y_m 分段过渡。"""
+    __tablename__ = "lane_corrections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    vehicle_id = Column(String(50), index=True, nullable=False)
+    yard_id = Column(String(50), index=True, nullable=False)
+    y_m = Column(Float, nullable=False)
+    elec1_m = Column(Float, nullable=False, default=0.0)
+    elec2_m = Column(Float, nullable=False, default=0.0)
+    diesel1_m = Column(Float, nullable=False, default=0.0)
+    diesel2_m = Column(Float, nullable=False, default=0.0)
+    created_at = Column(DateTime, default=get_cst_now)
+    updated_at = Column(DateTime, default=get_cst_now, onupdate=get_cst_now)
+
+    __table_args__ = (
+        Index('idx_lane_correction_vehicle_yard', 'vehicle_id', 'yard_id'),
+    )

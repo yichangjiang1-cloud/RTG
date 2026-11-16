@@ -218,6 +218,46 @@ def lane_deviations_mm(
     return out
 
 
+def deviation_adjust_to_dx(delta_dev_m: float, centroid_x: float, x_ref: float) -> float:
+    """把与字段 12–15 同号的修正量换成堆场 X 位移。朝场内为负。"""
+    if float(centroid_x) - float(x_ref) > 1e-6:
+        return -float(delta_dev_m)
+    return float(delta_dev_m)
+
+
+def interpolate_lane_shifts(
+    y: float,
+    points: Sequence[Tuple[float, Sequence[float]]],
+) -> Tuple[float, float, float, float]:
+    """
+    按沿贝位位置分段线性插值四个轮胎的修正量。
+    两端之外保持最近一点，不向外延伸斜率。没有点时四个都是 0。
+    """
+    usable = [
+        (float(py), tuple(float(v) for v in shifts[:4]))
+        for py, shifts in points
+        if shifts is not None and len(shifts) >= 4
+    ]
+    zeros = (0.0, 0.0, 0.0, 0.0)
+    if not usable:
+        return zeros
+    usable.sort(key=lambda item: item[0])
+    if len(usable) == 1 or float(y) <= usable[0][0]:
+        return usable[0][1]  # type: ignore[return-value]
+    if float(y) >= usable[-1][0]:
+        return usable[-1][1]  # type: ignore[return-value]
+    for i in range(1, len(usable)):
+        y0, s0 = usable[i - 1]
+        y1, s1 = usable[i]
+        if float(y) <= y1:
+            span = y1 - y0
+            if abs(span) < 1e-9:
+                return s1  # type: ignore[return-value]
+            t = (float(y) - y0) / span
+            return tuple(a + (b - a) * t for a, b in zip(s0, s1))  # type: ignore[return-value]
+    return usable[-1][1]  # type: ignore[return-value]
+
+
 def polygon_area(polygon: Sequence[Point]) -> float:
     n = len(polygon)
     if n < 3:

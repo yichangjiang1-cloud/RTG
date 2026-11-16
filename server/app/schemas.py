@@ -182,6 +182,15 @@ class SurveyConfirmRequest(BaseModel):
     local_y: Optional[float] = None
     local_z: Optional[float] = None
 
+class LaneCorrectionRequest(BaseModel):
+    vehicle_id: str
+    yard_id: str
+    y_m: float
+    elec1_m: float = 0.0
+    elec2_m: float = 0.0
+    diesel1_m: float = 0.0
+    diesel2_m: float = 0.0
+
 class SurveyBatchPoint(BaseModel):
     bay_id: str
     lat: float

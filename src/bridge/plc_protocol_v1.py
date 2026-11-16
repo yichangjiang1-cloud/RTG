@@ -41,7 +41,7 @@ _GNSS_BODY_FMT = (
     "hhh"  # 19-21 速度 mm/s
     "HH"  # 22-23 过街场标志
     + "IIH" * 6  # 24-41 六天线 XYZ（X/Y uint32 mm, Z uint16 mm）
-    + "20H"  # 42 预留
+    + "20H"  # 42 预留，20 个字全部填 0，不用作大车航向
     + "H"  # 43 包尾
 )
 GNSS_TO_PLC_SIZE = _HEADER_SIZE + struct.calcsize(_GNSS_BODY_FMT)
@@ -323,7 +323,7 @@ def encode_gnss_to_plc(
         *a_dsl2,
         *tly1,
         *tly2,
-        *([0] * 20),
+        *([0] * 20),  # 42 预留，不含航向
         FRAME_FOOTER,
     )
 

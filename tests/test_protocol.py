@@ -94,7 +94,6 @@ class TestPlcProtocolV1(unittest.TestCase):
             is_valid=True,
         )
 
-        result.gantry.heading = 90.0
         result.gantry.tire_elec1 = (1.25, 2.0, -1.5)
         result.gantry.tire_elec1_valid = True
         result.gantry.lane_mm = [-120, 80, -30, 40]
@@ -108,8 +107,8 @@ class TestPlcProtocolV1(unittest.TestCase):
         self.assertEqual(struct.unpack("<i", struct.pack("<I", x_mm))[0], 1250)
         self.assertEqual(struct.unpack("<i", struct.pack("<I", y_mm))[0], 2000)
         self.assertEqual(z_mm, 1500)
-        reserved0 = struct.unpack_from("<H", frame, GNSS_TO_PLC_SIZE - 2 - 40)[0]
-        self.assertEqual(reserved0, 9000)
+        reserved = struct.unpack_from("<20H", frame, GNSS_TO_PLC_SIZE - 2 - 40)
+        self.assertEqual(reserved, (0,) * 20)
         magic = struct.unpack_from("<H", frame, 0)[0]
         self.assertEqual(magic, FRAME_MAGIC)
         footer = struct.unpack_from("<H", frame, GNSS_TO_PLC_SIZE - 2)[0]

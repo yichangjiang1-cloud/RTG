@@ -28,10 +28,56 @@ interface TransformRow {
   delta?: { lat: number; lon: number; alt: number };
 }
 
+interface LanePoint {
+  id: number;
+  y_m: number;
+  elec1_m: number;
+  elec2_m: number;
+  diesel1_m: number;
+  diesel2_m: number;
+}
+
+const LANE_FIELDS = [
+  { key: 'elec1', label: '电气 GNSS1', live: 'fl' },
+  { key: 'elec2', label: '电气 GNSS2', live: 'rl' },
+  { key: 'diesel1', label: '动力 GNSS1', live: 'fr' },
+  { key: 'diesel2', label: '动力 GNSS2', live: 'rr' },
+] as const;
+
+function cmToMeters(text: string): number | null {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  const cm = Number(trimmed);
+  if (!Number.isFinite(cm) || Math.abs(cm) > 200) return null;
+  return cm / 100;
+}
+
+function oneRowPerBay(
+  points: Array<{ bay_no: number; lat: number; lon: number; alt: number; bay_side?: string | null }>,
+): RtkBay[] {
+  const byBay: Record<number, RtkBay> = {};
+  for (const point of points) {
+    if (point.bay_no == null) continue;
+    const diesel = point.bay_side === 'diesel';
+    const existing = byBay[point.bay_no];
+    if (existing && (diesel || point.bay_side == null)) continue;
+    byBay[point.bay_no] = {
+      bay_no: point.bay_no,
+      bay_id: String(point.bay_no),
+      lat: point.lat,
+      lon: point.lon,
+      alt: point.alt,
+    };
+  }
+  return Object.values(byBay).sort((a, b) => a.bay_no - b.bay_no);
+}
+
 function parseBayNo(value: string): number | null {
   const n = parseInt(value.replace(/\D/g, ''), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
+
+const PAGE_SIZE = 10;
 
 export default function Calibration({ liveData }: CalibrationProps) {
   const { vehicles, yards, selectedVehicleId, selectedYardId, backendConfig } = useAppContext();
@@ -47,6 +93,12 @@ export default function Calibration({ liveData }: CalibrationProps) {
   const [confirming, setConfirming] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [lanePoints, setLanePoints] = useState<LanePoint[]>([]);
+  const [laneCm, setLaneCm] = useState({ elec1: '', elec2: '', diesel1: '', diesel2: '' });
+  const [savingLane, setSavingLane] = useState(false);
+  const [bayQuery, setBayQuery] = useState('');
+  const [listStatus, setListStatus] = useState<'all' | 'saved' | 'pending'>('all');
+  const [page, setPage] = useState(0);
 
   const baseUrl = httpBase(backendConfig);
   const yardId = selectedYard?.yard_id ?? '';
@@ -58,15 +110,7 @@ export default function Calibration({ liveData }: CalibrationProps) {
     );
     const histJson = await histRes.json();
     if (histJson.code !== 200 || !Array.isArray(histJson.data)) return [];
-    return histJson.data
-      .filter((p: { bay_no?: number | null }) => p.bay_no != null)
-      .map((p: { bay_no: number; lat: number; lon: number; alt: number }) => ({
-        bay_no: p.bay_no,
-        bay_id: String(p.bay_no),
-        lat: p.lat,
-        lon: p.lon,
-        alt: p.alt,
-      }));
+    return oneRowPerBay(histJson.data);
   };
 
   const loadTransformList = useCallback(async (): Promise<TransformRow[]> => {
@@ -97,7 +141,7 @@ export default function Calibration({ liveData }: CalibrationProps) {
         rtk_point_count?: number;
         calibration_mode?: string;
         calibration_status?: string;
-        survey_points?: Array<{ bay_no: number | null; lat: number; lon: number; alt: number }>;
+        survey_points?: Array<{ bay_no: number | null; lat: number; lon: number; alt: number; bay_side?: string | null }>;
         transform_list?: TransformRow[];
       } = {};
 
@@ -113,15 +157,9 @@ export default function Calibration({ liveData }: CalibrationProps) {
         logger.warn('Calibration', 'yard/map 失败', mapErr);
       }
 
-      let bays: RtkBay[] = (d.survey_points ?? [])
-        .filter(p => p.bay_no != null)
-        .map(p => ({
-          bay_no: p.bay_no as number,
-          bay_id: String(p.bay_no),
-          lat: p.lat,
-          lon: p.lon,
-          alt: p.alt,
-        }));
+      let bays: RtkBay[] = oneRowPerBay(
+        (d.survey_points ?? []).filter((p): p is { bay_no: number; lat: number; lon: number; alt: number; bay_side?: string | null } => p.bay_no != null),
+      );
 
       if (bays.length === 0) {
         bays = await fetchRtkFromHistory();
@@ -316,6 +354,123 @@ export default function Calibration({ liveData }: CalibrationProps) {
     }
   };
 
+  const loadLanePoints = useCallback(async () => {
+    if (!yardId || !selectedVehicleId) {
+      setLanePoints([]);
+      return;
+    }
+    try {
+      const res = await fetch(
+        `${baseUrl}/api/survey/lane_corrections?vehicle_id=${encodeURIComponent(selectedVehicleId)}&yard_id=${encodeURIComponent(yardId)}`,
+        { signal: AbortSignal.timeout(5000) },
+      );
+      const body = await res.json();
+      if (body.code === 200 && Array.isArray(body.data)) {
+        setLanePoints(body.data);
+      }
+    } catch (e) {
+      logger.warn('Calibration', '读取停留修正失败', e);
+    }
+  }, [baseUrl, yardId, selectedVehicleId]);
+
+  useEffect(() => { loadLanePoints(); }, [loadLanePoints]);
+
+  const visibleBays = rtkBays.filter(bay => {
+    const saved = transformList.some(row => row.bay_no === bay.bay_no);
+    if (listStatus === 'saved' && !saved) return false;
+    if (listStatus === 'pending' && saved) return false;
+    const query = bayQuery.trim();
+    return !query || String(bay.bay_no).includes(query);
+  });
+  const pageCount = Math.max(1, Math.ceil(visibleBays.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageBays = visibleBays.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+
+  useEffect(() => { setPage(0); }, [bayQuery, listStatus, yardId]);
+
+  const handleSaveLane = async () => {
+    if (!selectedVehicleId || savingLane) return;
+    if (liveData.status === 'no_signal') {
+      showToast('当前没有定位，先停车等信号稳定', 'error');
+      return;
+    }
+    const shifts: Record<string, number> = {};
+    for (const field of LANE_FIELDS) {
+      const meters = cmToMeters(laneCm[field.key]);
+      if (meters === null) {
+        showToast(`${field.label} 请填 ±200 cm 以内的数字`, 'error');
+        return;
+      }
+      shifts[`${field.key}_m`] = meters;
+    }
+    setSavingLane(true);
+    try {
+      const res = await fetch(`${baseUrl}/api/survey/lane_corrections`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vehicle_id: selectedVehicleId,
+          yard_id: yardId,
+          y_m: liveData.local_coord?.y ?? 0,
+          ...shifts,
+        }),
+      });
+      const body = await res.json();
+      if (res.ok && body.code === 200) {
+        showToast(body.message || '已记录到全场');
+        setLaneCm({ elec1: '', elec2: '', diesel1: '', diesel2: '' });
+        loadLanePoints();
+      } else {
+        showToast(body.detail ?? body.message ?? '记录失败', 'error');
+      }
+    } catch {
+      showToast('记录失败', 'error');
+    } finally {
+      setSavingLane(false);
+    }
+  };
+
+  const handleDeleteBay = async (bay: number) => {
+    if (!selectedVehicleId) return;
+    if (!window.confirm(`删除贝位 ${bay} 的采点？\n删掉后这一贝不再参与差值，稍后可以重新确认。`)) return;
+    try {
+      const res = await fetch(
+        `${baseUrl}/api/calibration/transform_list/${bay}?vehicle_id=${encodeURIComponent(selectedVehicleId)}&yard_id=${encodeURIComponent(yardId)}`,
+        { method: 'DELETE' },
+      );
+      const body = await res.json();
+      if (res.ok && body.code === 200) {
+        setTransformList(prev => prev.filter(row => row.bay_no !== bay));
+        if (body.data?.calibration_status === 'pending') setCalibrationStatus('pending');
+        showToast(body.message || `已删除贝位 ${bay}`);
+      } else {
+        showToast(body.detail ?? body.message ?? '删除失败', 'error');
+      }
+    } catch {
+      showToast('删除失败', 'error');
+    }
+  };
+
+  const handleDeleteLane = async (row: LanePoint) => {
+    if (!selectedVehicleId) return;
+    if (!window.confirm(`删除沿贝位 ${row.y_m.toFixed(1)} m 处的修正？`)) return;
+    try {
+      const res = await fetch(
+        `${baseUrl}/api/survey/lane_corrections/${row.id}?vehicle_id=${encodeURIComponent(selectedVehicleId)}`,
+        { method: 'DELETE' },
+      );
+      const body = await res.json();
+      if (res.ok && body.code === 200) {
+        showToast('已删除');
+        loadLanePoints();
+      } else {
+        showToast(body.detail ?? body.message ?? '删除失败', 'error');
+      }
+    } catch {
+      showToast('删除失败', 'error');
+    }
+  };
+
   if (!selectedYard) {
     return (
       <div className="animate-fade-in flex items-center justify-center min-h-[60vh]">
@@ -468,18 +623,49 @@ export default function Calibration({ liveData }: CalibrationProps) {
           </button>
         </div>
 
-        <div className="lg:col-span-3 card overflow-hidden">
+        <div className="lg:col-span-3 card overflow-hidden flex flex-col">
+          <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-slate-700/60">
+            <div className="inline-flex rounded-lg bg-slate-900 p-1 border border-slate-700">
+              {([
+                ['all', '全部'],
+                ['saved', '已采'],
+                ['pending', '待采'],
+              ] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setListStatus(id)}
+                  className={clsx(
+                    'px-3 py-1 rounded-md text-xs font-bold',
+                    listStatus === id ? 'bg-slate-600 text-white' : 'text-slate-400',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <input
+              className="input-field w-28 font-mono text-sm py-1.5"
+              inputMode="numeric"
+              placeholder="贝位号"
+              value={bayQuery}
+              onChange={e => setBayQuery(e.target.value.replace(/[^\d]/g, ''))}
+            />
+            <span className="text-xs text-slate-500 ml-auto">
+              {visibleBays.length} 个贝位
+            </span>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <thead className="bg-slate-700/30 border-b border-slate-700/60">
+              <thead className="bg-slate-800/80 border-b border-slate-700/60">
                 <tr>
-                  {['贝位', 'RTK Lat', 'ΔLat', 'ΔLon', 'ΔAlt', '状态'].map(h => (
-                    <th key={h} className="px-4 py-3 section-title whitespace-nowrap">{h}</th>
+                  {['贝位', 'RTK Lat', 'ΔLat', 'ΔLon', 'ΔAlt', '状态', ''].map(h => (
+                    <th key={h} className="px-4 py-2.5 section-title whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {rtkBays.map(b => {
+                {pageBays.map(b => {
                   const saved = transformList.find(t => t.bay_no === b.bay_no);
                   const d = saved?.delta;
                   const isSelected = parseBayNo(bayNo) === b.bay_no;
@@ -492,25 +678,140 @@ export default function Calibration({ liveData }: CalibrationProps) {
                         isSelected ? 'bg-blue-900/25' : 'hover:bg-slate-700/20',
                       )}
                     >
-                      <td className="px-4 py-3 font-mono font-bold text-white">{b.bay_no}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-slate-400">{b.lat.toFixed(7)}</td>
-                      <td className="px-4 py-3 font-mono text-xs">{d?.lat?.toFixed(7) ?? '—'}</td>
-                      <td className="px-4 py-3 font-mono text-xs">{d?.lon?.toFixed(7) ?? '—'}</td>
-                      <td className="px-4 py-3 font-mono text-xs">{d?.alt?.toFixed(3) ?? '—'}</td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-2.5 font-mono font-bold text-white">{b.bay_no}</td>
+                      <td className="px-4 py-2.5 font-mono text-xs text-slate-400">{b.lat.toFixed(7)}</td>
+                      <td className="px-4 py-2.5 font-mono text-xs">{d?.lat?.toFixed(7) ?? '—'}</td>
+                      <td className="px-4 py-2.5 font-mono text-xs">{d?.lon?.toFixed(7) ?? '—'}</td>
+                      <td className="px-4 py-2.5 font-mono text-xs">{d?.alt?.toFixed(3) ?? '—'}</td>
+                      <td className="px-4 py-2.5">
                         {saved ? (
                           <span className="text-emerald-400 text-xs">已采</span>
                         ) : (
                           <span className="text-slate-500 text-xs">待采</span>
                         )}
                       </td>
+                      <td className="px-4 py-2.5">
+                        {saved && (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              handleDeleteBay(b.bay_no);
+                            }}
+                            className="text-xs text-slate-400 hover:text-red-300"
+                          >
+                            删除
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
+                {pageBays.length === 0 && (
+                  <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-500">没有符合条件的贝位</td></tr>
+                )}
               </tbody>
             </table>
           </div>
+          <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-slate-700/60 text-xs text-slate-400">
+            <span>第 {safePage + 1} / {pageCount} 页，每页 {PAGE_SIZE} 个</span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={safePage <= 0}
+                onClick={() => setPage(safePage - 1)}
+                className="px-3 py-1 rounded-md border border-slate-600 disabled:opacity-40"
+              >
+                上一页
+              </button>
+              <button
+                type="button"
+                disabled={safePage >= pageCount - 1}
+                onClick={() => setPage(safePage + 1)}
+                className="px-3 py-1 rounded-md border border-slate-600 disabled:opacity-40"
+              >
+                下一页
+              </button>
+            </div>
+          </div>
         </div>
+      </div>
+
+      <div className="card p-5 space-y-4">
+        <div>
+          <h3 className="text-sm font-bold text-white">任意停留修正</h3>
+          <p className="text-xs text-slate-400 mt-1">
+            填写的是当前位置还差的厘米数，会加到这里已经生效的修正上。先前全场是 60 cm，这里再填 5，这一点记成 65 cm，两处正中间是 62.5 cm。
+            留空表示这个轮胎不再追加。负值朝场内（电气朝动力侧，动力朝电气侧），正值朝场外。表内是累计值。逐贝位采点不受影响。
+          </p>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {LANE_FIELDS.map(field => {
+            const liveM = liveData.gantry?.leg_offsets?.[field.live] ?? 0;
+            return (
+              <label key={field.key} className="space-y-1">
+                <span className="text-[11px] text-slate-400 block">{field.label}</span>
+                <span className="text-[10px] text-slate-500 block">当前 { (liveM * 100).toFixed(1) } cm</span>
+                <input
+                  className="input-field font-mono"
+                  inputMode="decimal"
+                  placeholder="再修正 cm"
+                  value={laneCm[field.key]}
+                  onChange={e => setLaneCm(prev => ({ ...prev, [field.key]: e.target.value }))}
+                />
+              </label>
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs text-slate-400 font-mono">
+            当前位置沿贝位 { (liveData.local_coord?.y ?? 0).toFixed(2) } m
+          </span>
+          <button
+            type="button"
+            onClick={handleSaveLane}
+            disabled={savingLane || liveData.status === 'no_signal'}
+            className="btn-primary flex items-center gap-2"
+          >
+            {savingLane ? <Loader className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            记录到全场
+          </button>
+        </div>
+        {lanePoints.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-slate-500 text-left">
+                  <th className="py-2 pr-3">沿贝位 m</th>
+                  {LANE_FIELDS.map(field => (
+                    <th key={field.key} className="py-2 pr-3">{field.label} cm</th>
+                  ))}
+                  <th className="py-2">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lanePoints.map(row => (
+                  <tr key={row.id} className="border-t border-slate-700/40 text-slate-200 font-mono">
+                    <td className="py-2 pr-3">{row.y_m.toFixed(1)}</td>
+                    <td className="py-2 pr-3">{(row.elec1_m * 100).toFixed(1)}</td>
+                    <td className="py-2 pr-3">{(row.elec2_m * 100).toFixed(1)}</td>
+                    <td className="py-2 pr-3">{(row.diesel1_m * 100).toFixed(1)}</td>
+                    <td className="py-2 pr-3">{(row.diesel2_m * 100).toFixed(1)}</td>
+                    <td className="py-2">
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteLane(row)}
+                        className="text-xs text-slate-400 hover:text-red-300"
+                      >
+                        删除
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

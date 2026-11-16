@@ -29,8 +29,10 @@ from src.solver.bay_residual import (
 from src.solver.coordinate_transform import ecef_to_enu, ecef_to_wgs84
 from src.solver.yard_geometry import (
     diesel_bays,
+    deviation_adjust_to_dx,
     electrical_bays,
     en_meters,
+    interpolate_lane_shifts,
     lane_deviations_mm,
     normalize_boundary,
     parallel_reference_x,
@@ -758,6 +760,7 @@ class SolverNode:
         raw_lpoint_y = gantry.lpoint_y
 
         gantry = self._apply_calibration_corrections(gantry, yard_id, transform)
+        self._apply_lane_corrections(gantry, transform, yard_id)
         self._fill_lane(gantry, transform, yard_id)
 
         gnss_speed, course_deg = _pick_gnss_motion(ga1, ga2, recv1_live, recv2_live)
@@ -1120,6 +1123,57 @@ class SolverNode:
             self._shift_tires(gantry, -rdx, -rdy, -dz)
 
         return gantry
+
+    def _lane_frame(self, transform, yard_id: str):
+        """场内方向和两侧贝位线。没有场界时无法判断朝内朝外，返回 None。"""
+        meta = self._yard_manager.get_yard_meta(yard_id or "") or {}
+        ring = normalize_boundary(meta.get("boundary"))
+        if len(ring) < 3:
+            return None
+        verts = [
+            transform.wgs84_to_lycs(lat, lon, float(transform.origin_alt))[:2]
+            for lat, lon in ring
+        ]
+        center = polygon_centroid(verts)
+        if center is None:
+            return None
+        elec_x = self._side_reference_x(transform, yard_id, "elec")
+        diesel_x = self._side_reference_x(transform, yard_id, "diesel")
+        elec_ref = 0.0 if elec_x is None else float(elec_x)
+        diesel_ref = elec_ref if diesel_x is None else float(diesel_x)
+        return float(center[0]), elec_ref, diesel_ref
+
+    def _apply_lane_corrections(self, gantry: GantryResult, transform, yard_id: str) -> None:
+        """任意停留点的横向修正。按沿贝位位置分段过渡，每个轮胎单独移动。"""
+        if transform is None or not getattr(transform, "axis_ready", False) or not yard_id:
+            return
+        cal = self._calibration_ctx.get(yard_id)
+        points = cal.lane_corrections if cal else []
+        if not points:
+            return
+        frame = self._lane_frame(transform, yard_id)
+        if frame is None:
+            return
+        centroid_x, elec_ref, diesel_ref = frame
+        shifts = interpolate_lane_shifts(gantry.lpoint_y, points)
+        specs = (
+            ("tire_elec1", "tire_elec1_valid", shifts[0], elec_ref),
+            ("tire_elec2", "tire_elec2_valid", shifts[1], elec_ref),
+            ("tire_diesel1", "tire_diesel1_valid", shifts[2], diesel_ref),
+            ("tire_diesel2", "tire_diesel2_valid", shifts[3], diesel_ref),
+        )
+        moved = False
+        for name, flag, dev, xref in specs:
+            if not getattr(gantry, flag):
+                continue
+            dx = deviation_adjust_to_dx(dev, centroid_x, xref)
+            if abs(dx) < 1e-6:
+                continue
+            x, y, z = getattr(gantry, name)
+            setattr(gantry, name, (x + dx, y, z))
+            moved = True
+        if moved:
+            self._recompute_centers(gantry)
 
 
 def _is_receiver_live(g: dict, now: float, stale_s: float = 0.5) -> bool:

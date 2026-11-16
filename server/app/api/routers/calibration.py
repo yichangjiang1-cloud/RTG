@@ -1,10 +1,13 @@
 """车辆场地校准：逐贝转换列表、校准模式判定"""
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
-from app.models import CalibrationData, VehicleBayTransform, SurveyPoint
+from app.models import CalibrationData, VehicleBayTransform
 from app.schemas import ApiResponse
 from app.utils.logger import get_logger
 from app.utils.calibration_mode import (
@@ -12,6 +15,36 @@ from app.utils.calibration_mode import (
     resolve_calibration_mode as _resolve_calibration_mode,
     get_reference_vehicle_id,
 )
+from app.utils.constants import MQTT_TOPIC_CONTROL
+
+logger = get_logger(__name__)
+router = APIRouter(prefix="/api/calibration", tags=["calibration"])
+
+RTK_VEHICLE_ID = "RTK_HANDHELD"
+_mqtt_client = None
+
+
+def set_mqtt_client(client):
+    """设置 MQTT 客户端（由 main.py 启动时调用）"""
+    global _mqtt_client
+    _mqtt_client = client
+
+
+def _notify_calibration_changed(vehicle_id: str, yard_id: str) -> None:
+    """通知中控重新拉取堆场，使删除后的采点立即退出定位。"""
+    if not _mqtt_client or not _mqtt_client.is_connected():
+        logger.warning("MQTT 未连接，采点已删除，中控需重新同步后生效")
+        return
+    topic = MQTT_TOPIC_CONTROL.format(vehicle_id=vehicle_id)
+    payload = json.dumps(
+        {
+            "cmd": "CALIBRATION_FINALIZED",
+            "data": {"vehicle_id": vehicle_id, "yard_id": yard_id},
+        },
+        ensure_ascii=False,
+    )
+    _mqtt_client.publish(topic, payload, qos=settings.MQTT_QOS_CONTROL)
+    logger.info(f"已通知中控刷新校准: {topic} yard={yard_id}")
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/calibration", tags=["calibration"])
@@ -138,3 +171,52 @@ async def clear_transform_list(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
         )
+
+
+@router.delete("/transform_list/{bay_no}", response_model=ApiResponse)
+async def delete_transform_bay(
+    bay_no: int,
+    vehicle_id: str,
+    yard_id: str,
+    db: Session = Depends(get_db),
+):
+    """删除本车在本场的一个贝位采点。其余贝位保留，稍后可重新确认这一贝。"""
+    if bay_no <= 0:
+        raise HTTPException(status_code=400, detail="贝位编号无效")
+    row = db.query(VehicleBayTransform).filter(
+        VehicleBayTransform.vehicle_id == vehicle_id,
+        VehicleBayTransform.yard_id == yard_id,
+        VehicleBayTransform.bay_no == bay_no,
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"贝位 {bay_no} 没有采点")
+    db.delete(row)
+    db.flush()
+    remaining = db.query(VehicleBayTransform).filter(
+        VehicleBayTransform.vehicle_id == vehicle_id,
+        VehicleBayTransform.yard_id == yard_id,
+    ).count()
+    cal_status = None
+    if remaining == 0:
+        cal = db.query(CalibrationData).filter(
+            CalibrationData.vehicle_id == vehicle_id,
+            CalibrationData.yard_id == yard_id,
+        ).first()
+        if cal:
+            cal.status = "pending"
+            cal.m_matrix = None
+            cal_status = "pending"
+    db.commit()
+    _notify_calibration_changed(vehicle_id, yard_id)
+    logger.info(f"删除校准采点: vehicle={vehicle_id} yard={yard_id} bay={bay_no} remaining={remaining}")
+    return ApiResponse(
+        code=200,
+        message=f"已删除贝位 {bay_no} 的采点",
+        data={
+            "vehicle_id": vehicle_id,
+            "yard_id": yard_id,
+            "bay_no": bay_no,
+            "remaining": remaining,
+            "calibration_status": cal_status,
+        },
+    )
