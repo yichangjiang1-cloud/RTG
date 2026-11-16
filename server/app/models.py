@@ -78,8 +78,12 @@ class VehicleConfig(Base):
     id = Column(Integer, primary_key=True, index=True)
     vehicle_id = Column(String(50), unique=True, index=True, nullable=False)
     l_arm = Column(JSON, nullable=True)  # 兼容单杆臂
-    l_arm_elec = Column(JSON, nullable=True)  # 电气房侧 A1 杆臂
-    l_arm_diesel = Column(JSON, nullable=True)  # 柴油机侧 A2 杆臂
+    l_arm_elec = Column(JSON, nullable=True)  # 电气下游，兼容旧字段
+    l_arm_diesel = Column(JSON, nullable=True)  # 动力下游，兼容旧字段
+    l_arm_elec_up = Column(JSON, nullable=True)
+    l_arm_elec_down = Column(JSON, nullable=True)
+    l_arm_diesel_up = Column(JSON, nullable=True)
+    l_arm_diesel_down = Column(JSON, nullable=True)
     height = Column(Float, nullable=True)  # 天线高度
     w_span = Column(Float, nullable=True)  # 跨距（参考）
     antennas = Column(JSON, nullable=True)  # 天线标识 {"ant1": {"label": "大车左前"}, ...}，用于区分 6 根天线的物理角色

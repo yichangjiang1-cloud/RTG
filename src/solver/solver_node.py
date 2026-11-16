@@ -28,10 +28,12 @@ from src.solver.bay_residual import (
 )
 from src.solver.coordinate_transform import ecef_to_enu, ecef_to_wgs84
 from src.solver.yard_geometry import (
+    diesel_bays,
     electrical_bays,
     en_meters,
-    lane_deviation_m,
+    lane_deviations_mm,
     normalize_boundary,
+    parallel_reference_x,
     polygon_centroid,
     resolve_bay_band,
     resolve_y_axis,
@@ -77,12 +79,29 @@ def _read_named_arm(cfg, flat_key: str):
     return [float(x) for x in arm[:3]]
 
 
-def _gantry_l_arms_from_cfg(cfg) -> tuple[list, list]:
-    """只读电气房 / 柴油机两套杆臂。缺省为零，不用旧的单杆臂。"""
-    zero = [0.0, 0.0, 0.0]
-    elec = _read_named_arm(cfg, "l_arm_elec") or zero
-    diesel = _read_named_arm(cfg, "l_arm_diesel") or zero
-    return elec, diesel
+def _arm_len(arm) -> float:
+    if not arm or len(arm) < 3:
+        return 0.0
+    return math.hypot(float(arm[0]), float(arm[1]), float(arm[2]))
+
+
+def _end_arm(cfg, end_key: str, side_key: str) -> list:
+    """一端单独标定过就用这一端。接近 0 的结果不当成杆臂，仍用该侧主天线那一套。"""
+    side = _read_named_arm(cfg, side_key) or [0.0, 0.0, 0.0]
+    end = _read_named_arm(cfg, end_key)
+    if end is not None and _arm_len(end) >= 0.05:
+        return end
+    return side
+
+
+def _gantry_l_arms_from_cfg(cfg) -> tuple[list, list, list, list]:
+    """电气下游、电气上游、动力下游、动力上游。缺省为零，不用旧的单杆臂。"""
+    return (
+        _end_arm(cfg, "l_arm_elec_down", "l_arm_elec"),
+        _end_arm(cfg, "l_arm_elec_up", "l_arm_elec"),
+        _end_arm(cfg, "l_arm_diesel_down", "l_arm_diesel"),
+        _end_arm(cfg, "l_arm_diesel_up", "l_arm_diesel"),
+    )
 
 
 class SolverNode:
@@ -104,10 +123,12 @@ class SolverNode:
         self._yard_manager = yard_manager
         self._calibration_ctx = calibration_ctx or CalibrationContextManager()
 
-        # 大车双作业点：接收机1 的 A1→电气房侧、A2→柴油机侧，各独立杆臂
-        l_arm_elec, l_arm_diesel = _gantry_l_arms_from_cfg(cfg)
-        self._solver_elec = LPointSolver(l_arm_elec)
-        self._solver_diesel = LPointSolver(l_arm_diesel)
+        # 四个轮胎各一根杆臂。没单独标定的一端先用该侧下游（主天线）那一套。
+        elec_down, elec_up, diesel_down, diesel_up = _gantry_l_arms_from_cfg(cfg)
+        self._solver_elec_down = LPointSolver(elec_down)
+        self._solver_elec_up = LPointSolver(elec_up)
+        self._solver_diesel_down = LPointSolver(diesel_down)
+        self._solver_diesel_up = LPointSolver(diesel_up)
 
         self._offline_timeout_s = max(
             0.1, float(cfg.get("gnss.offline_timeout_s", 0.5))
@@ -213,8 +234,8 @@ class SolverNode:
         return heading
 
     def _four_tire_ecef(self, ga1, ga2, roll, pitch, heading, recv1, recv2) -> dict:
-        """一侧一套杆臂，主天线和从天线各算出一个轮胎中心。"""
-        elec, diesel, elec_live, diesel_live, _elec_down, _diesel_down = self._sides(
+        """每个轮胎用自己那一端的杆臂。主天线在下游时，主天线套下游杆臂。"""
+        elec, diesel, elec_live, diesel_live, elec_down, diesel_down = self._sides(
             ga1, ga2, recv1, recv2,
         )
         out = {"elec1": None, "elec2": None, "diesel1": None, "diesel2": None}
@@ -227,10 +248,14 @@ class SolverNode:
                 return None
             return tuple(solver.solve(np.array(ecef), roll, pitch, heading))
 
-        out["elec1"] = solve(self._solver_elec, elec, elec_live, True)
-        out["elec2"] = solve(self._solver_elec, elec, elec_live, False)
-        out["diesel1"] = solve(self._solver_diesel, diesel, diesel_live, True)
-        out["diesel2"] = solve(self._solver_diesel, diesel, diesel_live, False)
+        elec_primary = self._solver_elec_down if elec_down else self._solver_elec_up
+        elec_secondary = self._solver_elec_up if elec_down else self._solver_elec_down
+        diesel_primary = self._solver_diesel_down if diesel_down else self._solver_diesel_up
+        diesel_secondary = self._solver_diesel_up if diesel_down else self._solver_diesel_down
+        out["elec1"] = solve(elec_primary, elec, elec_live, True)
+        out["elec2"] = solve(elec_secondary, elec, elec_live, False)
+        out["diesel1"] = solve(diesel_primary, diesel, diesel_live, True)
+        out["diesel2"] = solve(diesel_secondary, diesel, diesel_live, False)
         return out
 
     def _tire_centroid_wgs84(self, tires: dict):
@@ -295,20 +320,46 @@ class SolverNode:
         center = polygon_centroid(verts)
         if center is None:
             return
+        elec_x = self._side_reference_x(transform, yard_id, "elec")
+        diesel_x = self._side_reference_x(transform, yard_id, "diesel")
         tires = (
-            (gantry.tire_elec1, gantry.tire_elec1_valid),
-            (gantry.tire_elec2, gantry.tire_elec2_valid),
-            (gantry.tire_diesel1, gantry.tire_diesel1_valid),
-            (gantry.tire_diesel2, gantry.tire_diesel2_valid),
+            (float(gantry.tire_elec1[0]), bool(gantry.tire_elec1_valid)),
+            (float(gantry.tire_elec2[0]), bool(gantry.tire_elec2_valid)),
+            (float(gantry.tire_diesel1[0]), bool(gantry.tire_diesel1_valid)),
+            (float(gantry.tire_diesel2[0]), bool(gantry.tire_diesel2_valid)),
         )
-        mm = []
-        for point, ok in tires:
-            if not ok:
-                mm.append(0)
-                continue
-            mm.append(int(round(lane_deviation_m(point[0], center[0]) * 1000.0)))
+        mm = lane_deviations_mm(tires, center[0], elec_x, diesel_x)
         gantry.lane_mm = mm
         gantry.leg_offsets = [v / 1000.0 for v in mm]
+
+    def _side_reference_x(self, transform, yard_id: str, side: str) -> Optional[float]:
+        """该侧贝位点投影到当前堆场坐标后的平均 X。不足两个点时返回 None。"""
+        cal = self._calibration_ctx.get(yard_id or "")
+        points = cal.survey_points if cal else []
+        chosen = electrical_bays(points) if side == "elec" else diesel_bays(points)
+        label = "电气侧" if side == "elec" else "动力侧"
+        xs = []
+        for point in chosen:
+            if not isinstance(point, dict):
+                continue
+            lat = float(point.get("lat") or 0.0)
+            lon = float(point.get("lon") or 0.0)
+            if abs(lat) < 1e-9 and abs(lon) < 1e-9:
+                continue
+            x, _y, _z = transform.wgs84_to_lycs(lat, lon, float(point.get("alt") or 0.0))
+            xs.append(x)
+        fitted = parallel_reference_x(xs)
+        stamp = (yard_id, None if fitted is None else round(fitted, 3), len(xs))
+        attr = "_elec_line_stamp" if side == "elec" else "_diesel_line_stamp"
+        if stamp != getattr(self, attr, None):
+            setattr(self, attr, stamp)
+            if fitted is None and side == "elec":
+                logger.info("%s贝位线不足（%d 个点），偏差仍相对过原点的 +Y", label, len(xs))
+            elif fitted is None:
+                logger.info("%s贝位线不足（%d 个点），偏差改用电气侧贝位线", label, len(xs))
+            else:
+                logger.info("%s贝位线 X=%.3f m（%d 个点，平行于 +Y）", label, fitted, len(xs))
+        return fitted
 
     def _side_fix(self, ga1, ga2, recv1, recv2):
         elec, diesel, elec_live, diesel_live, _ed, _dd = self._sides(ga1, ga2, recv1, recv2)
@@ -992,13 +1043,15 @@ class SolverNode:
         block = cloud_config.get("config") if isinstance(cloud_config.get("config"), dict) else cloud_config
         if not block:
             return
-        elec = _read_named_arm(block, "l_arm_elec")
-        diesel = _read_named_arm(block, "l_arm_diesel")
-        if elec is not None:
-            self._solver_elec.update_l_arm(elec)
-        if diesel is not None:
-            self._solver_diesel.update_l_arm(diesel)
-        logger.info("已应用大车双作业点杆臂 elec=%s diesel=%s", elec, diesel)
+        elec_down, elec_up, diesel_down, diesel_up = _gantry_l_arms_from_cfg(block)
+        self._solver_elec_down.update_l_arm(elec_down)
+        self._solver_elec_up.update_l_arm(elec_up)
+        self._solver_diesel_down.update_l_arm(diesel_down)
+        self._solver_diesel_up.update_l_arm(diesel_up)
+        logger.info(
+            "已应用四轮胎杆臂 elec_down=%s elec_up=%s diesel_down=%s diesel_up=%s",
+            elec_down, elec_up, diesel_down, diesel_up,
+        )
         self._sync_side(block)
         trolley_cfg = block.get("trolley")
         if isinstance(trolley_cfg, dict):

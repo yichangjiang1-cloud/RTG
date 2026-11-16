@@ -63,8 +63,12 @@ class SurveyPointResponse(SurveyPointBase):
 class VehicleConfigBase(BaseModel):
     vehicle_id: str
     l_arm: Optional[List[float]] = None       # 兼容：单杆臂 [dx, dy, dz] (m)
-    l_arm_elec: Optional[List[float]] = None    # 电气房侧 A1 → 作业点杆臂
-    l_arm_diesel: Optional[List[float]] = None  # 柴油机侧 A2 → 作业点杆臂
+    l_arm_elec: Optional[List[float]] = None    # 电气下游，兼容旧字段
+    l_arm_diesel: Optional[List[float]] = None  # 动力下游，兼容旧字段
+    l_arm_elec_up: Optional[List[float]] = None
+    l_arm_elec_down: Optional[List[float]] = None
+    l_arm_diesel_up: Optional[List[float]] = None
+    l_arm_diesel_down: Optional[List[float]] = None
     height: Optional[float] = None            # 标称高度 H (m)
     w_span: Optional[float] = None            # 门腿跨距 W_span (m)，参考/展示
     antennas: Optional[Dict[str, Any]] = None # 天线标识 {"ant1": {"label": "大车左前"}, ...}
@@ -159,7 +163,7 @@ class LArmComputeRequest(BaseModel):
     标定时车应静止，天线坐标与姿态来自实时 GNSS/双天线。
     antenna_ecef 优先（全精度 ECEF，避免 NMEA WGS84 量化误差）。
     """
-    side: str  # 'elec' | 'diesel'
+    side: str  # elec_up | elec_down | diesel_up | diesel_down（兼容旧的 elec | diesel）
     lpoint: Wgs84Point
     antenna: Wgs84Point
     attitude: AttitudeDeg

@@ -249,6 +249,7 @@ def encode_gnss_to_plc(
     t = result.trolley
     # 12-15：电气 GGA、电气 GGA2、动力 GGA、动力 GGA2。
     # 横向偏离，朝堆场内部为负，朝外部为正。
+    # 两侧各自相对与 +Y 平行的本侧贝位线（该侧贝位点的平均 X），不是过原点的 X=0。
     lane = list(getattr(g, "lane_mm", None) or [0, 0, 0, 0])
     while len(lane) < 4:
         lane.append(0)

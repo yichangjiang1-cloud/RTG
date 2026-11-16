@@ -2,11 +2,14 @@
 import unittest
 
 from src.solver.yard_geometry import (
+    diesel_bays,
     electrical_bays,
     en_meters,
     fit_y_axis,
     is_electrical_bay,
     lane_deviation_m,
+    lane_deviations_mm,
+    parallel_reference_x,
     point_in_polygon,
     polygon_centroid,
     resolve_bay_band,
@@ -93,6 +96,45 @@ class TestYardGeometry(unittest.TestCase):
         self.assertAlmostEqual(lane_deviation_m(0.2, cx), -0.2, places=6)
         self.assertAlmostEqual(lane_deviation_m(-0.2, cx), 0.2, places=6)
 
+    def test_diesel_deviation_is_relative_to_its_own_line(self):
+        # 场地中心在电气线 X=0 与动力线 X=20 之间。朝中心为负。
+        cx = 10.0
+        self.assertAlmostEqual(lane_deviation_m(0.0, cx, 0.0), 0.0, places=6)
+        self.assertAlmostEqual(lane_deviation_m(0.2, cx, 0.0), -0.2, places=6)
+        self.assertAlmostEqual(lane_deviation_m(20.0, cx, 20.0), 0.0, places=6)
+        self.assertAlmostEqual(lane_deviation_m(19.8, cx, 20.0), -0.2, places=6)
+        self.assertAlmostEqual(lane_deviation_m(20.2, cx, 20.0), 0.2, places=6)
+
+    def test_parallel_reference_is_mean_x_and_needs_two_points(self):
+        self.assertIsNone(parallel_reference_x([20.0]))
+        self.assertIsNone(parallel_reference_x([]))
+        self.assertAlmostEqual(parallel_reference_x([19.0, 21.0, 20.0]), 20.0, places=6)
+
+    def test_each_side_uses_its_own_bay_line(self):
+        tires = [(1.7, True), (1.5, True), (20.2, True), (20.0, False)]
+        mm = lane_deviations_mm(tires, 10.0, 1.5, 20.0)
+        self.assertEqual(mm, [-200, 0, 200, 0])
+
+    def test_missing_diesel_line_uses_electrical_line(self):
+        tires = [(1.5, True), (1.7, True), (1.5, True), (1.9, True)]
+        self.assertEqual(lane_deviations_mm(tires, 10.0, 1.5, None), [0, -200, 0, -400])
+
+    def test_missing_electrical_line_uses_the_origin_axis(self):
+        tires = [(0.2, True), (0.0, True), (20.0, True), (20.2, True)]
+        self.assertEqual(
+            lane_deviations_mm(tires, 10.0, None, None),
+            [-200, 0, -20000, -20200],
+        )
+
+    def test_diesel_bays_are_separate_from_the_axis(self):
+        mixed = [
+            {"bay_side": "elec"},
+            {"bay_side": "diesel"},
+            {"bay_side": "diesel"},
+        ]
+        self.assertEqual(len(electrical_bays(mixed)), 1)
+        self.assertEqual(len(diesel_bays(mixed)), 2)
+
     def test_en_scale(self):
         from src.solver.coordinate_transform import ecef_to_enu, wgs84_to_ecef
 
@@ -120,6 +162,37 @@ class TestYardGeometry(unittest.TestCase):
         self.assertAlmostEqual(ye, 1.0, places=5)
         self.assertAlmostEqual(yn, 0.0, places=5)
         self.assertEqual([p["bay_side"] for p in elec], ["elec", "elec"])
+
+    def test_solver_uses_only_diesel_points_for_the_parallel_line(self):
+        from src.solver.solver_node import SolverNode
+
+        class _Cal:
+            survey_points = [
+                {"bay_side": "elec", "lat": 1.0, "lon": 1.0, "alt": 0.0},
+                {"bay_side": "elec", "lat": 3.0, "lon": 1.0, "alt": 0.0},
+                {"bay_side": "diesel", "lat": 0.0, "lon": 0.0, "alt": 0.0},
+                {"bay_side": "diesel", "lat": 0.0, "lon": 1.0, "alt": 0.0},
+                {"bay_side": "diesel", "lat": 2.0, "lon": 1.0, "alt": 0.0},
+            ]
+
+        class _Ctx:
+            def get(self, _yard_id):
+                return _Cal()
+
+        class _Transform:
+            def wgs84_to_lycs(self, lat, lon, alt):
+                return (20.0 + lat, lon, alt)
+
+        node = SolverNode.__new__(SolverNode)
+        node._calibration_ctx = _Ctx()
+        self.assertAlmostEqual(node._side_reference_x(_Transform(), "B01", "elec"), 22.0, places=6)
+        self.assertAlmostEqual(node._side_reference_x(_Transform(), "B01", "diesel"), 21.0, places=6)
+        _Cal.survey_points = [
+            {"bay_side": "elec", "lat": 1.0, "lon": 1.0, "alt": 0.0},
+            {"bay_side": "diesel", "lat": 1.0, "lon": 1.0, "alt": 0.0},
+        ]
+        self.assertIsNone(node._side_reference_x(_Transform(), "B01", "elec"))
+        self.assertIsNone(node._side_reference_x(_Transform(), "B01", "diesel"))
 
 
 if __name__ == "__main__":

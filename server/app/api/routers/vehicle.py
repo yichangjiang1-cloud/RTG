@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 import json
+import math
 
 from app.database import get_db
 from app.models import Vehicle, VehicleConfig
@@ -39,22 +40,74 @@ def _arm3(arm):
     return [float(x) for x in arm[:3]]
 
 
-def _align_calibration_arms(cal, elec, diesel):
-    """标定记录里的杆臂改成当前正在用的两套杆臂。"""
+def _align_calibration_arms(cal, elec, diesel, extra=None):
+    """标定记录里的杆臂改成当前四套杆臂。extra 的键是 elec_up 这类记录名。"""
     if not isinstance(cal, dict):
         return cal
     out = dict(cal)
-    elec3 = _arm3(elec)
-    diesel3 = _arm3(diesel)
-    if elec3 and isinstance(out.get("elec"), dict):
-        rec = dict(out["elec"])
-        rec["l_arm"] = elec3
-        out["elec"] = rec
-    if diesel3 and isinstance(out.get("diesel"), dict):
-        rec = dict(out["diesel"])
-        rec["l_arm"] = diesel3
-        out["diesel"] = rec
+    pairs = {"elec": elec, "diesel": diesel}
+    if isinstance(extra, dict):
+        pairs.update(extra)
+    for key, arm in pairs.items():
+        arm3 = _arm3(arm)
+        if arm3 and isinstance(out.get(key), dict):
+            rec = dict(out[key])
+            rec["l_arm"] = arm3
+            out[key] = rec
     return out
+
+
+def _arm_from_record(cal, key):
+    if not isinstance(cal, dict):
+        return None
+    rec = cal.get(key)
+    if not isinstance(rec, dict):
+        return None
+    return _arm3(rec.get("l_arm"))
+
+
+def _write_arms(config: VehicleConfig, src) -> None:
+    """四个轮胎杆臂落库。下游同时写入旧的 l_arm_elec / l_arm_diesel。"""
+    cal = getattr(src, "l_arm_calibration", None)
+    down_e = _arm3(getattr(src, "l_arm_elec_down", None)) or _arm3(getattr(src, "l_arm_elec", None))
+    down_d = _arm3(getattr(src, "l_arm_diesel_down", None)) or _arm3(getattr(src, "l_arm_diesel", None))
+    up_e = _arm3(getattr(src, "l_arm_elec_up", None)) or _arm_from_record(cal, "elec_up")
+    up_d = _arm3(getattr(src, "l_arm_diesel_up", None)) or _arm_from_record(cal, "diesel_up")
+    config.l_arm_elec = down_e
+    config.l_arm_elec_down = down_e
+    config.l_arm_diesel = down_d
+    config.l_arm_diesel_down = down_d
+    config.l_arm_elec_up = up_e
+    config.l_arm_diesel_up = up_d
+    config.l_arm_calibration = _align_calibration_arms(
+        cal,
+        down_e,
+        down_d,
+        {
+            "elec_up": up_e,
+            "elec_down": down_e,
+            "diesel_up": up_d,
+            "diesel_down": down_d,
+        },
+    )
+
+
+def _arms_payload(config: VehicleConfig) -> dict:
+    cal = config.l_arm_calibration if isinstance(config.l_arm_calibration, dict) else {}
+    def pick(column, record_key, fallback=None):
+        arm = _arm3(getattr(config, column, None))
+        return arm or _arm_from_record(cal, record_key) or fallback
+    down_e = pick("l_arm_elec_down", "elec_down", _arm3(config.l_arm_elec))
+    down_d = pick("l_arm_diesel_down", "diesel_down", _arm3(config.l_arm_diesel))
+    return {
+        "l_arm_elec": down_e,
+        "l_arm_diesel": down_d,
+        "l_arm_elec_down": down_e,
+        "l_arm_diesel_down": down_d,
+        "l_arm_elec_up": pick("l_arm_elec_up", "elec_up"),
+        "l_arm_diesel_up": pick("l_arm_diesel_up", "diesel_up"),
+        "l_arm_calibration": config.l_arm_calibration,
+    }
 
 
 def _sanitize_attitude(att):
@@ -88,10 +141,8 @@ def _publish_vehicle_config_update(vehicle_id: str, config: VehicleConfig) -> No
     payload = {
         "cmd": "UPDATE_CONFIG",
         "data": {
-            "l_arm_elec": config.l_arm_elec,
-            "l_arm_diesel": config.l_arm_diesel,
+            **_arms_payload(config),
             "antennas": config.antennas,
-            "l_arm_calibration": config.l_arm_calibration,
             "gantry_attitude": config.gantry_attitude,
             "receiver_layout": config.receiver_layout,
             "ntrip": getattr(config, "ntrip", None),
@@ -149,27 +200,18 @@ async def init_vehicle(
             ).first()
 
             if config:
-                config.l_arm_elec = req.params.l_arm_elec
-                config.l_arm_diesel = req.params.l_arm_diesel
+                _write_arms(config, req.params)
                 config.antennas = req.params.antennas
-                if req.params.l_arm_calibration is not None:
-                    config.l_arm_calibration = _align_calibration_arms(
-                        req.params.l_arm_calibration, req.params.l_arm_elec, req.params.l_arm_diesel
-                    )
                 if req.params.gantry_attitude is not None:
                     config.gantry_attitude = _sanitize_attitude(req.params.gantry_attitude)
                 _drop_legacy_fields(config)
             else:
                 config = VehicleConfig(
                     vehicle_id=req.new_vehicle_id,
-                    l_arm_elec=req.params.l_arm_elec,
-                    l_arm_diesel=req.params.l_arm_diesel,
                     antennas=req.params.antennas,
-                    l_arm_calibration=_align_calibration_arms(
-                        req.params.l_arm_calibration, req.params.l_arm_elec, req.params.l_arm_diesel
-                    ),
                     gantry_attitude=_sanitize_attitude(req.params.gantry_attitude),
                 )
+                _write_arms(config, req.params)
                 db.add(config)
 
             db.commit()
@@ -294,8 +336,7 @@ async def get_vehicle(vehicle_id: str, db: Session = Depends(get_db)):
                 "sn": vehicle.sn or "",
                 "initialized": vehicle.initialized,
                 "config": {
-                    "l_arm_elec": config.l_arm_elec,
-                    "l_arm_diesel": config.l_arm_diesel,
+                    **_arms_payload(config),
                     "antennas": config.antennas
                 } if config else None
             }
@@ -315,29 +356,37 @@ async def compute_l_arm(req: LArmComputeRequest):
     由现场测量的作业点 WGS84 + 实时天线 WGS84 + 姿态反算车体系杆臂。
   标定公式：L_arm = Rᵀ · (P_antenna − P_lpoint)
     """
-    if req.side not in ("elec", "diesel"):
+    if req.side not in ("elec", "diesel", "elec_up", "elec_down", "diesel_up", "diesel_down"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="side 须为 elec 或 diesel",
+            detail="side 须为 elec_up、elec_down、diesel_up 或 diesel_down",
         )
     try:
         a = req.antenna
         lp = req.lpoint
         att = req.attitude
+        dx, dy, dz = compute_l_arm_from_wgs84(
+            a.lat, a.lon, a.alt,
+            lp.lat, lp.lon, lp.alt,
+            att.roll, att.pitch, att.heading,
+        )
         if req.antenna_ecef is not None:
             from app.utils.l_arm_calibration import compute_l_arm_from_ecef, _wgs84_to_ecef
             lp_ecef = _wgs84_to_ecef(lp.lat, lp.lon, lp.alt)
-            dx, dy, dz = compute_l_arm_from_ecef(
+            ex, ey, ez = compute_l_arm_from_ecef(
                 (req.antenna_ecef.x, req.antenna_ecef.y, req.antenna_ecef.z),
                 lp_ecef,
                 att.roll, att.pitch, att.heading,
             )
-        else:
-            dx, dy, dz = compute_l_arm_from_wgs84(
-                a.lat, a.lon, a.alt,
-                lp.lat, lp.lon, lp.alt,
-                att.roll, att.pitch, att.heading,
-            )
+            # 从天线的 ECEF 有时和经纬高不是同一个点，用它会把杆臂算成 0。
+            # 两者差过 1 米就用页面上看到的经纬高。
+            if math.dist((dx, dy, dz), (ex, ey, ez)) <= 1.0:
+                dx, dy, dz = ex, ey, ez
+            else:
+                logger.warning(
+                    "杆臂反算改用经纬高: side=%s ECEF结果=%s 经纬高结果=%s",
+                    req.side, (ex, ey, ez), (dx, dy, dz),
+                )
         return ApiResponse(
             code=200,
             message="杆臂反算成功",
@@ -456,12 +505,8 @@ async def save_vehicle_config(
         ).first()
 
         if config:
-            config.l_arm_elec = req.l_arm_elec
-            config.l_arm_diesel = req.l_arm_diesel
+            _write_arms(config, req)
             config.antennas = req.antennas
-            config.l_arm_calibration = _align_calibration_arms(
-                req.l_arm_calibration, req.l_arm_elec, req.l_arm_diesel
-            )
             config.gantry_attitude = _sanitize_attitude(req.gantry_attitude)
             config.receiver_layout = req.receiver_layout
             config.ntrip = req.ntrip
@@ -470,17 +515,13 @@ async def save_vehicle_config(
         else:
             config = VehicleConfig(
                 vehicle_id=req.vehicle_id,
-                l_arm_elec=req.l_arm_elec,
-                l_arm_diesel=req.l_arm_diesel,
                 antennas=req.antennas,
-                l_arm_calibration=_align_calibration_arms(
-                    req.l_arm_calibration, req.l_arm_elec, req.l_arm_diesel
-                ),
                 gantry_attitude=_sanitize_attitude(req.gantry_attitude),
                 receiver_layout=req.receiver_layout,
                 ntrip=req.ntrip,
                 trolley=req.trolley,
             )
+            _write_arms(config, req)
             db.add(config)
 
         db.commit()
@@ -521,10 +562,8 @@ async def get_vehicle_config(vehicle_id: str, db: Session = Depends(get_db)):
             message="获取成功",
             data={
                 "vehicle_id": config.vehicle_id,
-                "l_arm_elec": config.l_arm_elec,
-                "l_arm_diesel": config.l_arm_diesel,
+                **_arms_payload(config),
                 "antennas": config.antennas,
-                "l_arm_calibration": config.l_arm_calibration,
                 "gantry_attitude": config.gantry_attitude,
                 "receiver_layout": config.receiver_layout,
                 "ntrip": getattr(config, "ntrip", None),
@@ -579,14 +618,8 @@ async def clone_vehicle_config(
         ).first()
 
         if target_config:
-            target_config.l_arm_elec = source_config.l_arm_elec
-            target_config.l_arm_diesel = source_config.l_arm_diesel
+            _write_arms(target_config, source_config)
             target_config.antennas = source_config.antennas
-            target_config.l_arm_calibration = _align_calibration_arms(
-                source_config.l_arm_calibration,
-                source_config.l_arm_elec,
-                source_config.l_arm_diesel,
-            )
             target_config.gantry_attitude = _sanitize_attitude(source_config.gantry_attitude)
             target_config.receiver_layout = source_config.receiver_layout
             target_config.ntrip = source_config.ntrip
@@ -595,19 +628,13 @@ async def clone_vehicle_config(
         else:
             target_config = VehicleConfig(
                 vehicle_id=req.new_vehicle_id,
-                l_arm_elec=source_config.l_arm_elec,
-                l_arm_diesel=source_config.l_arm_diesel,
                 antennas=source_config.antennas,
-                l_arm_calibration=_align_calibration_arms(
-                    source_config.l_arm_calibration,
-                    source_config.l_arm_elec,
-                    source_config.l_arm_diesel,
-                ),
                 gantry_attitude=_sanitize_attitude(source_config.gantry_attitude),
                 receiver_layout=source_config.receiver_layout,
                 ntrip=source_config.ntrip,
                 trolley=source_config.trolley,
             )
+            _write_arms(target_config, source_config)
             db.add(target_config)
 
         db.commit()

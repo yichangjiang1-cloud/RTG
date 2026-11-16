@@ -22,6 +22,25 @@ def is_electrical_bay(point) -> bool:
 def electrical_bays(points):
     return [p for p in (points or []) if is_electrical_bay(p)]
 
+
+def diesel_bays(points):
+    return [p for p in (points or []) if not is_electrical_bay(p)]
+
+
+def parallel_reference_x(xs: Sequence[float]) -> Optional[float]:
+    """与 +Y 平行的贝位线在堆场坐标中的 X。至少两个有限值，取平均。"""
+    vals: List[float] = []
+    for raw in xs:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            vals.append(value)
+    if len(vals) < 2:
+        return None
+    return sum(vals) / len(vals)
+
 # 与 coordinate_transform 同一套 WGS84，避免拟合 +Y 和定位解算各用一套米制
 _A = 6378137.0
 _F = 1 / 298.257223563
@@ -164,14 +183,39 @@ def polygon_centroid(polygon: Sequence[Point]) -> Optional[Point]:
     return cx / (6.0 * acc), cy / (6.0 * acc)
 
 
-def lane_deviation_m(tire_x: float, centroid_x: float) -> float:
+def lane_deviation_m(tire_x: float, centroid_x: float, x_ref: float = 0.0) -> float:
     """
-    轮胎相对堆场 +Y（X=0）的横向偏离，米。
+    轮胎相对一条与 +Y 平行的贝位线的横向偏离，米。
+    x_ref 是该线的堆场 X。过原点的 +Y 才是 0。
     朝多边形中心一侧为负，另一侧为正。
     """
-    if float(centroid_x) > 1e-6:
-        return -float(tire_x)
-    return float(tire_x)
+    offset = float(tire_x) - float(x_ref)
+    if float(centroid_x) - float(x_ref) > 1e-6:
+        return -offset
+    return offset
+
+
+def lane_deviations_mm(
+    tires: Sequence[Tuple[float, bool]],
+    centroid_x: float,
+    elec_x: Optional[float] = None,
+    diesel_x: Optional[float] = None,
+) -> List[int]:
+    """
+    四个轮胎的横向偏离，毫米。顺序：电气主、电气从、动力主、动力从。
+    elec_x、diesel_x 是各自贝位线的堆场 X。缺电气线时用过原点的 +Y；
+    缺动力线时改用电气侧贝位线。
+    """
+    x_elec = 0.0 if elec_x is None else float(elec_x)
+    x_diesel = x_elec if diesel_x is None else float(diesel_x)
+    refs = (x_elec, x_elec, x_diesel, x_diesel)
+    out: List[int] = []
+    for (tire_x, ok), x_ref in zip(tires, refs):
+        if not ok:
+            out.append(0)
+            continue
+        out.append(int(round(lane_deviation_m(tire_x, centroid_x, x_ref) * 1000.0)))
+    return out
 
 
 def polygon_area(polygon: Sequence[Point]) -> float:

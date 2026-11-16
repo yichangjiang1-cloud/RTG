@@ -429,6 +429,44 @@ function ReadOnlyLArmBlock({
   );
 }
 
+type ArmCalibMethod = 'live' | 'snapshot';
+
+type SnapAntenna = {
+  lat: number;
+  lon: number;
+  alt: number;
+  ecef_x?: number;
+  ecef_y?: number;
+  ecef_z?: number;
+};
+
+type ArmSnapshot = {
+  measured_at: string;
+  vehicle_id: string;
+  attitude: { roll: number; pitch: number; heading: number };
+  antennas: Record<TireArmId, SnapAntenna>;
+};
+
+function armSnapshotKey(vehicleId: string) {
+  return `rtg.larm.snapshot.${vehicleId}`;
+}
+
+function readArmSnapshot(vehicleId: string): ArmSnapshot | null {
+  try {
+    const raw = localStorage.getItem(armSnapshotKey(vehicleId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ArmSnapshot;
+    if (!parsed?.antennas || !parsed.attitude || !parsed.measured_at) return null;
+    const complete = TIRE_ARMS.every(spec => {
+      const ant = parsed.antennas[spec.id];
+      return ant && Number.isFinite(ant.lat) && Number.isFinite(ant.lon) && Number.isFinite(ant.alt);
+    });
+    return complete ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function LArmSmartCalibration({
   liveData,
   connStatus,
@@ -453,6 +491,13 @@ function LArmSmartCalibration({
     diesel_down: { lat: '', lon: '', alt: '' },
   });
   const [computing, setComputing] = useState<TireArmId | null>(null);
+  const [method, setMethod] = useState<ArmCalibMethod>('live');
+  const [snapshot, setSnapshot] = useState<ArmSnapshot | null>(null);
+
+  useEffect(() => {
+    const id = cfg?.vehicle_id;
+    setSnapshot(id ? readArmSnapshot(id) : null);
+  }, [cfg?.vehicle_id]);
 
   const stationary = liveData.speed <= MAX_CALIB_SPEED;
   const wsOk = connStatus === 'connected' && !useMock && !isMock;
@@ -475,8 +520,58 @@ function LArmSmartCalibration({
       return `须 RTK 固定解：左 ${left?.status ?? liveData.status} / 右 ${right?.status ?? '—'}`;
     }
     if (!stationary) return `车辆未静止（速度 ${liveData.speed.toFixed(3)} m/s），请停车后标定`;
-    return '条件满足：四天线齐、RTK 固定且静止。每个轮胎中心单独填写，用这一端自己的天线计算杆臂';
-  }, [cfg, useMock, isMock, connStatus, stationary, liveData.speed, liveData.status, liveData.receivers, fourReady, fourGaps, rtkFixed]);
+    return method === 'snapshot'
+      ? '条件满足。先记录四天线和姿态，再把车开走测轮胎中心'
+      : '条件满足：四天线齐、RTK 固定且静止。每个轮胎中心单独填写，用这一端自己的天线计算杆臂';
+  }, [cfg, useMock, isMock, connStatus, stationary, liveData.speed, liveData.status, liveData.receivers, fourReady, fourGaps, rtkFixed, method]);
+
+  function captureSnapshot() {
+    if (!cfg) return;
+    if (!canCalib) {
+      showToast(liveHint, 'error');
+      return;
+    }
+    const layout = cfg.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT;
+    const antennas = {} as ArmSnapshot['antennas'];
+    for (const spec of TIRE_ARMS) {
+      const src = endAntenna(liveData, layout, spec.role, spec.end);
+      if (Math.abs(src.lat) < 1e-6 && Math.abs(src.lon) < 1e-6) {
+        showToast(`${spec.label}的天线无效，未记录`, 'error');
+        return;
+      }
+      const ecef = pickAntennaEcef(src);
+      antennas[spec.id] = {
+        lat: src.lat,
+        lon: src.lon,
+        alt: src.alt,
+        ...(ecef ? { ecef_x: ecef.x, ecef_y: ecef.y, ecef_z: ecef.z } : {}),
+      };
+    }
+    const next: ArmSnapshot = {
+      measured_at: new Date().toISOString(),
+      vehicle_id: cfg.vehicle_id,
+      attitude: { roll: liveData.roll, pitch: liveData.pitch, heading: liveData.heading },
+      antennas,
+    };
+    try {
+      localStorage.setItem(armSnapshotKey(cfg.vehicle_id), JSON.stringify(next));
+    } catch (e) {
+      logger.error('VehicleConfig', '四天线记录写入本机失败', e);
+      showToast('记录失败，浏览器无法保存', 'error');
+      return;
+    }
+    setSnapshot(next);
+    showToast('已记录四天线和姿态。车可以开走，测完轮胎中心再回来计算');
+  }
+
+  function clearSnapshot() {
+    const id = cfg?.vehicle_id;
+    if (id) {
+      try { localStorage.removeItem(armSnapshotKey(id)); } catch { /* 本机存储不可用时只清页面 */ }
+    }
+    setSnapshot(null);
+    showToast('已清除停车记录');
+  }
 
   async function computeTire(id: TireArmId) {
     if (!cfg) return;
@@ -489,24 +584,34 @@ function LArmSmartCalibration({
       showToast('请填写完整的作业点经纬高', 'error');
       return;
     }
-    if (!canCalib) {
-      showToast(liveHint, 'error');
-      return;
-    }
     const layout = cfg.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT;
     const elecLeft = (layout.elec_receiver ?? 'left') !== 'right';
-    const antennaSrc = endAntenna(liveData, layout, spec.role, spec.end);
-    if (Math.abs(antennaSrc.lat) < 1e-6 && Math.abs(antennaSrc.lon) < 1e-6) {
-      showToast(`${spec.label}的天线无效`, 'error');
-      return;
+    let antenna: GpsCoord;
+    let antennaEcef: { x: number; y: number; z: number } | null;
+    let attitude: { roll: number; pitch: number; heading: number };
+    if (method === 'snapshot') {
+      const saved = snapshot?.antennas[id];
+      if (!snapshot || !saved) {
+        showToast('请先在车停稳时记录四天线', 'error');
+        return;
+      }
+      antenna = { lat: saved.lat, lon: saved.lon, alt: saved.alt };
+      antennaEcef = pickAntennaEcef(saved);
+      attitude = snapshot.attitude;
+    } else {
+      if (!canCalib) {
+        showToast(liveHint, 'error');
+        return;
+      }
+      const antennaSrc = endAntenna(liveData, layout, spec.role, spec.end);
+      if (Math.abs(antennaSrc.lat) < 1e-6 && Math.abs(antennaSrc.lon) < 1e-6) {
+        showToast(`${spec.label}的天线无效`, 'error');
+        return;
+      }
+      antenna = { lat: antennaSrc.lat, lon: antennaSrc.lon, alt: antennaSrc.alt };
+      antennaEcef = pickAntennaEcef(antennaSrc);
+      attitude = { roll: liveData.roll, pitch: liveData.pitch, heading: liveData.heading };
     }
-    const antenna: GpsCoord = {
-      lat: antennaSrc.lat,
-      lon: antennaSrc.lon,
-      alt: antennaSrc.alt,
-    };
-    const antennaEcef = pickAntennaEcef(antennaSrc);
-    const attitude = { roll: liveData.roll, pitch: liveData.pitch, heading: liveData.heading };
     const lpoint = { lat, lon, alt };
 
     setComputing(id);
@@ -534,6 +639,7 @@ function LArmSmartCalibration({
         antenna,
         attitude,
         l_arm: arm,
+        method,
         receiver_id: (spec.role === 'elec') === elecLeft ? layout.left : layout.right,
         gga_index: ggaIndexForEnd(layout, spec.role, spec.end),
         layout_snapshot: {
@@ -601,40 +707,81 @@ function LArmSmartCalibration({
 
       <p className="text-sm text-slate-400 leading-relaxed">
         四个轮胎中心各自标定。天线间距不能当成轮胎间距。
-        须<strong className="text-slate-300">四天线齐</strong>、<strong className="text-slate-300">RTK 固定</strong>且车辆<strong className="text-slate-300">静止</strong>。
         每一端用<strong className="text-slate-300">这一端自己的天线</strong>和 RTK 测得的<strong className="text-slate-300">该轮胎中心</strong>反算杆臂
         <code className="text-blue-300"> L_arm = Rᵀ·(P_天线−P_轮胎)</code>。
-        以前每侧只标过主天线的，那套数只留在主天线对应的那一端。
+        当场计算要求车还停在作业点上。停车记录是先记下四天线和姿态，车开走后再填轮胎坐标，用记下的那一组计算。
       </p>
 
-      <div className={clsx(canCalib ? 'config-hint' : 'config-hint-warn')}>
-        {!wsOk ? <WifiOff className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />}
-        <span>{liveHint}</span>
+      <SwipeTabs
+        tabs={[
+          { id: 'live', label: '当场计算' },
+          { id: 'snapshot', label: '停车记录后再测点' },
+        ]}
+        active={method}
+        onChange={setMethod}
+      />
+
+      <div className={clsx(method === 'live' ? (canCalib ? 'config-hint' : 'config-hint-warn') : 'config-hint')}>
+        {!wsOk && method === 'live' ? <WifiOff className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />}
+        <span>
+          {method === 'snapshot'
+            ? (snapshot
+              ? `已记录 ${snapshot.measured_at.slice(0, 19).replace('T', ' ')} 的四天线和姿态。车可以不在场，填好轮胎中心即可计算。`
+              : '车停稳后先记录。记录之后再把车开走测轮胎中心。')
+            : liveHint}
+        </span>
       </div>
+
+      {method === 'snapshot' && (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={captureSnapshot}
+            disabled={!canCalib}
+            className="btn-primary px-4 py-2 text-sm disabled:opacity-50"
+          >
+            记录当前四天线
+          </button>
+          <button
+            type="button"
+            onClick={clearSnapshot}
+            disabled={!snapshot}
+            className="btn-secondary px-4 py-2 text-sm disabled:opacity-50"
+          >
+            清除记录
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs font-mono">
         {TIRE_ARMS.map(spec => {
           const layout = cfg?.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT;
-          const ant = endAntenna(liveData, layout, spec.role, spec.end);
-          const missing = Math.abs(ant.lat) < 1e-6 && Math.abs(ant.lon) < 1e-6;
+          const liveAnt = endAntenna(liveData, layout, spec.role, spec.end);
+          const savedAnt = snapshot?.antennas[spec.id];
+          const ant = method === 'snapshot' ? savedAnt : liveAnt;
+          const missing = !ant || (Math.abs(ant.lat) < 1e-6 && Math.abs(ant.lon) < 1e-6);
           return (
             <div key={spec.id} className="config-data-block space-y-1">
-              <p className="text-slate-500 mb-1">{spec.label}天线{missing ? ' — 无效' : ''}</p>
-              <p>lat {ant.lat.toFixed(8)}</p>
-              <p>lon {ant.lon.toFixed(8)}</p>
-              <p>alt {ant.alt.toFixed(3)} m</p>
-        </div>
+              <p className="text-slate-500 mb-1">
+                {spec.label}天线
+                {method === 'snapshot' ? '（记录）' : ''}
+                {missing ? ' — 无效' : ''}
+              </p>
+              <p>lat {missing ? '—' : ant.lat.toFixed(8)}</p>
+              <p>lon {missing ? '—' : ant.lon.toFixed(8)}</p>
+              <p>alt {missing ? '—' : ant.alt.toFixed(3)} m</p>
+            </div>
           );
         })}
       </div>
 
       <div className="config-data-block grid grid-cols-3 gap-3 text-xs font-mono text-slate-400">
-        <div>heading {liveData.heading.toFixed(2)}°</div>
-        <div>pitch {liveData.pitch.toFixed(2)}°</div>
-        <div>roll {liveData.roll.toFixed(2)}°</div>
+        <div>heading {(method === 'snapshot' && snapshot ? snapshot.attitude.heading : liveData.heading).toFixed(2)}°</div>
+        <div>pitch {(method === 'snapshot' && snapshot ? snapshot.attitude.pitch : liveData.pitch).toFixed(2)}°</div>
+        <div>roll {(method === 'snapshot' && snapshot ? snapshot.attitude.roll : liveData.roll).toFixed(2)}°</div>
         <div>speed {liveData.speed.toFixed(3)} m/s</div>
         <div>GNSS {liveData.status}</div>
-        <div>WS {connStatus}</div>
+        <div>{method === 'snapshot' && snapshot ? '用停车记录' : `WS ${connStatus}`}</div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -647,12 +794,12 @@ function LArmSmartCalibration({
               {renderLpointInputs(spec.id)}
             <button
               type="button"
-              disabled={!canCalib || computing !== null}
+              disabled={computing !== null || (method === 'live' ? !canCalib : !snapshot)}
                 onClick={() => computeTire(spec.id)}
               className="w-full btn-primary py-3 flex items-center justify-center gap-2"
             >
                 {computing === spec.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                计算 {spec.armKey}
+                {method === 'snapshot' ? '用停车记录计算' : `计算 ${spec.armKey}`}
             </button>
             {cfg && (
               <ReadOnlyLArmBlock
@@ -664,6 +811,7 @@ function LArmSmartCalibration({
               {record && (
                 <p className="text-[10px] text-slate-500">
                   溯源：{record.measured_at.slice(0, 19)}
+                  {record.method === 'snapshot' ? ' · 停车记录' : ' · 当场'}
                   {record.receiver_id ? ` · ${record.receiver_id} GGA[${record.gga_index ?? 0}]` : ''}
             </p>
           )}
