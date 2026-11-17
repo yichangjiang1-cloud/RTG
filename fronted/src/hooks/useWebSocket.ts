@@ -213,8 +213,8 @@ export function useWebSocket({ url, forceMock, onDiscovery }: UseWebSocketOption
       logger.warn('WebSocket', reason, { url });
       setData((prev): RealtimeData => {
         const fallbackReceivers: ReceiverStatus[] = [
-          { id: 'gantry_a1', label: '左（电气）主 GGA → 作业点', position: 'L', status: 'no_signal', satellites: 0, hdop: 0, valid: false },
-          { id: 'gantry_a2', label: '右（动力）主 GGA → 作业点', position: 'R', status: 'no_signal', satellites: 0, hdop: 0, valid: false },
+          { id: 'gantry_a1', label: '左侧接收机', position: 'L', status: 'no_signal', satellites: 0, hdop: 0, valid: false },
+          { id: 'gantry_a2', label: '右侧接收机', position: 'R', status: 'no_signal', satellites: 0, hdop: 0, valid: false },
           { id: 'trolley', label: '小车接收机 9003', position: 'T', status: 'no_signal', satellites: 0, hdop: 0, valid: false },
         ];
         const ant2 = prev.antenna2 ?? BLANK_DATA.antenna2!;
@@ -367,6 +367,7 @@ export function useWebSocket({ url, forceMock, onDiscovery }: UseWebSocketOption
             const payload: RealtimeData = {
               ...BLANK_DATA,
               ...raw,
+              current_bay_no: Number(raw.current_bay_no ?? 0),
               gantry_antennas: raw.gantry_antennas ?? {},
               lpoint_geo: lpointGeo,
               ref_antenna: {

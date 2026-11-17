@@ -163,16 +163,46 @@ class TestYardGeometry(unittest.TestCase):
         self.assertAlmostEqual(yn, 0.0, places=5)
         self.assertEqual([p["bay_side"] for p in elec], ["elec", "elec"])
 
+    def test_diesel_line_follows_its_own_points_and_can_tilt(self):
+        from src.solver.yard_geometry import (
+            deviation_adjust_along_line,
+            fit_bay_line,
+            line_deviation_m,
+        )
+
+        parallel = [(1, 20.0, 0.0), (2, 20.0, 10.0)]
+        origin, direction = fit_bay_line(parallel)
+        self.assertAlmostEqual(origin[0], 20.0, places=6)
+        self.assertAlmostEqual(direction[0], 0.0, places=6)
+        self.assertAlmostEqual(abs(direction[1]), 1.0, places=6)
+        self.assertAlmostEqual(
+            line_deviation_m(19.8, 4.0, origin, direction, (10.0, 4.0)),
+            -0.2,
+            places=6,
+        )
+
+        tilted = [(1, 20.0, 0.0), (2, 22.0, 10.0)]
+        origin, direction = fit_bay_line(tilted)
+        self.assertGreater(abs(direction[0]), 0.1)
+        self.assertAlmostEqual(line_deviation_m(21.0, 5.0, origin, direction, (0.0, 5.0)), 0.0, places=6)
+        self.assertLess(line_deviation_m(20.0, 5.0, origin, direction, (0.0, 5.0)), 0.0)
+        shift = deviation_adjust_along_line(-0.05, origin, direction, (0.0, 5.0))
+        moved = line_deviation_m(
+            21.0 + shift[0], 5.0 + shift[1], origin, direction, (0.0, 5.0),
+        )
+        self.assertAlmostEqual(moved, -0.05, places=6)
+        self.assertIsNone(fit_bay_line([(1, 20.0, 0.0)]))
+
     def test_solver_uses_only_diesel_points_for_the_parallel_line(self):
         from src.solver.solver_node import SolverNode
 
         class _Cal:
             survey_points = [
-                {"bay_side": "elec", "lat": 1.0, "lon": 1.0, "alt": 0.0},
-                {"bay_side": "elec", "lat": 3.0, "lon": 1.0, "alt": 0.0},
-                {"bay_side": "diesel", "lat": 0.0, "lon": 0.0, "alt": 0.0},
-                {"bay_side": "diesel", "lat": 0.0, "lon": 1.0, "alt": 0.0},
-                {"bay_side": "diesel", "lat": 2.0, "lon": 1.0, "alt": 0.0},
+                {"bay_no": 1, "bay_side": "elec", "lat": 1.0, "lon": 1.0, "alt": 0.0},
+                {"bay_no": 2, "bay_side": "elec", "lat": 3.0, "lon": 1.0, "alt": 0.0},
+                {"bay_no": 1, "bay_side": "diesel", "lat": 0.0, "lon": 0.0, "alt": 0.0},
+                {"bay_no": 1, "bay_side": "diesel", "lat": 0.0, "lon": 1.0, "alt": 0.0},
+                {"bay_no": 2, "bay_side": "diesel", "lat": 2.0, "lon": 1.0, "alt": 0.0},
             ]
 
         class _Ctx:
@@ -186,13 +216,84 @@ class TestYardGeometry(unittest.TestCase):
         node = SolverNode.__new__(SolverNode)
         node._calibration_ctx = _Ctx()
         self.assertAlmostEqual(node._side_reference_x(_Transform(), "B01", "elec"), 22.0, places=6)
-        self.assertAlmostEqual(node._side_reference_x(_Transform(), "B01", "diesel"), 21.0, places=6)
+        origin, direction = node._diesel_bay_line(_Transform(), "B01")
+        self.assertAlmostEqual(origin[0], 21.0, places=6)
+        self.assertGreater(abs(direction[0]), 0.5)
         _Cal.survey_points = [
-            {"bay_side": "elec", "lat": 1.0, "lon": 1.0, "alt": 0.0},
-            {"bay_side": "diesel", "lat": 1.0, "lon": 1.0, "alt": 0.0},
+            {"bay_no": 1, "bay_side": "elec", "lat": 1.0, "lon": 1.0, "alt": 0.0},
+            {"bay_no": 1, "bay_side": "diesel", "lat": 1.0, "lon": 1.0, "alt": 0.0},
         ]
         self.assertIsNone(node._side_reference_x(_Transform(), "B01", "elec"))
-        self.assertIsNone(node._side_reference_x(_Transform(), "B01", "diesel"))
+        self.assertIsNone(node._diesel_bay_line(_Transform(), "B01"))
+
+    def test_local_bay_segment_is_used_instead_of_one_straight_line(self):
+        from src.solver.yard_geometry import bracket_bay_line, line_deviation_m
+
+        # 前一段竖直在 X=0，后一段斜到 X=2。一个总拟合线过不了这两个折点。
+        points = [(0.0, 0.0), (0.0, 10.0), (2.0, 20.0)]
+        centroid = (10.0, 10.0)
+        front = bracket_bay_line(5.0, points)
+        rear = bracket_bay_line(15.0, points)
+        self.assertIsNotNone(front)
+        self.assertIsNotNone(rear)
+        self.assertAlmostEqual(
+            line_deviation_m(0.3, 5.0, front[0], front[1], centroid), -0.3, places=6,
+        )
+        self.assertAlmostEqual(
+            line_deviation_m(1.0, 15.0, rear[0], rear[1], centroid), 0.0, places=5,
+        )
+        before = bracket_bay_line(-5.0, points)
+        after = bracket_bay_line(30.0, points)
+        self.assertEqual(before[0], front[0])
+        self.assertEqual(after[0], rear[0])
+        self.assertIsNone(bracket_bay_line(5.0, [(0.0, 0.0)]))
+
+    def test_one_lane_stop_ramps_from_the_bay_line_ends(self):
+        from src.solver.yard_geometry import applied_lane_shifts
+
+        # 贝位线 Y 从 0 到 100，只在 40 m 记 60 cm。起点和终点是 0。
+        one = [(40.0, (0.60, 0.0, 0.0, 0.0))]
+        self.assertAlmostEqual(applied_lane_shifts(0.0, one, 0.0, 100.0)[0], 0.0)
+        self.assertAlmostEqual(applied_lane_shifts(20.0, one, 0.0, 100.0)[0], 0.30)
+        self.assertAlmostEqual(applied_lane_shifts(40.0, one, 0.0, 100.0)[0], 0.60)
+        self.assertAlmostEqual(applied_lane_shifts(70.0, one, 0.0, 100.0)[0], 0.30)
+        self.assertAlmostEqual(applied_lane_shifts(100.0, one, 0.0, 100.0)[0], 0.0)
+        self.assertAlmostEqual(applied_lane_shifts(120.0, one, 0.0, 100.0)[0], 0.0)
+        self.assertEqual(applied_lane_shifts(40.0, one, None, None), (0.0, 0.0, 0.0, 0.0))
+        # 纠偏点记在贝位线起点之前：过了这一点不再保持，和起点之间仍是斜线。
+        outside = [(-10.0, (0.60, 0.0, 0.0, 0.0))]
+        self.assertAlmostEqual(applied_lane_shifts(-20.0, outside, 0.0, 100.0)[0], 0.0)
+        self.assertAlmostEqual(applied_lane_shifts(-10.0, outside, 0.0, 100.0)[0], 0.60)
+        self.assertAlmostEqual(applied_lane_shifts(-5.0, outside, 0.0, 100.0)[0], 0.30)
+        self.assertAlmostEqual(applied_lane_shifts(50.0, outside, 0.0, 100.0)[0], 0.0)
+
+    def test_lane_stop_only_moves_the_neighboring_bays(self):
+        from src.solver.yard_geometry import applied_lane_shifts
+
+        bays = [0.0, 10.0, 20.0, 30.0]
+        # 记在 10 m 和 20 m 之间：只动这一段，相邻贝位是 0，其它段是 0。
+        one = [(15.0, (0.60, 0.0, 0.0, 0.0))]
+        self.assertAlmostEqual(applied_lane_shifts(15.0, one, bays)[0], 0.60)
+        self.assertAlmostEqual(applied_lane_shifts(12.5, one, bays)[0], 0.30)
+        self.assertAlmostEqual(applied_lane_shifts(17.5, one, bays)[0], 0.30)
+        self.assertAlmostEqual(applied_lane_shifts(10.0, one, bays)[0], 0.0)
+        self.assertAlmostEqual(applied_lane_shifts(20.0, one, bays)[0], 0.0)
+        self.assertAlmostEqual(applied_lane_shifts(5.0, one, bays)[0], 0.0)
+        self.assertAlmostEqual(applied_lane_shifts(25.0, one, bays)[0], 0.0)
+        # 就记在 10 m 这个贝上：前后两段都连到它，再往外是 0。
+        at_bay = [(10.0, (0.40, 0.0, 0.0, 0.0))]
+        self.assertAlmostEqual(applied_lane_shifts(10.0, at_bay, bays)[0], 0.40)
+        self.assertAlmostEqual(applied_lane_shifts(5.0, at_bay, bays)[0], 0.20)
+        self.assertAlmostEqual(applied_lane_shifts(15.0, at_bay, bays)[0], 0.20)
+        self.assertAlmostEqual(applied_lane_shifts(0.0, at_bay, bays)[0], 0.0)
+        self.assertAlmostEqual(applied_lane_shifts(20.0, at_bay, bays)[0], 0.0)
+        self.assertAlmostEqual(applied_lane_shifts(25.0, at_bay, bays)[0], 0.0)
+        # 相邻两段各记一点：中间贝位仍是 0。
+        two = [(5.0, (0.60, 0.0, 0.0, 0.0)), (15.0, (0.20, 0.0, 0.0, 0.0))]
+        self.assertAlmostEqual(applied_lane_shifts(5.0, two, bays)[0], 0.60)
+        self.assertAlmostEqual(applied_lane_shifts(7.5, two, bays)[0], 0.30)
+        self.assertAlmostEqual(applied_lane_shifts(10.0, two, bays)[0], 0.0)
+        self.assertAlmostEqual(applied_lane_shifts(15.0, two, bays)[0], 0.20)
 
     def test_lane_shift_holds_outside_the_ends_and_splits_when_a_middle_point_is_added(self):
         from src.solver.yard_geometry import interpolate_lane_shifts
@@ -213,17 +314,55 @@ class TestYardGeometry(unittest.TestCase):
         from pathlib import Path
 
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
-        from app.utils.lane_correction import absolute_with_additional, interpolate_lane_shifts
+        from app.utils.lane_correction import absolute_with_additional
 
-        first = absolute_with_additional(0.0, [], (0.60, 0.60, 0.60, 0.60))
+        # 贝位在 0、50、100 m。40 m 落在 0–50 这一段，先记 60 cm，再填 5 cm 记成 65 cm。
+        # 70 m 在下一段，这段还没有纠偏，再填 5 cm 就记成 5 cm。
+        bays = [0.0, 50.0, 100.0]
+        first = absolute_with_additional(40.0, [], (0.60, 0.60, 0.60, 0.60), bays)
         self.assertEqual(first, (0.60, 0.60, 0.60, 0.60))
-        points = [(0.0, first)]
-        second = absolute_with_additional(100.0, points, (0.05, 0.0, 0.0, 0.0))
+        points = [(40.0, first)]
+        second = absolute_with_additional(40.0, points, (0.05, 0.0, 0.0, 0.0), bays)
         self.assertAlmostEqual(second[0], 0.65)
         self.assertAlmostEqual(second[1], 0.60)
-        both = points + [(100.0, second)]
-        self.assertAlmostEqual(interpolate_lane_shifts(50.0, both)[0], 0.625)
-        self.assertAlmostEqual(interpolate_lane_shifts(50.0, both)[1], 0.60)
+        other_segment = absolute_with_additional(70.0, points, (0.05, 0.0, 0.0, 0.0), bays)
+        self.assertAlmostEqual(other_segment[0], 0.05)
+        self.assertAlmostEqual(other_segment[1], 0.0)
+        from app.utils.lane_correction import applied_lane_shifts as server_apply
+        from src.solver.yard_geometry import applied_lane_shifts as solver_apply
+        outside = [(-10.0, (0.60, 0.0, 0.0, 0.0))]
+        for y in (-20.0, -10.0, -5.0, 50.0, 120.0):
+            self.assertEqual(server_apply(y, outside, 0.0, 100.0), solver_apply(y, outside, 0.0, 100.0))
+        bays = [0.0, 10.0, 20.0, 30.0]
+        nearby = [(15.0, (0.60, 0.0, 0.0, 0.0)), (10.0, (0.40, 0.0, 0.0, 0.0))]
+        for y in (0.0, 5.0, 10.0, 15.0, 20.0, 25.0):
+            self.assertEqual(server_apply(y, nearby, bays), solver_apply(y, nearby, bays))
+
+    def test_tire_to_survey_point_uses_the_same_sign_as_lane_deviation(self):
+        from src.solver.yard_geometry import tire_survey_offset_m as solver_offset
+
+        # 贝位线在 X=0，场心在 +X。轮胎比实测点偏向场内 0.2 m，横向应为 -0.2。
+        side = [(0.0, 0.0), (0.0, 10.0)]
+        centroid = (10.0, 5.0)
+        lateral, along = solver_offset(0.2, 5.0, 0.0, 5.0, side, [], centroid, 0.0)
+        self.assertAlmostEqual(lateral, -0.2)
+        self.assertAlmostEqual(along, 0.0)
+        _lateral, ahead = solver_offset(0.2, 6.0, 0.0, 5.0, side, [], centroid, 0.0)
+        self.assertAlmostEqual(ahead, 1.0)
+        fallback_lateral, fallback_along = solver_offset(0.2, 5.0, 0.0, 4.0, [], [], centroid, 0.0)
+        self.assertAlmostEqual(fallback_lateral, -0.2)
+        self.assertAlmostEqual(fallback_along, 1.0)
+
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
+        from app.utils.yard_geometry import tire_survey_offset_m as server_offset
+
+        self.assertEqual(
+            server_offset(0.2, 5.0, 0.0, 5.0, side, [], centroid, 0.0),
+            solver_offset(0.2, 5.0, 0.0, 5.0, side, [], centroid, 0.0),
+        )
 
     def test_signed_deviation_moves_toward_the_yard_interior(self):
         from src.solver.yard_geometry import deviation_adjust_to_dx

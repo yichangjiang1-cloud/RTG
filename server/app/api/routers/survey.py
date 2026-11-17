@@ -3,9 +3,10 @@
 import json
 import math
 import re
-from typing import Optional
+from typing import Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -29,8 +30,12 @@ from app.utils.yard_geometry import (
     en_meters,
     is_electrical_bay,
     normalize_bay_side,
+    normalize_boundary,
+    parallel_reference_x,
+    polygon_centroid,
     resolve_y_axis,
     spacing_violation,
+    tire_survey_offset_m,
     to_yard_xy,
 )
 from app.utils.logger import get_logger
@@ -134,6 +139,28 @@ def _en_of(points: list[SurveyPoint], origin_lat: float, origin_lon: float):
         east, north = en_meters(p.lat, p.lon, origin_lat, origin_lon)
         out.append((int(p.bay_no), east, north))
     return out
+
+
+def _lane_bay_ys(db: Session, yard_id: str):
+    """两侧贝位沿堆场 Y 的位置。纠偏只在停留点前后两个贝位之间过渡。"""
+    yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
+    if yard is None or yard.origin_lat is None or yard.origin_lon is None:
+        return None
+    rows = _mapping_points(db, yard_id)
+    elec = _en_of(_points_on_side(rows, "elec"), yard.origin_lat, yard.origin_lon)
+    diesel = _en_of(_points_on_side(rows, "diesel"), yard.origin_lat, yard.origin_lon)
+    axis = _yard_axis(yard, elec, diesel)
+    if axis is None:
+        return None
+
+    def _ys(group):
+        return [to_yard_xy(east, north, axis[0], axis[1])[1] for _bay, east, north in group]
+
+    elec_ys = _ys(elec)
+    diesel_ys = _ys(diesel)
+    if len(elec_ys) < 2 and len(diesel_ys) < 2:
+        return None
+    return elec_ys, diesel_ys
 
 
 def _yard_axis(yard: Yard, elec_pts, diesel_pts):
@@ -922,6 +949,8 @@ def save_lane_correction(req: LaneCorrectionRequest, db: Session = Depends(get_d
         _lane_shift(label, getattr(req, key))
         for label, key in zip(_LANE_LABELS, _LANE_KEYS)
     )
+    if all(abs(value) < 5e-4 for value in additional):
+        return ApiResponse(code=200, message="没有追加厘米数，该位置保持现有修正")
     existing = db.query(LaneCorrection).filter(
         LaneCorrection.vehicle_id == req.vehicle_id,
         LaneCorrection.yard_id == req.yard_id,
@@ -930,7 +959,11 @@ def save_lane_correction(req: LaneCorrectionRequest, db: Session = Depends(get_d
         (item.y_m, (item.elec1_m, item.elec2_m, item.diesel1_m, item.diesel2_m))
         for item in existing
     ]
-    totals = absolute_with_additional(float(req.y_m), points, additional)
+    bay_ys = _lane_bay_ys(db, req.yard_id)
+    elec_ys, diesel_ys = (None, None) if bay_ys is None else bay_ys
+    totals = absolute_with_additional(
+        float(req.y_m), points, additional, elec_ys, diesel_ys,
+    )
     for label, total in zip(_LANE_LABELS, totals):
         if abs(total) > _LANE_TOTAL_MAX_M:
             raise HTTPException(
@@ -974,3 +1007,68 @@ def delete_lane_correction(
     db.commit()
     _notify_lane_correction(vehicle_id, yard_id)
     return ApiResponse(code=200, message="已删除", data={"id": row_id})
+
+
+class TirePointDistanceRequest(BaseModel):
+    yard_id: str
+    lat: float
+    lon: float
+    tires: Dict[str, Dict[str, float]]
+
+
+@router.post("/tire_point_distance", response_model=ApiResponse)
+def tire_point_distance(req: TirePointDistanceRequest, db: Session = Depends(get_db)):
+    """四只轮胎中心到实测点的横向距离。符号与屏幕偏差相同，不改纠偏。"""
+    if not math.isfinite(req.lat) or not math.isfinite(req.lon):
+        raise HTTPException(status_code=400, detail="实测点经纬度无效")
+    if abs(req.lat) > 90 or abs(req.lon) > 180:
+        raise HTTPException(status_code=400, detail="实测点经纬度超出范围")
+    yard = db.query(Yard).filter(Yard.yard_id == req.yard_id).first()
+    if yard is None or yard.origin_lat is None or yard.origin_lon is None:
+        raise HTTPException(status_code=404, detail="堆场不存在或没有原点")
+    rows = _mapping_points(db, req.yard_id)
+    elec_en = _en_of(_points_on_side(rows, "elec"), yard.origin_lat, yard.origin_lon)
+    diesel_en = _en_of(_points_on_side(rows, "diesel"), yard.origin_lat, yard.origin_lon)
+    axis = _yard_axis(yard, elec_en, diesel_en)
+    if axis is None:
+        raise HTTPException(status_code=400, detail="堆场 +Y 还没有生成")
+
+    def _xy(group):
+        return [to_yard_xy(east, north, axis[0], axis[1]) for _bay, east, north in group]
+
+    elec_xy = _xy(elec_en)
+    diesel_xy = _xy(diesel_en)
+    ring = normalize_boundary(yard.boundary)
+    verts = [
+        to_yard_xy(*en_meters(lat, lon, yard.origin_lat, yard.origin_lon), axis[0], axis[1])
+        for lat, lon in ring
+    ]
+    center = polygon_centroid(verts)
+    if center is None:
+        raise HTTPException(status_code=400, detail="堆场范围不足，无法确定场内方向")
+    east, north = en_meters(req.lat, req.lon, yard.origin_lat, yard.origin_lon)
+    point_x, point_y = to_yard_xy(east, north, axis[0], axis[1])
+    fallback_x = parallel_reference_x([x for x, _y in elec_xy])
+    if fallback_x is None:
+        fallback_x = 0.0
+    distances = {}
+    for key, on_diesel in (
+        ("elec1", False), ("elec2", False), ("diesel1", True), ("diesel2", True),
+    ):
+        raw = req.tires.get(key)
+        if not isinstance(raw, dict):
+            continue
+        try:
+            tire_x = float(raw.get("x"))
+            tire_y = float(raw.get("y"))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(tire_x) or not math.isfinite(tire_y):
+            continue
+        side = diesel_xy if on_diesel else elec_xy
+        other = elec_xy if on_diesel else diesel_xy
+        lateral, along = tire_survey_offset_m(
+            tire_x, tire_y, point_x, point_y, side, other, center, fallback_x,
+        )
+        distances[key] = {"lateral_m": lateral, "along_m": along}
+    return ApiResponse(code=200, message="ok", data=distances)

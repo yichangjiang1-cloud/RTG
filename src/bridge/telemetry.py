@@ -128,6 +128,7 @@ def position_result_to_realtime(result: PositionResult) -> dict:
     return {
         "timestamp": timestamp,
         "yard_id": result.yard_id,
+        "current_bay_no": int(result.current_bay_no or 0),
         # 解算输出：大车 L-Point
         "lpoint_geo": {
             "lat": result.lpoint_latitude,

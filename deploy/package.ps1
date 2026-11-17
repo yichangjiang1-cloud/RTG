@@ -37,4 +37,4 @@ if (Test-Path $Archive) { Remove-Item $Archive -Force }
 tar -czf $Archive -C (Join-Path $Root "dist") $Name
 
 Write-Host "发布包: $Archive"
-Write-Host "拷到 Ubuntu 后: tar -xzf $Name.tar.gz && cd $Name && sudo bash install.sh"
+Write-Host "拷到 Ubuntu 的 /home/guide/CLionProjects/GNSS 后: tar -xzf $Name.tar.gz && cd $Name && sudo bash install.sh"

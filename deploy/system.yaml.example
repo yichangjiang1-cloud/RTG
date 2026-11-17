@@ -1,4 +1,4 @@
-# 车上配置。安装脚本只在 /etc/rtg/system.yaml 不存在时复制本文件，升级不会覆盖。
+# 车上配置。安装脚本只在 /home/guide/CLionProjects/GNSS/config/system.yaml 不存在时复制本文件，升级不会覆盖。
 # 把 CHANGE_ME 换成机房 Windows 的局域网 IP。MQTT 账号与 mosquitto/passwd、后端 .env 相同。
 
 backend:
@@ -22,7 +22,7 @@ vehicle_id: RTG-001
 gnss:
   offline_timeout_s: 2.0
   raw_log:
-    dir: /var/lib/rtg/gnss_raw
+    dir: /home/guide/CLionProjects/GNSS/state/gnss_raw
     echo_console: false
     enabled: true
     session_gap_s: 2.0
@@ -46,7 +46,7 @@ gnss:
 
 logging:
   backup_count: 5
-  file: /var/log/rtg/rtg.log
+  file: /home/guide/CLionProjects/GNSS/logs/rtg.log
   level: INFO
   max_bytes: 10485760
   position_log_interval_s: 1.0
@@ -59,6 +59,6 @@ plc:
   reconnect_interval_s: 3
 
 yard_backup:
-  path: /var/lib/rtg/yard_config.yaml
+  path: /home/guide/CLionProjects/GNSS/state/yard_config.yaml
 yard_map:
-  path: /var/lib/rtg/yard_map.json
+  path: /home/guide/CLionProjects/GNSS/state/yard_map.json

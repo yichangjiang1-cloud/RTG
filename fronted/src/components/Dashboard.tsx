@@ -7,7 +7,9 @@ import {
   ArrowLeftRight, MoveHorizontal, WifiOff, Loader2,
 } from 'lucide-react';
 import { StatCard, StatusBadge, StatusDot, Compass } from './common';
+import { useAppContext } from '../context/AppContext';
 import type { RealtimeData } from '../types';
+import { gnssAtEnd, headingAlongGnss } from '../utils/gnssName';
 
 /** 速度显示死区，与中控 motion_speed.DEADBAND_MPS 一致 */
 const SPEED_DISPLAY_DEADBAND = 0.03;
@@ -35,6 +37,8 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ data, history, isMock, connStatus }: DashboardProps) {
+  const { vehicles, selectedVehicleId } = useAppContext();
+  const layout = vehicles.find(v => v.vehicle_id === selectedVehicleId)?.receiver_layout;
   const attCmp = data.gantry_attitude_compare;
   const dualAtt = attCmp?.dual_receiver;
   const dualAttOk = Boolean(dualAtt?.valid);
@@ -117,7 +121,7 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
             <div>
               <p className="text-[10px] text-slate-500 mb-2 leading-relaxed">
                 {primaryIsFour
-                  ? '上下水四天线：航向沿下水指向上水，俯仰为该轴线仰角，横滚为电气房相对动力房'
+                  ? `${headingAlongGnss(layout)}，俯仰为该轴线仰角，横滚为电气房相对动力房`
                   : primaryIsDual
                     ? '双接收机四 GGA（跟随配置 mode=dual_receiver）'
                     : '等待姿态解算'}
@@ -324,11 +328,13 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
 
           <div className="grid grid-cols-2 gap-3">
             {([
-              ['电气上游轮胎中心', data.gantry.tires?.elec_upstream, 'text-blue-400'],
-              ['电气下游轮胎中心', data.gantry.tires?.elec_downstream, 'text-blue-300'],
-              ['动力上游轮胎中心', data.gantry.tires?.diesel_upstream, 'text-purple-400'],
-              ['动力下游轮胎中心', data.gantry.tires?.diesel_downstream, 'text-purple-300'],
-            ] as const).map(([label, point, color]) => {
+              ['电气 GNSS1 轮胎中心', 'elec', 'GNSS1', 'text-blue-400'],
+              ['电气 GNSS2 轮胎中心', 'elec', 'GNSS2', 'text-blue-300'],
+              ['动力 GNSS1 轮胎中心', 'diesel', 'GNSS1', 'text-purple-400'],
+              ['动力 GNSS2 轮胎中心', 'diesel', 'GNSS2', 'text-purple-300'],
+            ] as const).map(([label, role, gnss, color]) => {
+              const end = gnssAtEnd(layout, role, 'downstream') === gnss ? 'downstream' : 'upstream';
+              const point = data.gantry.tires?.[`${role}_${end}`];
               const ok = point?.valid === true;
               return (
               <div key={label} className="bg-slate-900/50 rounded-lg p-3">
@@ -358,10 +364,10 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
             <div className="grid grid-cols-2 gap-2">
               {(
                 [
-                  ['FL 前左', data.gantry.leg_offsets.fl],
-                  ['FR 前右', data.gantry.leg_offsets.fr],
-                  ['RL 后左', data.gantry.leg_offsets.rl],
-                  ['RR 后右', data.gantry.leg_offsets.rr],
+                  ['电气 GNSS1', data.gantry.leg_offsets.fl],
+                  ['电气 GNSS2', data.gantry.leg_offsets.rl],
+                  ['动力 GNSS1', data.gantry.leg_offsets.fr],
+                  ['动力 GNSS2', data.gantry.leg_offsets.rr],
                 ] as [string, number][]
               ).map(([label, val]) => (
                 <div key={label} className="flex justify-between items-center px-3 py-1.5 bg-slate-900/40 rounded-lg">
@@ -494,8 +500,8 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
 
             {/* Leg offset indicators */}
             {[
-              { cx: 150, label: `FL ${data.gantry.leg_offsets.fl >= 0 ? '+' : ''}${data.gantry.leg_offsets.fl.toFixed(3)}` },
-              { cx: 650, label: `FR ${data.gantry.leg_offsets.fr >= 0 ? '+' : ''}${data.gantry.leg_offsets.fr.toFixed(3)}` },
+              { cx: 150, label: `电气 GNSS1 ${data.gantry.leg_offsets.fl >= 0 ? '+' : ''}${data.gantry.leg_offsets.fl.toFixed(3)}` },
+              { cx: 650, label: `动力 GNSS1 ${data.gantry.leg_offsets.fr >= 0 ? '+' : ''}${data.gantry.leg_offsets.fr.toFixed(3)}` },
             ].map(({ cx, label }) => (
               <text key={label} x={cx} y="195" fill="#94a3b8" fontSize="8" textAnchor="middle">{label}</text>
             ))}

@@ -232,7 +232,7 @@ def _resolve_base_station(
 
 
 def _estimate_bay_no(result: PositionResult, ctx: PlcProtocolContext) -> int:
-    """当前贝位：与前端 RTK bay_no 一致，区间内向下一贝取整（solver 已算好）。"""
+    """当前贝位：四轮胎中心的中心落在电气贝位半宽内的贝位号（solver 已算好）。"""
     if result.current_bay_no > 0:
         return _clamp_u16(result.current_bay_no)
     if ctx.bay_no > 0:
@@ -249,7 +249,8 @@ def encode_gnss_to_plc(
     t = result.trolley
     # 12-15：电气 GGA、电气 GGA2、动力 GGA、动力 GGA2。
     # 横向偏离，朝堆场内部为负，朝外部为正。
-    # 两侧各自相对与 +Y 平行的本侧贝位线（该侧贝位点的平均 X），不是过原点的 X=0。
+    # 每个作业点用自己的堆场 Y，取该侧相邻两个贝位点的连线。
+    # 动力侧点不够时改用电气侧连线；电气侧也不够时才退回与 +Y 平行的平均 X。
     lane = list(getattr(g, "lane_mm", None) or [0, 0, 0, 0])
     while len(lane) < 4:
         lane.append(0)

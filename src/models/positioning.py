@@ -183,7 +183,7 @@ class PositionResult:
     yard_axis_east: float = 0.0       # 堆场 +Y 的东向分量；未拟合时为 0
     yard_axis_north: float = 0.0      # 堆场 +Y 的北向分量；未拟合时为 0
     bay_spacing_m: float = 6.0
-    current_bay_no: int = 0           # PLC 字段 10，由 RTK 贝位表「下一贝」规则得出
+    current_bay_no: int = 0           # PLC 字段 10。四轮胎中心的中心落在电气贝位 ±半宽内才有号
     fix_quality_left: int = 0         # 左列接收机主天线
     fix_quality_left_ant2: int = 0    # 左列副天线
     fix_quality_right: int = 0        # 右列主天线

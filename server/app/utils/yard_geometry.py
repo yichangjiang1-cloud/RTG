@@ -225,3 +225,146 @@ def resolve_y_axis(
     e1, n1 = by_bay[start_bay]
     e2, n2 = by_bay[end_bay]
     return two_point_y_axis(e1, n1, e2, n2)
+
+
+def parallel_reference_x(xs: Sequence[float]) -> Optional[float]:
+    """与 +Y 平行的贝位线在堆场坐标中的 X。至少两个有限值，取平均。"""
+    vals: List[float] = []
+    for raw in xs:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            vals.append(value)
+    if len(vals) < 2:
+        return None
+    return sum(vals) / len(vals)
+
+
+def polygon_centroid(polygon: Sequence[Point]) -> Optional[Point]:
+    """多边形重心。面积过小时退回顶点平均。"""
+    n = len(polygon)
+    if n < 3:
+        return None
+    acc = cx = cy = 0.0
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i + 1) % n]
+        cross = x1 * y2 - x2 * y1
+        acc += cross
+        cx += (x1 + x2) * cross
+        cy += (y1 + y2) * cross
+    if abs(acc) < 1e-12:
+        return (
+            sum(p[0] for p in polygon) / n,
+            sum(p[1] for p in polygon) / n,
+        )
+    acc *= 0.5
+    return cx / (6.0 * acc), cy / (6.0 * acc)
+
+
+def line_right_normal(direction: Point) -> Point:
+    """沿贝位号增大方向看去的右侧。+Y 的右侧是 +X。"""
+    dx, dy = float(direction[0]), float(direction[1])
+    return dy, -dx
+
+
+def line_offset_m(px: float, py: float, origin: Point, direction: Point) -> float:
+    """点相对贝位线、沿右侧法向的有符号距离。线的右侧为正。"""
+    nx, ny = line_right_normal(direction)
+    return (float(px) - float(origin[0])) * nx + (float(py) - float(origin[1])) * ny
+
+
+def line_deviation_m(
+    px: float,
+    py: float,
+    origin: Point,
+    direction: Point,
+    centroid: Point,
+) -> float:
+    """点到贝位线的横向偏离，米。朝多边形中心一侧为负。"""
+    offset = line_offset_m(px, py, origin, direction)
+    inside = line_offset_m(centroid[0], centroid[1], origin, direction)
+    if inside > 1e-6:
+        return -offset
+    return offset
+
+
+def lane_deviation_m(tire_x: float, centroid_x: float, x_ref: float = 0.0) -> float:
+    """轮胎相对一条与 +Y 平行的贝位线的横向偏离，米。朝场内为负。"""
+    offset = float(tire_x) - float(x_ref)
+    if float(centroid_x) - float(x_ref) > 1e-6:
+        return -offset
+    return offset
+
+
+def bracket_bay_line(
+    along_y: float,
+    points: Sequence[Point],
+) -> Optional[Tuple[Point, Point]]:
+    """沿堆场 Y 找出夹住 along_y 的两个贝位点，返回过这两点的直线。"""
+    ordered = sorted(
+        ((float(x), float(y)) for x, y in points),
+        key=lambda item: (item[1], item[0]),
+    )
+    if len(ordered) < 2:
+        return None
+    index = len(ordered) - 2
+    for i in range(len(ordered) - 1):
+        if float(along_y) <= ordered[i + 1][1]:
+            index = i
+            break
+    x0, y0 = ordered[index]
+    x1, y1 = ordered[index + 1]
+    dx = x1 - x0
+    dy = y1 - y0
+    norm = math.hypot(dx, dy)
+    if norm < 0.05:
+        return None
+    return (x0, y0), (dx / norm, dy / norm)
+
+
+def lateral_to_survey_m(
+    tire_x: float,
+    tire_y: float,
+    point_x: float,
+    point_y: float,
+    origin: Point,
+    direction: Point,
+    centroid: Point,
+) -> Tuple[float, float]:
+    """轮胎中心相对实测点的横向距离和沿贝位距离。横向符号与贝位偏差相同。"""
+    lateral = line_deviation_m(
+        tire_x, tire_y, origin, direction, centroid,
+    ) - line_deviation_m(
+        point_x, point_y, origin, direction, centroid,
+    )
+    dx, dy = float(direction[0]), float(direction[1])
+    along = (float(tire_x) - float(point_x)) * dx + (float(tire_y) - float(point_y)) * dy
+    return lateral, along
+
+
+def tire_survey_offset_m(
+    tire_x: float,
+    tire_y: float,
+    point_x: float,
+    point_y: float,
+    side_points: Sequence[Point],
+    fallback_points: Sequence[Point],
+    centroid: Point,
+    fallback_x: float,
+) -> Tuple[float, float]:
+    """用这只轮胎自己的相邻贝位线，算它到实测点的横向距离。线不够时改用与 +Y 平行的参考线。"""
+    line = bracket_bay_line(tire_y, side_points)
+    if line is None:
+        line = bracket_bay_line(tire_y, fallback_points)
+    if line is None:
+        lateral = lane_deviation_m(tire_x, centroid[0], fallback_x) - lane_deviation_m(
+            point_x, centroid[0], fallback_x,
+        )
+        return lateral, float(tire_y) - float(point_y)
+    origin, direction = line
+    return lateral_to_survey_m(
+        tire_x, tire_y, point_x, point_y, origin, direction, centroid,
+    )

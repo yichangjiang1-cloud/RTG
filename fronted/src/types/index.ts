@@ -57,7 +57,7 @@ export interface GantryData {
   elec_center: GantryCenter;
   /** @deprecated 同 diesel_lpoint */
   diesel_center: GantryCenter;
-  /** 四个轮胎中心。上游/下游按车辆配置里主从天线的上下游对应。 */
+  /** 四个轮胎中心。GNSS1 是主天线，GNSS2 是从天线；坐标键仍按航向两端存放。 */
   tires?: {
     elec_upstream: GantryCenter;
     elec_downstream: GantryCenter;
@@ -152,6 +152,8 @@ export interface RealtimeData {
     secondary?: GantryAntennaPoint;
   };
   yard_id?: string;
+  /** 四轮胎中心的中心所在贝位。不在半宽内为 0。 */
+  current_bay_no?: number;
 }
 
 export interface ReceiverStatus {
@@ -198,7 +200,7 @@ export interface ReceiverLayout {
   gga_order: ['elec', 'diesel'];
   /** 哪一台接收机是电气侧。left=左侧端口，right=右侧端口 */
   elec_receiver?: 'left' | 'right';
-  /** 该接收机主天线 GGA 在上游还是下游。从天线 GGA2 为另一端 */
+  /** GNSS1 在航向起点（down）还是航向终点（up）。GNSS2 在另一端 */
   left_primary_end?: 'up' | 'down';
   right_primary_end?: 'up' | 'down';
   /** @deprecated 旧的“一端一台”。新布局用 elec_receiver 与 primary_end */
@@ -232,7 +234,7 @@ export interface VehicleProfile {
   l_arm_elec: [number, number, number];
   /** 旧字段：动力侧主天线那一套，只对应一个轮胎 */
   l_arm_diesel: [number, number, number];
-  /** 电气上游 / 下游、动力上游 / 下游，各一根天线到各自轮胎中心 */
+  /** 电气、动力的 GNSS1 / GNSS2，各一根天线到各自轮胎中心 */
   l_arm_elec_up?: [number, number, number];
   l_arm_elec_down?: [number, number, number];
   l_arm_diesel_up?: [number, number, number];

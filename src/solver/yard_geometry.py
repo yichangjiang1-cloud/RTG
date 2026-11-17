@@ -183,6 +183,69 @@ def polygon_centroid(polygon: Sequence[Point]) -> Optional[Point]:
     return cx / (6.0 * acc), cy / (6.0 * acc)
 
 
+def fit_bay_line(
+    points: Sequence[Tuple[float, float, float]],
+) -> Optional[Tuple[Point, Point]]:
+    """
+    用一侧的贝位点拟合该侧贝位线。
+    输入 (贝位号, 堆场 X, 堆场 Y)。返回直线上一点，以及指向贝位号增大方向的单位向量。
+    贝位号没有拉开，或点重合时返回 None。
+    """
+    samples = [(float(bay), float(x), float(y)) for bay, x, y in points]
+    direction = fit_y_axis(samples)
+    if direction is None:
+        return None
+    n = float(len(samples))
+    origin = (
+        sum(p[1] for p in samples) / n,
+        sum(p[2] for p in samples) / n,
+    )
+    return origin, direction
+
+
+def line_right_normal(direction: Point) -> Point:
+    """沿贝位号增大方向看去的右侧。+Y 的右侧是 +X。"""
+    dx, dy = float(direction[0]), float(direction[1])
+    return dy, -dx
+
+
+def line_offset_m(px: float, py: float, origin: Point, direction: Point) -> float:
+    """点相对贝位线、沿右侧法向的有符号距离。线的右侧为正。"""
+    nx, ny = line_right_normal(direction)
+    return (float(px) - float(origin[0])) * nx + (float(py) - float(origin[1])) * ny
+
+
+def line_deviation_m(
+    px: float,
+    py: float,
+    origin: Point,
+    direction: Point,
+    centroid: Point,
+) -> float:
+    """
+    点到拟合贝位线的横向偏离，米。
+    朝多边形中心一侧为负，另一侧为正。线与 +Y 平行时与 lane_deviation_m 一致。
+    """
+    offset = line_offset_m(px, py, origin, direction)
+    inside = line_offset_m(centroid[0], centroid[1], origin, direction)
+    if inside > 1e-6:
+        return -offset
+    return offset
+
+
+def deviation_adjust_along_line(
+    delta_dev_m: float,
+    origin: Point,
+    direction: Point,
+    centroid: Point,
+) -> Point:
+    """把与字段 12–15 同号的修正量换成沿贝位线法向的位移。朝场内为负。"""
+    nx, ny = line_right_normal(direction)
+    inside = line_offset_m(centroid[0], centroid[1], origin, direction)
+    step = -float(delta_dev_m) if inside > 1e-6 else float(delta_dev_m)
+    return step * nx, step * ny
+
+
 def lane_deviation_m(tire_x: float, centroid_x: float, x_ref: float = 0.0) -> float:
     """
     轮胎相对一条与 +Y 平行的贝位线的横向偏离，米。
@@ -223,6 +286,234 @@ def deviation_adjust_to_dx(delta_dev_m: float, centroid_x: float, x_ref: float) 
     if float(centroid_x) - float(x_ref) > 1e-6:
         return -float(delta_dev_m)
     return float(delta_dev_m)
+
+
+def lateral_to_survey_m(
+    tire_x: float,
+    tire_y: float,
+    point_x: float,
+    point_y: float,
+    origin: Point,
+    direction: Point,
+    centroid: Point,
+) -> Tuple[float, float]:
+    """轮胎中心相对实测点的横向距离和沿贝位距离。横向符号与贝位偏差相同。"""
+    lateral = line_deviation_m(
+        tire_x, tire_y, origin, direction, centroid,
+    ) - line_deviation_m(
+        point_x, point_y, origin, direction, centroid,
+    )
+    dx, dy = float(direction[0]), float(direction[1])
+    along = (float(tire_x) - float(point_x)) * dx + (float(tire_y) - float(point_y)) * dy
+    return lateral, along
+
+
+def tire_survey_offset_m(
+    tire_x: float,
+    tire_y: float,
+    point_x: float,
+    point_y: float,
+    side_points: Sequence[Point],
+    fallback_points: Sequence[Point],
+    centroid: Point,
+    fallback_x: float,
+) -> Tuple[float, float]:
+    """用这只轮胎自己的相邻贝位线，算它到实测点的横向距离。线不够时改用与 +Y 平行的参考线。"""
+    line = bracket_bay_line(tire_y, side_points)
+    if line is None:
+        line = bracket_bay_line(tire_y, fallback_points)
+    if line is None:
+        lateral = lane_deviation_m(tire_x, centroid[0], fallback_x) - lane_deviation_m(
+            point_x, centroid[0], fallback_x,
+        )
+        return lateral, float(tire_y) - float(point_y)
+    origin, direction = line
+    return lateral_to_survey_m(
+        tire_x, tire_y, point_x, point_y, origin, direction, centroid,
+    )
+
+
+def bracket_bay_line(
+    along_y: float,
+    points: Sequence[Point],
+) -> Optional[Tuple[Point, Point]]:
+    """
+    沿堆场 Y 找出夹住 along_y 的两个贝位点，返回过这两点的直线。
+    落在最前一个贝位之前用第一段，落在最后一个之后用最后一段。
+    两点过近时返回 None。
+    """
+    ordered = sorted(
+        ((float(x), float(y)) for x, y in points),
+        key=lambda item: (item[1], item[0]),
+    )
+    if len(ordered) < 2:
+        return None
+    index = len(ordered) - 2
+    for i in range(len(ordered) - 1):
+        if float(along_y) <= ordered[i + 1][1]:
+            index = i
+            break
+    x0, y0 = ordered[index]
+    x1, y1 = ordered[index + 1]
+    dx = x1 - x0
+    dy = y1 - y0
+    norm = math.hypot(dx, dy)
+    if norm < 0.05:
+        return None
+    return (x0, y0), (dx / norm, dy / norm)
+
+
+def bay_line_ends(points: Sequence[Point]) -> Optional[Tuple[float, float]]:
+    """贝位线沿堆场 Y 的起点和终点。不足两个点，或挤在一起时返回 None。"""
+    ys = [float(point[1]) for point in points]
+    if len(ys) < 2:
+        return None
+    y0, y1 = min(ys), max(ys)
+    if y1 - y0 < 0.05:
+        return None
+    return y0, y1
+
+
+def _usable_lane_points(
+    points: Sequence[Tuple[float, Sequence[float]]],
+) -> List[Tuple[float, Tuple[float, float, float, float]]]:
+    usable: List[Tuple[float, Tuple[float, float, float, float]]] = []
+    for item in points:
+        if item is None or len(item) < 2 or item[1] is None or len(item[1]) < 4:
+            continue
+        usable.append((float(item[0]), tuple(float(v) for v in item[1][:4])))
+    usable.sort(key=lambda row: row[0])
+    return usable
+
+
+def anchored_lane_points(
+    points: Sequence[Tuple[float, Sequence[float]]],
+    y_start: float,
+    y_end: float,
+    end_match_m: float = 0.5,
+) -> List[Tuple[float, Tuple[float, float, float, float]]]:
+    """
+    纠偏点夹在贝位线两端之间。两端没有单独记下修正时，修正量是 0。
+    记下的点落在端点附近时，用记下的值，不再另加一个 0。
+    """
+    zeros = (0.0, 0.0, 0.0, 0.0)
+    usable = _usable_lane_points(points)
+    start = float(y_start)
+    end = float(y_end)
+
+    def _covered(y: float) -> bool:
+        return any(abs(py - y) <= end_match_m for py, _shifts in usable)
+
+    if not _covered(start):
+        usable.append((start, zeros))
+    if not _covered(end):
+        usable.append((end, zeros))
+    usable.sort(key=lambda row: row[0])
+    return usable
+
+
+_BAY_MATCH_M = 0.5
+
+
+def _resolve_bay_ys(bay_ys, y_end: Optional[float] = None) -> List[float]:
+    """贝位沿堆场 Y 的位置。传入两个数时当作只有首尾两个贝位。过近的点并成一个。"""
+    if bay_ys is None:
+        return []
+    if isinstance(bay_ys, (int, float)) and not isinstance(bay_ys, bool):
+        if y_end is None:
+            return []
+        raw = [float(bay_ys), float(y_end)]
+    else:
+        raw = [float(v) for v in bay_ys]
+        if isinstance(y_end, (int, float)) and not isinstance(y_end, bool):
+            raw.append(float(y_end))
+    ordered = sorted(v for v in raw if math.isfinite(v))
+    out: List[float] = []
+    for value in ordered:
+        if not out or value - out[-1] >= 0.05:
+            out.append(value)
+    return out
+
+
+def applied_lane_shifts(
+    y: float,
+    points: Sequence[Tuple[float, Sequence[float]]],
+    bay_ys=None,
+    y_end: Optional[float] = None,
+) -> Tuple[float, float, float, float]:
+    """
+    纠偏只落在记下的点前后两个贝位之间。
+    这两个贝位没有单独记下时修正是 0，再往外的贝位也是 0。
+    点就记在某个贝上时，该贝用记下的值，前后两段都连到它。
+    相邻两段各有一个纠偏点时，中间那个贝位仍是 0。
+    没有至少两个贝位时不修正。
+    """
+    zeros = (0.0, 0.0, 0.0, 0.0)
+    bays = _resolve_bay_ys(bay_ys, y_end)
+    usable = _usable_lane_points(points)
+    if len(bays) < 2 or not usable:
+        return zeros
+    y = float(y)
+    pinned: dict = {}
+    pin_dist: dict = {}
+    interior: dict = {}
+    before: List[Tuple[float, Tuple[float, float, float, float]]] = []
+    after: List[Tuple[float, Tuple[float, float, float, float]]] = []
+    for py, shifts in usable:
+        nearest = None
+        best = _BAY_MATCH_M + 1.0
+        for index, bay in enumerate(bays):
+            dist = abs(py - bay)
+            if dist <= _BAY_MATCH_M and dist < best:
+                best = dist
+                nearest = index
+        if nearest is not None:
+            if nearest not in pin_dist or best < pin_dist[nearest]:
+                pinned[nearest] = shifts
+                pin_dist[nearest] = best
+            continue
+        if py < bays[0]:
+            before.append((py, shifts))
+        elif py > bays[-1]:
+            after.append((py, shifts))
+        else:
+            for index in range(len(bays) - 1):
+                if bays[index] < py < bays[index + 1]:
+                    interior.setdefault(index, []).append((py, shifts))
+                    break
+
+    def _at_bay(index: int) -> Tuple[float, float, float, float]:
+        return pinned.get(index, zeros)
+
+    def _on_segment(index: int, at: float) -> Tuple[float, float, float, float]:
+        left = (bays[index], _at_bay(index))
+        right = (bays[index + 1], _at_bay(index + 1))
+        mids = interior.get(index, [])
+        if not mids and left[1] == zeros and right[1] == zeros:
+            return zeros
+        return interpolate_lane_shifts(at, [left, *mids, right])
+
+    if y < bays[0]:
+        if not before:
+            return zeros
+        anchors = [*before, (bays[0], _at_bay(0))]
+        if y < min(py for py, _shifts in anchors):
+            return zeros
+        return interpolate_lane_shifts(y, anchors)
+    if y > bays[-1]:
+        if not after:
+            return zeros
+        anchors = [(bays[-1], _at_bay(len(bays) - 1)), *after]
+        if y > max(py for py, _shifts in anchors):
+            return zeros
+        return interpolate_lane_shifts(y, anchors)
+    for index, bay in enumerate(bays):
+        if abs(y - bay) <= 1e-6:
+            return _at_bay(index)
+    for index in range(len(bays) - 1):
+        if bays[index] < y < bays[index + 1]:
+            return _on_segment(index, y)
+    return zeros
 
 
 def interpolate_lane_shifts(

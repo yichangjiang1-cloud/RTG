@@ -5,10 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/rtg/current
-Environment=RTG_CONFIG_DIR=/etc/rtg
-Environment=RTG_STATE_DIR=/var/lib/rtg
-ExecStart=/opt/rtg/current/.venv/bin/python -m src.main
+User=guide
+Group=guide
+WorkingDirectory=/home/guide/CLionProjects/GNSS/current
+Environment=RTG_CONFIG_DIR=/home/guide/CLionProjects/GNSS/config
+Environment=RTG_STATE_DIR=/home/guide/CLionProjects/GNSS/state
+ExecStart=/home/guide/CLionProjects/GNSS/current/.venv/bin/python -m src.main
 Restart=always
 RestartSec=3
 

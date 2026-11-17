@@ -29,11 +29,15 @@ from src.solver.bay_residual import (
 from src.solver.coordinate_transform import ecef_to_enu, ecef_to_wgs84
 from src.solver.yard_geometry import (
     diesel_bays,
+    applied_lane_shifts,
+    bracket_bay_line,
+    deviation_adjust_along_line,
     deviation_adjust_to_dx,
     electrical_bays,
     en_meters,
-    interpolate_lane_shifts,
-    lane_deviations_mm,
+    fit_bay_line,
+    lane_deviation_m,
+    line_deviation_m,
     normalize_boundary,
     parallel_reference_x,
     polygon_centroid,
@@ -154,6 +158,8 @@ class SolverNode:
         self._last_gantry_time: float = 0.0
         self._last_gantry_any_time: float = 0.0
         self._last_gantry_heading: float = 0.0
+        self._last_speed_log: float = 0.0
+        self._last_speed_log_time: float = 0.0
         self._last_upstream_heading: Optional[float] = None
         layout = cfg.get("receiver_layout") if isinstance(cfg.get("receiver_layout"), dict) else {}
         self._side = parse_side_layout(layout)
@@ -322,15 +328,24 @@ class SolverNode:
         center = polygon_centroid(verts)
         if center is None:
             return
-        elec_x = self._side_reference_x(transform, yard_id, "elec")
-        diesel_x = self._side_reference_x(transform, yard_id, "diesel")
+        elec_pts = self._side_bay_xy(transform, yard_id, "elec")
+        diesel_pts = self._side_bay_xy(transform, yard_id, "diesel")
+        x_elec = self._parallel_fallback_x(yard_id, elec_pts)
         tires = (
-            (float(gantry.tire_elec1[0]), bool(gantry.tire_elec1_valid)),
-            (float(gantry.tire_elec2[0]), bool(gantry.tire_elec2_valid)),
-            (float(gantry.tire_diesel1[0]), bool(gantry.tire_diesel1_valid)),
-            (float(gantry.tire_diesel2[0]), bool(gantry.tire_diesel2_valid)),
+            (gantry.tire_elec1, bool(gantry.tire_elec1_valid), False),
+            (gantry.tire_elec2, bool(gantry.tire_elec2_valid), False),
+            (gantry.tire_diesel1, bool(gantry.tire_diesel1_valid), True),
+            (gantry.tire_diesel2, bool(gantry.tire_diesel2_valid), True),
         )
-        mm = lane_deviations_mm(tires, center[0], elec_x, diesel_x)
+        mm = []
+        for tire, ok, on_diesel in tires:
+            if not ok:
+                mm.append(0)
+                continue
+            meters = self._tire_lane_m(
+                tire[0], tire[1], on_diesel, elec_pts, diesel_pts, center, x_elec,
+            )
+            mm.append(int(round(meters * 1000.0)))
         gantry.lane_mm = mm
         gantry.leg_offsets = [v / 1000.0 for v in mm]
 
@@ -352,16 +367,102 @@ class SolverNode:
             xs.append(x)
         fitted = parallel_reference_x(xs)
         stamp = (yard_id, None if fitted is None else round(fitted, 3), len(xs))
-        attr = "_elec_line_stamp" if side == "elec" else "_diesel_line_stamp"
+        attr = "_elec_line_stamp" if side == "elec" else "_diesel_mean_x_stamp"
         if stamp != getattr(self, attr, None):
             setattr(self, attr, stamp)
-            if fitted is None and side == "elec":
+            if fitted is None:
                 logger.info("%s贝位线不足（%d 个点），偏差仍相对过原点的 +Y", label, len(xs))
-            elif fitted is None:
-                logger.info("%s贝位线不足（%d 个点），偏差改用电气侧贝位线", label, len(xs))
             else:
                 logger.info("%s贝位线 X=%.3f m（%d 个点，平行于 +Y）", label, fitted, len(xs))
         return fitted
+
+    def _diesel_bay_line(self, transform, yard_id: str):
+        """动力侧贝位点自己拟合的直线。点不够时返回 None，偏差改用电气侧线。"""
+        cal = self._calibration_ctx.get(yard_id or "")
+        points = cal.survey_points if cal else []
+        samples = []
+        for point in diesel_bays(points):
+            if not isinstance(point, dict) or point.get("bay_no") is None:
+                continue
+            lat = float(point.get("lat") or 0.0)
+            lon = float(point.get("lon") or 0.0)
+            if abs(lat) < 1e-9 and abs(lon) < 1e-9:
+                continue
+            x, y, _z = transform.wgs84_to_lycs(lat, lon, float(point.get("alt") or 0.0))
+            samples.append((float(point["bay_no"]), x, y))
+        fitted = fit_bay_line(samples)
+        if fitted is None:
+            stamp = (yard_id, None, len(samples))
+            angle = None
+        else:
+            origin, direction = fitted
+            angle = math.degrees(math.atan2(direction[0], direction[1]))
+            stamp = (
+                yard_id,
+                round(origin[0], 3),
+                round(origin[1], 3),
+                round(angle, 2),
+                len(samples),
+            )
+        if stamp != getattr(self, "_diesel_line_stamp", None):
+            self._diesel_line_stamp = stamp
+            if fitted is None:
+                logger.info("动力侧贝位线不足（%d 个点），偏差改用电气侧贝位线", len(samples))
+            else:
+                logger.info(
+                    "动力侧贝位线过 (%.3f, %.3f)，与 +Y 夹角 %.2f°（%d 个点）",
+                    origin[0], origin[1], angle, len(samples),
+                )
+        return fitted
+
+    def _side_bay_xy(self, transform, yard_id: str, side: str):
+        """该侧贝位点在堆场坐标里的 (X, Y)。每个作业点再用自己的 Y 选相邻两点。"""
+        cal = self._calibration_ctx.get(yard_id or "")
+        points = cal.survey_points if cal else []
+        chosen = electrical_bays(points) if side == "elec" else diesel_bays(points)
+        samples = []
+        for point in chosen:
+            if not isinstance(point, dict) or point.get("bay_no") is None:
+                continue
+            lat = float(point.get("lat") or 0.0)
+            lon = float(point.get("lon") or 0.0)
+            if abs(lat) < 1e-9 and abs(lon) < 1e-9:
+                continue
+            x, y, _z = transform.wgs84_to_lycs(lat, lon, float(point.get("alt") or 0.0))
+            samples.append((float(x), float(y)))
+        label = "电气侧" if side == "elec" else "动力侧"
+        stamp = (yard_id, len(samples))
+        attr = "_elec_segment_stamp" if side == "elec" else "_diesel_segment_stamp"
+        if stamp != getattr(self, attr, None):
+            setattr(self, attr, stamp)
+            if len(samples) < 2 and side == "elec":
+                logger.info("%s贝位点不足（%d 个），偏差仍相对过原点的 +Y", label, len(samples))
+            elif len(samples) < 2:
+                logger.info("%s贝位点不足（%d 个），偏差改用电气侧相邻贝位连线", label, len(samples))
+            else:
+                logger.info("%s偏差按相邻贝位点连线计算（%d 个点）", label, len(samples))
+        return samples
+
+    def _parallel_fallback_x(self, yard_id: str, elec_pts) -> float:
+        fitted = parallel_reference_x([point[0] for point in elec_pts])
+        return 0.0 if fitted is None else float(fitted)
+
+    def _tire_reference_line(self, along_y: float, on_diesel: bool, elec_pts, diesel_pts):
+        """这个作业点所在的那两个贝位点连线。动力侧点不够时用电气侧。"""
+        own = diesel_pts if on_diesel else elec_pts
+        line = bracket_bay_line(along_y, own)
+        if line is None and on_diesel:
+            line = bracket_bay_line(along_y, elec_pts)
+        return line
+
+    def _tire_lane_m(
+        self, px, py, on_diesel, elec_pts, diesel_pts, center, x_elec,
+    ) -> float:
+        line = self._tire_reference_line(py, on_diesel, elec_pts, diesel_pts)
+        if line is None:
+            return lane_deviation_m(px, center[0], x_elec)
+        origin, direction = line
+        return line_deviation_m(px, py, origin, direction, center)
 
     def _side_fix(self, ga1, ga2, recv1, recv2):
         elec, diesel, elec_live, diesel_live, _ed, _dd = self._sides(ga1, ga2, recv1, recv2)
@@ -843,7 +944,9 @@ class SolverNode:
         self._last_gantry_any_time = now
 
         gantry.speed = self._gantry_motion.speed
-        if abs(gantry.speed) >= DEADBAND_MPS or (hasattr(self, '_last_speed_log') and self._last_speed_log > DEADBAND_MPS):
+        speed_abs = abs(gantry.speed)
+        moving = speed_abs >= DEADBAND_MPS or self._last_speed_log > DEADBAND_MPS
+        if moving and now - self._last_speed_log_time >= 1.0:
             logger.info(
                 "[速度] gantry.speed=%.4f m/s | gnss=%.4f course=%.1f | "
                 "dx=%.4f dy=%.4f dt=%.3f | lpoint=(%.4f, %.4f) | recv=%d live | hdg=%.2f ω=%.1f°/s",
@@ -851,7 +954,8 @@ class SolverNode:
                 dx, dy, dt, gantry.lpoint_x, gantry.lpoint_y, cur_live, heading,
                 yaw_rate_dps,
             )
-        self._last_speed_log = abs(gantry.speed)
+            self._last_speed_log = speed_abs
+            self._last_speed_log_time = now
         gantry.data_source = ga1.get("source", DataSource.INVALID)
         gantry.heading = heading
         gantry.pitch = pitch
@@ -1137,14 +1241,13 @@ class SolverNode:
         center = polygon_centroid(verts)
         if center is None:
             return None
-        elec_x = self._side_reference_x(transform, yard_id, "elec")
-        diesel_x = self._side_reference_x(transform, yard_id, "diesel")
-        elec_ref = 0.0 if elec_x is None else float(elec_x)
-        diesel_ref = elec_ref if diesel_x is None else float(diesel_x)
-        return float(center[0]), elec_ref, diesel_ref
+        elec_pts = self._side_bay_xy(transform, yard_id, "elec")
+        diesel_pts = self._side_bay_xy(transform, yard_id, "diesel")
+        x_elec = self._parallel_fallback_x(yard_id, elec_pts)
+        return (float(center[0]), float(center[1])), elec_pts, diesel_pts, x_elec
 
     def _apply_lane_corrections(self, gantry: GantryResult, transform, yard_id: str) -> None:
-        """任意停留点的横向修正。按沿贝位位置分段过渡，每个轮胎单独移动。"""
+        """任意停留点的横向修正。只落在该点前后两个贝位之间，每个轮胎用自己的沿贝位位置。"""
         if transform is None or not getattr(transform, "axis_ready", False) or not yard_id:
             return
         cal = self._calibration_ctx.get(yard_id)
@@ -1154,23 +1257,39 @@ class SolverNode:
         frame = self._lane_frame(transform, yard_id)
         if frame is None:
             return
-        centroid_x, elec_ref, diesel_ref = frame
-        shifts = interpolate_lane_shifts(gantry.lpoint_y, points)
+        centroid, elec_pts, diesel_pts, x_elec = frame
+        elec_ys = [point[1] for point in elec_pts]
+        diesel_ys = [point[1] for point in diesel_pts]
+        if len(elec_ys) < 2:
+            elec_ys = diesel_ys
+        if len(diesel_ys) < 2:
+            diesel_ys = elec_ys
         specs = (
-            ("tire_elec1", "tire_elec1_valid", shifts[0], elec_ref),
-            ("tire_elec2", "tire_elec2_valid", shifts[1], elec_ref),
-            ("tire_diesel1", "tire_diesel1_valid", shifts[2], diesel_ref),
-            ("tire_diesel2", "tire_diesel2_valid", shifts[3], diesel_ref),
+            ("tire_elec1", "tire_elec1_valid", 0, False, elec_ys),
+            ("tire_elec2", "tire_elec2_valid", 1, False, elec_ys),
+            ("tire_diesel1", "tire_diesel1_valid", 2, True, diesel_ys),
+            ("tire_diesel2", "tire_diesel2_valid", 3, True, diesel_ys),
         )
         moved = False
-        for name, flag, dev, xref in specs:
+        for name, flag, index, on_diesel, bay_ys in specs:
             if not getattr(gantry, flag):
                 continue
-            dx = deviation_adjust_to_dx(dev, centroid_x, xref)
-            if abs(dx) < 1e-6:
+            tire = getattr(gantry, name)
+            dev = applied_lane_shifts(tire[1], points, bay_ys)[index]
+            line = self._tire_reference_line(
+                tire[1], on_diesel, elec_pts, diesel_pts,
+            )
+            if line is not None:
+                dx, dy = deviation_adjust_along_line(
+                    dev, line[0], line[1], centroid,
+                )
+            else:
+                dx = deviation_adjust_to_dx(dev, centroid[0], x_elec)
+                dy = 0.0
+            if abs(dx) < 1e-6 and abs(dy) < 1e-6:
                 continue
             x, y, z = getattr(gantry, name)
-            setattr(gantry, name, (x + dx, y, z))
+            setattr(gantry, name, (x + dx, y + dy, z))
             moved = True
         if moved:
             self._recompute_centers(gantry)

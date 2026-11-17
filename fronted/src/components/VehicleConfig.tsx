@@ -7,6 +7,7 @@ import type { VehicleProfile, RealtimeData, LArmCalibrationRecord, GpsCoord, Gan
 import { clsx } from 'clsx';
 import { logger } from '../utils/logger';
 import { httpBase } from '../utils/backendUrl';
+import { tireCenterLabel } from '../utils/gnssName';
 
 // ── 新设备初始化弹窗 ──────────────────────────────────────
 function InitDeviceModal({ device, backendBase, onClose, onDone }: {
@@ -150,7 +151,7 @@ function InitDeviceModal({ device, backendBase, onClose, onDone }: {
           )}
 
           <p className="text-[10px] text-slate-500 leading-relaxed">
-            杆臂在「智能杆臂标定」中一键计算；横滚由左右主 GGA 高差自动估算。
+            杆臂在「智能杆臂标定」中一键计算；横滚由左右 GNSS1 高差自动估算。
           </p>
         </div>
 
@@ -228,14 +229,20 @@ const TIRE_ARMS: {
   id: TireArmId;
   role: 'elec' | 'diesel';
   end: 'upstream' | 'downstream';
-  label: string;
   armKey: 'l_arm_elec_up' | 'l_arm_elec_down' | 'l_arm_diesel_up' | 'l_arm_diesel_down';
 }[] = [
-  { id: 'elec_up', role: 'elec', end: 'upstream', label: '电气上游轮胎中心', armKey: 'l_arm_elec_up' },
-  { id: 'elec_down', role: 'elec', end: 'downstream', label: '电气下游轮胎中心', armKey: 'l_arm_elec_down' },
-  { id: 'diesel_up', role: 'diesel', end: 'upstream', label: '动力上游轮胎中心', armKey: 'l_arm_diesel_up' },
-  { id: 'diesel_down', role: 'diesel', end: 'downstream', label: '动力下游轮胎中心', armKey: 'l_arm_diesel_down' },
+  { id: 'elec_up', role: 'elec', end: 'upstream', armKey: 'l_arm_elec_up' },
+  { id: 'elec_down', role: 'elec', end: 'downstream', armKey: 'l_arm_elec_down' },
+  { id: 'diesel_up', role: 'diesel', end: 'upstream', armKey: 'l_arm_diesel_up' },
+  { id: 'diesel_down', role: 'diesel', end: 'downstream', armKey: 'l_arm_diesel_down' },
 ];
+
+const ANTENNA_LABEL = {
+  a1: '左 GNSS1',
+  a2: '左 GNSS2',
+  b1: '右 GNSS1',
+  b2: '右 GNSS2',
+} as const;
 
 function ConfigPanelHeader({
   icon: Icon,
@@ -536,7 +543,7 @@ function LArmSmartCalibration({
     for (const spec of TIRE_ARMS) {
       const src = endAntenna(liveData, layout, spec.role, spec.end);
       if (Math.abs(src.lat) < 1e-6 && Math.abs(src.lon) < 1e-6) {
-        showToast(`${spec.label}的天线无效，未记录`, 'error');
+        showToast(`${tireCenterLabel(layout, spec.role, spec.end)}的天线无效，未记录`, 'error');
         return;
       }
       const ecef = pickAntennaEcef(src);
@@ -605,7 +612,7 @@ function LArmSmartCalibration({
       }
       const antennaSrc = endAntenna(liveData, layout, spec.role, spec.end);
       if (Math.abs(antennaSrc.lat) < 1e-6 && Math.abs(antennaSrc.lon) < 1e-6) {
-        showToast(`${spec.label}的天线无效`, 'error');
+        showToast(`${tireCenterLabel(layout, spec.role, spec.end)}的天线无效`, 'error');
         return;
       }
       antenna = { lat: antennaSrc.lat, lon: antennaSrc.lon, alt: antennaSrc.alt };
@@ -663,7 +670,7 @@ function LArmSmartCalibration({
         }
         return next;
       });
-      showToast(`${spec.label}杆臂已计算：[${arm.map(v => v.toFixed(3)).join(', ')}]`);
+      showToast(`${tireCenterLabel(layout, spec.role, spec.end)}杆臂已计算：[${arm.map(v => v.toFixed(3)).join(', ')}]`);
     } catch {
       showToast('杆臂计算失败，请检查后端与输入', 'error');
     } finally {
@@ -763,7 +770,7 @@ function LArmSmartCalibration({
           return (
             <div key={spec.id} className="config-data-block space-y-1">
               <p className="text-slate-500 mb-1">
-                {spec.label}天线
+                {tireCenterLabel(layout, spec.role, spec.end)}天线
                 {method === 'snapshot' ? '（记录）' : ''}
                 {missing ? ' — 无效' : ''}
               </p>
@@ -790,7 +797,7 @@ function LArmSmartCalibration({
           const record = cfg?.l_arm_calibration?.[spec.id];
           return (
             <div key={spec.id} className="space-y-3 rounded-xl border border-slate-700/60 p-3">
-              <label className="section-title">{spec.label}（RTK 测量）</label>
+              <label className="section-title">{tireCenterLabel(cfg?.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT, spec.role, spec.end)}（RTK 测量）</label>
               {renderLpointInputs(spec.id)}
             <button
               type="button"
@@ -906,7 +913,7 @@ function ReceiverLayoutPanel({
       left_primary_end: layout.right_primary_end ?? 'down',
       right_primary_end: layout.left_primary_end ?? 'down',
     });
-    showToast('已交换左右接收机（含电气侧和主天线上下游）');
+    showToast('已交换左右接收机（含电气侧和 GNSS1 朝向）');
   };
 
   const patch = (partial: Partial<ReceiverLayout>) => onChange({ ...layout, ...partial });
@@ -973,8 +980,7 @@ function ReceiverLayoutPanel({
             <div className="min-w-0">
               <h3 className="text-sm font-bold text-slate-200">大车接收机（电气 / 动力）</h3>
               <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                电气侧一台接收机，动力侧一台。每台主天线 GGA 和从天线 GGA2 分属上游、下游，可分别选择。
-                协议里 GNSS1 跟随 GGA，GNSS2 跟随 GGA2。航向从下水端指向上水端。
+                电气侧一台接收机，动力侧一台。GNSS1 是主天线，GNSS2 是从天线。选择 GNSS1 在航向的哪一端，GNSS2 在另一端。
               </p>
             </div>
           </div>
@@ -1007,7 +1013,7 @@ function ReceiverLayoutPanel({
                   {layout.elec_receiver === side.key ? ' · 电气侧' : ' · 动力侧'}
                 </p>
                 <label className="block text-[11px] text-slate-500">
-                  主天线 GGA
+                  GNSS1
                   <select
                     className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
                     value={(side.key === 'left' ? layout.left_primary_end : layout.right_primary_end) === 'up' ? 'up' : 'down'}
@@ -1016,8 +1022,8 @@ function ReceiverLayoutPanel({
                       patch(side.key === 'left' ? { left_primary_end: end } : { right_primary_end: end });
                     }}
                   >
-                    <option value="down">下游（从天线 GGA2 为上游）</option>
-                    <option value="up">上游（从天线 GGA2 为下游）</option>
+                    <option value="down">GNSS1 在航向起点，GNSS2 在航向终点</option>
+                    <option value="up">GNSS1 在航向终点，GNSS2 在航向起点</option>
                   </select>
                 </label>
                 <label className="block text-[11px] text-slate-500">
@@ -1309,7 +1315,7 @@ function GantryAttitudePanel({
     if (useMock || isMock) return '请关闭模拟模式并选择车辆以建立 WebSocket';
     if (connStatus !== 'connected') return 'WebSocket 未连接';
     if (!fourReady) {
-      return `四天线未齐：${fourGaps.join('、')}。上水、下水两台接收机都要有主 GGA 和副 GGA2`;
+      return `四天线未齐：${fourGaps.join('、')}。左右接收机都要有 GNSS1 和 GNSS2`;
     }
     if (!rtkFixed) {
       const left = liveData.receivers.find((r) => r.id === 'gantry_a1');
@@ -1476,7 +1482,7 @@ function GantryAttitudePanel({
                 const p = liveData.gantry_antennas![k];
                 return (
                   <tr key={k} className="border-b border-slate-800/40 text-slate-400">
-                    <td className="py-1 pr-2 uppercase text-blue-400/80">{k}</td>
+                    <td className="py-1 pr-2 text-blue-400/80">{ANTENNA_LABEL[k]}</td>
                     <td className="py-1 px-1">{p.lat.toFixed(8)}</td>
                     <td className="py-1 px-1">{p.lon.toFixed(8)}</td>
                     <td className="py-1 px-1">{p.alt.toFixed(3)}</td>
@@ -1532,7 +1538,7 @@ function GantryAttitudePanel({
           <tbody>
             {(['a1', 'a2', 'b1', 'b2'] as const).map((key) => (
               <tr key={key} className="border-b border-slate-800/60">
-                <td className="py-2 pr-2 text-slate-400 uppercase">{key}</td>
+                <td className="py-2 pr-2 text-slate-400 whitespace-nowrap">{ANTENNA_LABEL[key]}</td>
                 {([0, 1, 2] as const).map((i) => (
                   <td key={i} className="py-1 px-1">
                     <input
@@ -1928,7 +1934,7 @@ export default function VehicleConfig({
                   />
                 </div>
                 <p className="text-[10px] text-slate-500 pt-1">
-                  横滚由左右主 GGA 自动估算；杆臂在「智能杆臂标定」页配置。
+                  横滚由左右 GNSS1 高差自动估算；杆臂在「智能杆臂标定」页配置。
                 </p>
               </div>
 

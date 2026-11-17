@@ -6,6 +6,7 @@ import type { RealtimeData } from '../types';
 import { clsx } from 'clsx';
 import { logger } from '../utils/logger';
 import { httpBase } from '../utils/backendUrl';
+import { gnssAtEnd } from '../utils/gnssName';
 
 interface CalibrationProps {
   liveData: RealtimeData;
@@ -38,11 +39,16 @@ interface LanePoint {
 }
 
 const LANE_FIELDS = [
-  { key: 'elec1', label: '电气 GNSS1', live: 'fl' },
-  { key: 'elec2', label: '电气 GNSS2', live: 'rl' },
-  { key: 'diesel1', label: '动力 GNSS1', live: 'fr' },
-  { key: 'diesel2', label: '动力 GNSS2', live: 'rr' },
+  { key: 'elec1', label: '电气 GNSS1', live: 'fl', role: 'elec', gnss: 'GNSS1' },
+  { key: 'elec2', label: '电气 GNSS2', live: 'rl', role: 'elec', gnss: 'GNSS2' },
+  { key: 'diesel1', label: '动力 GNSS1', live: 'fr', role: 'diesel', gnss: 'GNSS1' },
+  { key: 'diesel2', label: '动力 GNSS2', live: 'rr', role: 'diesel', gnss: 'GNSS2' },
 ] as const;
+
+function formatSignedCm(meters: number): string {
+  const cm = meters * 100;
+  return `${cm >= 0 ? '+' : ''}${cm.toFixed(1)} cm`;
+}
 
 function cmToMeters(text: string): number | null {
   const trimmed = text.trim();
@@ -95,6 +101,12 @@ export default function Calibration({ liveData }: CalibrationProps) {
   const [clearing, setClearing] = useState(false);
   const [lanePoints, setLanePoints] = useState<LanePoint[]>([]);
   const [laneCm, setLaneCm] = useState({ elec1: '', elec2: '', diesel1: '', diesel2: '' });
+  const [surveyLat, setSurveyLat] = useState('');
+  const [surveyLon, setSurveyLon] = useState('');
+  const [surveyTire, setSurveyTire] = useState<(typeof LANE_FIELDS)[number]['key']>('elec1');
+  const [surveyDist, setSurveyDist] = useState<Record<string, { lateral_m: number; along_m: number }>>({});
+  const [surveyDistNote, setSurveyDistNote] = useState('');
+  const [surveyBusy, setSurveyBusy] = useState(false);
   const [savingLane, setSavingLane] = useState(false);
   const [bayQuery, setBayQuery] = useState('');
   const [listStatus, setListStatus] = useState<'all' | 'saved' | 'pending'>('all');
@@ -374,6 +386,62 @@ export default function Calibration({ liveData }: CalibrationProps) {
   }, [baseUrl, yardId, selectedVehicleId]);
 
   useEffect(() => { loadLanePoints(); }, [loadLanePoints]);
+
+  const layout = selectedVehicle?.receiver_layout;
+
+  const tireCenter = (key: (typeof LANE_FIELDS)[number]['key']) => {
+    const field = LANE_FIELDS.find(item => item.key === key);
+    if (!field) return null;
+    const end = gnssAtEnd(layout, field.role, 'downstream') === field.gnss ? 'downstream' : 'upstream';
+    const point = liveData.gantry?.tires?.[`${field.role}_${end}`];
+    if (point?.valid !== true || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+    return { x: point.x, y: point.y };
+  };
+
+  const computeSurveyDistance = async () => {
+    const lat = Number(surveyLat.trim());
+    const lon = Number(surveyLon.trim());
+    if (!yardId || !Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+      setSurveyDist({});
+      setSurveyDistNote('请先填写实测点的纬度和经度');
+      return;
+    }
+    const center = tireCenter(surveyTire);
+    if (!center) {
+      setSurveyDist({});
+      setSurveyDistNote('这只轮胎中心还没有坐标');
+      return;
+    }
+    setSurveyBusy(true);
+    setSurveyDistNote('');
+    try {
+      const res = await fetch(`${baseUrl}/api/survey/tire_point_distance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          yard_id: yardId,
+          lat,
+          lon,
+          tires: { [surveyTire]: center },
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+      const body = await res.json();
+      if (body.code === 200 && body.data) {
+        setSurveyDist(body.data);
+        setSurveyDistNote('');
+      } else {
+        const detail = body.detail;
+        setSurveyDist({});
+        setSurveyDistNote(typeof detail === 'string' ? detail : (body.message ?? '算不出到实测点的距离'));
+      }
+    } catch {
+      setSurveyDist({});
+      setSurveyDistNote('算不出到实测点的距离');
+    } finally {
+      setSurveyBusy(false);
+    }
+  };
 
   const visibleBays = rtkBays.filter(bay => {
     const saved = transformList.some(row => row.bay_no === bay.bay_no);
@@ -741,17 +809,76 @@ export default function Calibration({ liveData }: CalibrationProps) {
         <div>
           <h3 className="text-sm font-bold text-white">任意停留修正</h3>
           <p className="text-xs text-slate-400 mt-1">
-            填写的是当前位置还差的厘米数，会加到这里已经生效的修正上。先前全场是 60 cm，这里再填 5，这一点记成 65 cm，两处正中间是 62.5 cm。
-            留空表示这个轮胎不再追加。负值朝场内（电气朝动力侧，动力朝电气侧），正值朝场外。表内是累计值。逐贝位采点不受影响。
+            纠偏只落在记下的位置前后两个贝位之间。这两个贝位没有单独记下时，修正是 0，再往外的贝位保持 0。只打偏了一个点时，记这一点即可。中途再填的数，加在这个位置已经连出来的修正上。
+            留空表示这个轮胎不再追加。负值朝场内（电气朝动力侧，动力朝电气侧），正值朝场外。表内是这一点的累计值。逐贝位采点不受影响。
           </p>
         </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+          <label className="space-y-1">
+            <span className="text-[11px] text-slate-400 block">对应轮胎</span>
+            <select
+              className="input-field"
+              value={surveyTire}
+              onChange={e => {
+                setSurveyTire(e.target.value as (typeof LANE_FIELDS)[number]['key']);
+                setSurveyDist({});
+              }}
+            >
+              {LANE_FIELDS.map(field => (
+                <option key={field.key} value={field.key}>{field.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1">
+            <span className="text-[11px] text-slate-400 block">实测点纬度</span>
+            <input
+              className="input-field font-mono"
+              inputMode="decimal"
+              placeholder="测量仪纬度"
+              value={surveyLat}
+              onChange={e => setSurveyLat(e.target.value)}
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-[11px] text-slate-400 block">实测点经度</span>
+            <input
+              className="input-field font-mono"
+              inputMode="decimal"
+              placeholder="测量仪经度"
+              value={surveyLon}
+              onChange={e => setSurveyLon(e.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={computeSurveyDistance}
+            disabled={surveyBusy}
+            className="btn-primary"
+          >
+            {surveyBusy ? '计算中…' : '计算到实测点'}
+          </button>
+        </div>
+        <p className="text-[11px] text-slate-500">
+          一次只算选中的那只轮胎。到实测点与偏差同一方向，场内为负。两个数一致时，用下面的厘米框改这只轮胎的报位。不一致时，到场地建图按当前贝位号重填该侧贝位点的经纬度。电气侧重填后，+Y 会按新坐标重算。
+          {surveyDistNote ? ` ${surveyDistNote}` : ''}
+        </p>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {LANE_FIELDS.map(field => {
             const liveM = liveData.gantry?.leg_offsets?.[field.live] ?? 0;
+            const dist = field.key === surveyTire ? surveyDist[field.key] : undefined;
+            const alongM = dist?.along_m;
             return (
               <label key={field.key} className="space-y-1">
                 <span className="text-[11px] text-slate-400 block">{field.label}</span>
-                <span className="text-[10px] text-slate-500 block">当前 { (liveM * 100).toFixed(1) } cm</span>
+                <span className="text-[10px] text-slate-500 block">偏差 { (liveM * 100).toFixed(1) } cm</span>
+                <span className="text-[10px] text-slate-300 block">
+                  到实测点 { dist ? formatSignedCm(dist.lateral_m) : '—' }
+                </span>
+                {dist && alongM != null && Math.abs(alongM) >= 0.5 && (
+                  <span className="text-[10px] text-amber-400/90 block">
+                    实测点沿贝位偏了 {formatSignedCm(alongM)}，请采在这只轮胎旁边
+                  </span>
+                )}
                 <input
                   className="input-field font-mono"
                   inputMode="decimal"
@@ -766,6 +893,8 @@ export default function Calibration({ liveData }: CalibrationProps) {
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-xs text-slate-400 font-mono">
             当前位置沿贝位 { (liveData.local_coord?.y ?? 0).toFixed(2) } m
+            {' · '}
+            四轮胎中心贝位 { (liveData.current_bay_no ?? 0) > 0 ? liveData.current_bay_no : '不在贝位上' }
           </span>
           <button
             type="button"
