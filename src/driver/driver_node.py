@@ -5,6 +5,8 @@
 小车保持 UDP 监听。
 全局一份 NTRIP，RTCM 仅转发给大车 EVK(TCP) 侧。
 """
+from __future__ import annotations
+
 from typing import List, Optional
 
 from src.utils.config_loader import get_config

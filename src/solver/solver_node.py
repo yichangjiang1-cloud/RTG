@@ -7,6 +7,7 @@
   4. B 车矩阵修正（如已完成校准）
   5. 输出 PositionResult 到 EventBus
 """
+from __future__ import annotations
 
 import logging
 import math

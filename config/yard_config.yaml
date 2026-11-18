@@ -1,5 +1,5 @@
 meta:
-  synced_at: '2026-11-17T14:45:12+08:00'
+  synced_at: '2026-11-18T17:08:20+08:00'
   vehicle_id: RTG-002
   source: api
 yards:
@@ -10,7 +10,7 @@ yards:
   origin_alt: 9.8771
   bay_spacing: 0.0
   bay_count: 10
-  bay_half_width_m: 1.0
+  bay_half_width_m: 0.3
   boundary:
   - lat: 30.5382097239
     lon: 114.3488133727
@@ -31,7 +31,7 @@ yards:
   origin_alt: 9.655
   bay_spacing: 0.0
   bay_count: 42
-  bay_half_width_m: 1.0
+  bay_half_width_m: 0.6
   boundary:
   - lat: 32.202015097
     lon: 119.05581095

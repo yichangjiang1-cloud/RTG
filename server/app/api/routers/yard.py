@@ -68,52 +68,84 @@ async def get_all_yards(db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
+def _parse_yard_request(req: YardCreateRequest):
+    """校验并规范化新建/更新请求。返回 (yard_id, half, boundary_payload)。"""
+    yard_id = validate_yard_id(req.yard_id)
+    half = float(req.bay_half_width_m if req.bay_half_width_m is not None else 0.3)
+    if half <= 0:
+        raise HTTPException(status_code=400, detail="贝位半宽必须大于 0")
+    from app.utils.yard_geometry import normalize_boundary
+    boundary = normalize_boundary(req.boundary)
+    if len(boundary) < 3:
+        raise HTTPException(status_code=400, detail="堆场区域至少需要 3 个顶点")
+    boundary_payload = [{"lat": lat, "lon": lon} for lat, lon in boundary]
+    return yard_id, half, boundary_payload
+
+
 @router.post("/create", response_model=ApiResponse)
 async def create_yard(req: YardCreateRequest, db: Session = Depends(get_db)):
-    """新建或更新堆场信息"""
+    """新建堆场。场号已存在时返回 409，不覆盖。"""
     try:
-        yard_id = validate_yard_id(req.yard_id)
-        half = float(req.bay_half_width_m if req.bay_half_width_m is not None else 0.3)
-        if half <= 0:
-            raise HTTPException(status_code=400, detail="贝位半宽必须大于 0")
-        from app.utils.yard_geometry import normalize_boundary
-        boundary = normalize_boundary(req.boundary)
-        if len(boundary) < 3:
-            raise HTTPException(status_code=400, detail="堆场区域至少需要 3 个顶点")
-        boundary_payload = [{"lat": lat, "lon": lon} for lat, lon in boundary]
-        yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
-        if yard:
-            yard.name = req.name
-            yard.origin_lat = req.origin_lat
-            yard.origin_lon = req.origin_lon
-            yard.origin_alt = req.origin_alt
-            yard.bay_spacing = req.bay_spacing
-            yard.bay_count = req.bay_count
-            yard.bay_half_width_m = half
-            yard.boundary = boundary_payload
-        else:
-            yard = Yard(
-                yard_id=yard_id,
-                name=req.name,
-                origin_lat=req.origin_lat,
-                origin_lon=req.origin_lon,
-                origin_alt=req.origin_alt,
-                bay_spacing=req.bay_spacing,
-                bay_count=req.bay_count,
-                bay_half_width_m=half,
-                boundary=boundary_payload,
-                mapped=False,
-            )
-            db.add(yard)
+        yard_id, half, boundary_payload = _parse_yard_request(req)
+        existing = db.query(Yard).filter(Yard.yard_id == yard_id).first()
+        if existing:
+            raise HTTPException(status_code=409, detail=f"场地 {yard_id} 已存在，请用编辑修改")
+        yard = Yard(
+            yard_id=yard_id,
+            name=req.name,
+            origin_lat=req.origin_lat,
+            origin_lon=req.origin_lon,
+            origin_alt=req.origin_alt,
+            bay_spacing=req.bay_spacing,
+            bay_count=req.bay_count,
+            bay_half_width_m=half,
+            boundary=boundary_payload,
+            mapped=False,
+        )
+        db.add(yard)
         db.commit()
-        logger.info(f"堆场保存: {yard_id}")
-        return ApiResponse(code=200, message="保存成功", data={"yard_id": yard_id})
+        logger.info(f"堆场新建: {yard_id}")
+        return ApiResponse(code=200, message="创建成功", data={"yard_id": yard_id})
+    except HTTPException:
+        db.rollback()
+        raise
     except ValueError as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         db.rollback()
-        logger.error(f"保存堆场失败: {e}")
+        logger.error(f"新建堆场失败: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.post("/update", response_model=ApiResponse)
+async def update_yard(req: YardCreateRequest, db: Session = Depends(get_db)):
+    """更新已有堆场。场号不存在时返回 404。不改 mapped，不清贝位点。"""
+    try:
+        yard_id, half, boundary_payload = _parse_yard_request(req)
+        yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
+        if not yard:
+            raise HTTPException(status_code=404, detail=f"场地 {yard_id} 不存在")
+        yard.name = req.name
+        yard.origin_lat = req.origin_lat
+        yard.origin_lon = req.origin_lon
+        yard.origin_alt = req.origin_alt
+        yard.bay_spacing = req.bay_spacing
+        yard.bay_count = req.bay_count
+        yard.bay_half_width_m = half
+        yard.boundary = boundary_payload
+        db.commit()
+        logger.info(f"堆场更新: {yard_id}")
+        return ApiResponse(code=200, message="保存成功", data={"yard_id": yard_id})
+    except HTTPException:
+        db.rollback()
+        raise
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        db.rollback()
+        logger.error(f"更新堆场失败: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 

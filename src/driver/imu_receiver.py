@@ -13,6 +13,7 @@
     [24:28] float32  accel_z (m/s²)
     [28:32] float32  temperature (°C)
 """
+from __future__ import annotations
 
 import socket
 import struct

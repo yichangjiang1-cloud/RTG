@@ -4,7 +4,22 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="校验点删除功能添加&#10;计算错误处理" />
+    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="纠偏功能处理">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/yard_config.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/yard_config.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/deploy/DEPLOY_CONTROLLER.md" beforeDir="false" afterPath="$PROJECT_DIR$/deploy/DEPLOY_CONTROLLER.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/deploy/install.sh" beforeDir="false" afterPath="$PROJECT_DIR$/deploy/install.sh" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/deploy/package.ps1" beforeDir="false" afterPath="$PROJECT_DIR$/deploy/package.ps1" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Settings.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Settings.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/context/AppContext.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/context/AppContext.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/types/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/types/index.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/core/event_bus.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/event_bus.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/driver/driver_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/driver_node.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/driver/gnss_receiver.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/gnss_receiver.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/driver/imu_receiver.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/imu_receiver.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/driver/nmea_parser.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/nmea_parser.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/solver/solver_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/solver_node.py" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -287,7 +302,15 @@
       <option name="project" value="LOCAL" />
       <updated>1794823623147</updated>
     </task>
-    <option name="localTasksCounter" value="14" />
+    <task id="LOCAL-00014" summary="纠偏功能处理">
+      <option name="closed" value="true" />
+      <created>1794914465431</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1794914465431</updated>
+    </task>
+    <option name="localTasksCounter" value="15" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -321,7 +344,8 @@
     <MESSAGE value="杆臂标定处理" />
     <MESSAGE value="高德地图相关内容" />
     <MESSAGE value="校验点删除功能添加&#10;计算错误处理" />
-    <option name="LAST_COMMIT_MESSAGE" value="校验点删除功能添加&#10;计算错误处理" />
+    <MESSAGE value="纠偏功能处理" />
+    <option name="LAST_COMMIT_MESSAGE" value="纠偏功能处理" />
   </component>
   <component name="github-copilot-workspace">
     <instructionFileLocations>

@@ -265,6 +265,7 @@ sudo systemctl disable rtg-controller     设置成不要开机自启
 systemctl status rtg-controller
 journalctl -u rtg-controller -n 80 --no-pager
 ls -l /opt/rtg/current
+journalctl -u rtg-controller.service -f -l 日志查看
 ```
 
 ---

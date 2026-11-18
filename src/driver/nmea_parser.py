@@ -4,6 +4,7 @@
 以及双天线接收机专有语句：$PSAT,GGA2（副天线 GGA）、#BESTPOS2A（和芯副天线位置）、
 PASHR、GPTRA、GNHPR 等。
 """
+from __future__ import annotations
 
 import logging
 import time

@@ -6,21 +6,28 @@ import { clsx } from 'clsx';
 import { normalizeYardIdInput, validateYardId, PLC_YARD_ID_MAX_LEN } from '../utils/yardId';
 import { httpBase } from '../utils/backendUrl';
 import { logger } from '../utils/logger';
+import type { YardInfo } from '../types';
 
-// ── 新建场地弹窗 ──────────────────────────────────────
-function CreateYardModal({ backendBase, onClose, onDone }: {
+function boundaryToText(boundary: { lat: number; lon: number }[] | undefined): string {
+  return (boundary ?? []).map(p => `${p.lat},${p.lon}`).join('\n');
+}
+
+// ── 新建 / 编辑场地 ──────────────────────────────────
+function YardFormModal({ backendBase, yard, onClose, onDone }: {
   backendBase: string;
+  yard: YardInfo | null;
   onClose: () => void;
   onDone: () => void;
 }) {
-  const [yardId, setYardId] = useState('');
-  const [name, setName] = useState('');
-  const [originLat, setOriginLat] = useState('');
-  const [originLon, setOriginLon] = useState('');
-  const [originAlt, setOriginAlt] = useState('0');
-  const [bayCount, setBayCount] = useState('40');
-  const [halfWidth, setHalfWidth] = useState('0.30');
-  const [boundaryText, setBoundaryText] = useState('');
+  const editing = yard !== null;
+  const [yardId, setYardId] = useState(yard?.yard_id ?? '');
+  const [name, setName] = useState(yard?.name ?? '');
+  const [originLat, setOriginLat] = useState(yard ? String(yard.origin_lat) : '');
+  const [originLon, setOriginLon] = useState(yard ? String(yard.origin_lon) : '');
+  const [originAlt, setOriginAlt] = useState(yard ? String(yard.origin_alt ?? 0) : '0');
+  const [bayCount, setBayCount] = useState(yard ? String(yard.total_bays) : '40');
+  const [halfWidth, setHalfWidth] = useState(yard ? String(yard.bay_half_width_m ?? 0.3) : '0.30');
+  const [boundaryText, setBoundaryText] = useState(boundaryToText(yard?.boundary));
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit() {
@@ -40,7 +47,8 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
     if (!Number.isFinite(half) || half <= 0) { showToast('贝位半宽必须大于 0', 'error'); return; }
     setSaving(true);
     try {
-      const res = await fetch(`${backendBase}/api/yard/create`, {
+      const path = editing ? '/api/yard/update' : '/api/yard/create';
+      const res = await fetch(`${backendBase}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -49,23 +57,25 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
           origin_lat: parseFloat(originLat),
           origin_lon: parseFloat(originLon),
           origin_alt: parseFloat(originAlt) || 0,
-          bay_spacing: 0,
+          bay_spacing: editing ? (yard?.bay_spacing ?? 0) : 0,
           bay_count: parseInt(bayCount) || 0,
           bay_half_width_m: half,
           boundary,
         }),
         signal: AbortSignal.timeout(10000),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json().catch(() => null);
-      if (json?.code && json.code !== 200) {
-        throw new Error(json.message || '创建失败');
+      if (!res.ok) {
+        throw new Error(json?.detail || json?.message || `HTTP ${res.status}`);
       }
-      showToast(`场地 ${name.trim()} 创建成功`);
+      if (json?.code && json.code !== 200) {
+        throw new Error(json.message || (editing ? '保存失败' : '创建失败'));
+      }
+      showToast(editing ? `场地 ${name.trim()} 已保存` : `场地 ${name.trim()} 创建成功`);
       onDone();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : '创建失败，请检查后端连接';
-      logger.error('Settings', '新建场地失败', msg);
+      const msg = e instanceof Error ? e.message : '保存失败，请检查后端连接';
+      logger.error('Settings', editing ? '编辑场地失败' : '新建场地失败', msg);
       showToast(msg, 'error');
     } finally {
       setSaving(false);
@@ -76,7 +86,7 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
       <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-5 shadow-2xl">
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-bold text-white">新建场地</h3>
+          <h3 className="text-base font-bold text-white">{editing ? '编辑场地' : '新建场地'}</h3>
           <button onClick={onClose} className="text-slate-500 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
 
@@ -85,9 +95,10 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
             <div>
               <label className="section-title block mb-1">场号 (yard_id)</label>
               <input
-                className="input-field font-mono"
+                className="input-field font-mono disabled:opacity-60"
                 value={yardId}
                 maxLength={PLC_YARD_ID_MAX_LEN}
+                disabled={editing}
                 onChange={e => setYardId(normalizeYardIdInput(e.target.value))}
                 placeholder="A01 / 25A"
               />
@@ -144,15 +155,15 @@ function CreateYardModal({ backendBase, onClose, onDone }: {
 
         <div className="p-3 bg-slate-800/60 rounded-lg">
           <p className="text-[10px] text-slate-400 leading-relaxed">
-            原点坐标为堆场坐标系的参考原点。创建后场地状态为「未建图」，需人工持 RTK 设备逐贝位打点确定各贝位实际坐标后完成建图。贝位间距不固定，由打点数据决定。
+            原点坐标为堆场坐标系的参考原点。建图状态和已打的贝位不会因这次保存被清掉。贝位间距由打点数据决定。
           </p>
         </div>
 
         <div className="flex gap-3 pt-1">
           <button onClick={onClose} className="flex-1 btn-secondary">取消</button>
           <button onClick={handleSubmit} disabled={saving} className="flex-1 btn-primary flex items-center justify-center gap-2">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-            {saving ? '创建中…' : '确认创建'}
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : (editing ? <Save className="w-4 h-4" /> : <Plus className="w-4 h-4" />)}
+            {saving ? '保存中…' : (editing ? '保存' : '确认创建')}
           </button>
         </div>
       </div>
@@ -216,7 +227,7 @@ export default function Settings() {
     calibrationStatus === 'calibrated' ? 'worker' :
     'calibration';
 
-  const [showCreateYard, setShowCreateYard] = useState(false);
+  const [yardForm, setYardForm] = useState<YardInfo | 'create' | null>(null);
 
   const [editingConn, setEditingConn] = useState(false);
   const [editHost, setEditHost] = useState(backendConfig.host);
@@ -248,11 +259,12 @@ export default function Settings() {
 
   return (
     <div className="animate-fade-in space-y-6">
-      {showCreateYard && (
-        <CreateYardModal
+      {yardForm && (
+        <YardFormModal
           backendBase={baseUrl}
-          onClose={() => setShowCreateYard(false)}
-          onDone={() => { setShowCreateYard(false); fetchYards().catch(() => {}); }}
+          yard={yardForm === 'create' ? null : yardForm}
+          onClose={() => setYardForm(null)}
+          onDone={() => { setYardForm(null); fetchYards().catch(() => {}); }}
         />
       )}
 
@@ -585,14 +597,14 @@ export default function Settings() {
             {yards.map((y) => {
               const isSelected = y.yard_id === selectedYardId;
               return (
-                <button
+                <div
                   key={y.yard_id}
                   onClick={() => {
                     setSelectedYardId(isSelected ? null : y.yard_id);
                     if (!isSelected) showToast(`已选择：${y.name}`);
                   }}
                   className={clsx(
-                    'w-full text-left p-4 rounded-xl border transition-all duration-150',
+                    'w-full text-left p-4 rounded-xl border transition-all duration-150 cursor-pointer',
                     isSelected
                       ? 'bg-emerald-900/30 border-emerald-500/60 shadow-lg shadow-emerald-900/20'
                       : 'bg-slate-900/40 border-slate-700/60 hover:border-slate-500',
@@ -611,9 +623,23 @@ export default function Settings() {
                       </p>
                       <p className="text-[10px] text-slate-500 font-mono mt-0.5">
                         {y.yard_id} · {y.total_bays} 贝位
+                        {y.bay_half_width_m != null ? ` · 半宽 ${y.bay_half_width_m} m` : ''}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        disabled={useMock}
+                        title={useMock ? '模拟模式下不可编辑' : '编辑场地'}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setYardForm(y);
+                        }}
+                        className="flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border border-slate-600 text-slate-300 hover:text-emerald-300 hover:border-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        编辑
+                      </button>
                       <span className={clsx(
                         'text-[10px] font-bold px-2 py-0.5 rounded-full border',
                         y.mapped
@@ -625,13 +651,13 @@ export default function Settings() {
                       {isSelected && <CheckCircle2 className="w-5 h-5 text-emerald-400" />}
                     </div>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
 
           <button
-            onClick={() => setShowCreateYard(true)}
+            onClick={() => setYardForm('create')}
             disabled={useMock}
             className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-slate-600 hover:border-emerald-500 text-slate-400 hover:text-emerald-400 text-xs font-bold transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >

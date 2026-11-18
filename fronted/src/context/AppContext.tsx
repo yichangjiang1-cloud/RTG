@@ -256,9 +256,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const json = await resp.json() as { code: number; data: Array<{
         yard_id: string;
         name: string;
-        origin: [number, number];
+        origin: [number, number, number?];
         total_bays?: number;
         mapped?: boolean;
+        boundary?: { lat: number; lon: number }[];
+        bay_half_width_m?: number;
+        bay_spacing?: number;
         y_axis_mode?: 'fit' | 'two_point';
         y_axis_points?: YardInfo['y_axis_points'];
       }> };
@@ -268,8 +271,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           name: y.name,
           origin_lat: y.origin[1],
           origin_lon: y.origin[0],
+          origin_alt: y.origin[2] ?? 0,
           total_bays: y.total_bays ?? 0,
           mapped: y.mapped ?? false,
+          boundary: Array.isArray(y.boundary) ? y.boundary : [],
+          bay_half_width_m: y.bay_half_width_m ?? 0.3,
+          bay_spacing: y.bay_spacing ?? 0,
           y_axis_mode: y.y_axis_mode === 'two_point' ? 'two_point' : 'fit',
           y_axis_points: y.y_axis_points ?? null,
         }));

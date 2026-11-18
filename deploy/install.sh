@@ -28,16 +28,30 @@ if ! id "$RUN_USER" >/dev/null 2>&1; then
   exit 1
 fi
 
-apt-get update
-apt-get install -y python3 python3-venv python3-pip
+WHEELS="$ROOT/offline/wheels"
+if [[ -d "$WHEELS" ]] && compgen -G "$WHEELS/*.whl" >/dev/null; then
+  echo "使用发布包里的离线安装包，不访问外网。"
+else
+  apt-get update
+  apt-get install -y python3 python3-venv python3-pip
+fi
 
 mkdir -p "$DEST" "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR"
 rm -rf "$DEST/src" "$DEST/.venv"
 cp -a "$ROOT/src" "$ROOT/requirements.txt" "$ROOT/VERSION" "$DEST/"
 
-python3 -m venv "$DEST/.venv"
-"$DEST/.venv/bin/pip" install --upgrade pip
-"$DEST/.venv/bin/pip" install -r "$DEST/requirements.txt"
+if [[ -d "$WHEELS" ]] && compgen -G "$WHEELS/*.whl" >/dev/null; then
+  if ! python3 -m venv "$DEST/.venv"; then
+    rm -rf "$DEST/.venv"
+    python3 -m pip install --no-index --find-links "$WHEELS" virtualenv
+    python3 -m virtualenv "$DEST/.venv"
+  fi
+  "$DEST/.venv/bin/python" -m pip install --no-index --find-links "$WHEELS" -r "$ROOT/requirements-py38.txt"
+else
+  python3 -m venv "$DEST/.venv"
+  "$DEST/.venv/bin/pip" install --upgrade pip
+  "$DEST/.venv/bin/pip" install -r "$DEST/requirements.txt"
+fi
 
 ln -sfn "$DEST" "$BASE/current"
 

@@ -7,6 +7,7 @@
     bus.subscribe("gnss_raw", my_callback)
     bus.publish("gnss_raw", data)
 """
+from __future__ import annotations
 
 import threading
 import logging

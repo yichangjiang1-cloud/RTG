@@ -3,6 +3,7 @@
 每台接收机对应一个 GnssReceiver 实例，运行在独立线程中。
 收到 UDP 数据包后解析 NMEA 语句，组装 GnssRaw 并通过 EventBus 发布。
 """
+from __future__ import annotations
 
 import math
 import socket

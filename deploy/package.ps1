@@ -15,6 +15,9 @@ if (-not $Version) {
 if (-not $Version) {
     throw "版本号为空。传入 -Version，或填写 deploy\VERSION"
 }
+if (-not (Test-Path "deploy\offline\wheels")) {
+    throw "缺少 deploy\offline\wheels，离线包还没准备好"
+}
 
 $Name = "rtg-controller-$Version"
 $Stage = Join-Path $Root "dist\$Name"
@@ -25,9 +28,11 @@ New-Item -ItemType Directory -Path $Stage | Out-Null
 
 Set-Content -Path (Join-Path $Stage "VERSION") -Value $Version -Encoding ascii -NoNewline
 Copy-Item "requirements.txt" $Stage
+Copy-Item "deploy\requirements-py38.txt" $Stage
 Copy-Item "deploy\install.sh" $Stage
 Copy-Item "deploy\rtg-controller.service" $Stage
 Copy-Item "deploy\system.yaml.example" $Stage
+Copy-Item "deploy\offline" (Join-Path $Stage "offline") -Recurse
 Copy-Item "src" (Join-Path $Stage "src") -Recurse
 
 Get-ChildItem $Stage -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force

@@ -360,8 +360,12 @@ export interface YardInfo {
   name: string;
   origin_lat: number;
   origin_lon: number;
+  origin_alt?: number;
   total_bays: number;
   mapped: boolean;      // 是否已完成场地底图测绘
+  boundary?: { lat: number; lon: number }[];
+  bay_half_width_m?: number;
+  bay_spacing?: number;
   y_axis_mode?: 'fit' | 'two_point';
   y_axis_points?: YardAxisSpec | null;
 }
