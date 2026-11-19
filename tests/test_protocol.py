@@ -103,9 +103,9 @@ class TestPlcProtocolV1(unittest.TestCase):
         lane = struct.unpack_from("<hhhh", frame, 8 + struct.calcsize("<HHHH8sHH"))
         self.assertEqual(lane, (-120, 80, -30, 40))
         tire_off = 8 + struct.calcsize("<HHHH8sHHhhhhIIHhhhHH")
-        x_mm, y_mm, z_mm = struct.unpack_from("<IIH", frame, tire_off)
-        self.assertEqual(struct.unpack("<i", struct.pack("<I", x_mm))[0], 1250)
-        self.assertEqual(struct.unpack("<i", struct.pack("<I", y_mm))[0], 2000)
+        x_mm, y_mm, z_mm = struct.unpack_from("<iih", frame, tire_off)
+        self.assertEqual(x_mm, 1250)
+        self.assertEqual(y_mm, 2000)
         self.assertEqual(z_mm, 1500)
         reserved = struct.unpack_from("<20H", frame, GNSS_TO_PLC_SIZE - 2 - 40)
         self.assertEqual(reserved, (0,) * 20)
@@ -162,9 +162,7 @@ class TestPlcProtocolV1(unittest.TestCase):
         )
         frame = encode_gnss_to_plc(result, PlcProtocolContext())
         off = 8 + struct.calcsize("<HHHH8sHHhhhhIIHhhhHH")
-        x_u, y_u, z_mm = struct.unpack_from("<IIH", frame, off)
-        x_mm = struct.unpack("<i", struct.pack("<I", x_u))[0]
-        y_mm = struct.unpack("<i", struct.pack("<I", y_u))[0]
+        x_mm, y_mm, z_mm = struct.unpack_from("<iih", frame, off)
         self.assertAlmostEqual(x_mm, 0, delta=30)
         self.assertAlmostEqual(y_mm, -2500, delta=30)
         self.assertEqual(z_mm, 0)

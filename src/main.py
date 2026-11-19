@@ -49,7 +49,7 @@ class RTGSystem:
     """
 
     def __init__(self):
-        # 开发机读 config/；车上 RTG_CONFIG_DIR=/etc/rtg，RTG_STATE_DIR=/var/lib/rtg
+        # 开发机读 config/；车上 RTG_CONFIG_DIR=/home/guide/CLionProjects/GNSS/config，RTG_STATE_DIR=/home/guide/CLionProjects/GNSS/state
         self._system_yaml_path = str(system_yaml_path())
         self._vehicle_params_path = str(vehicle_params_path())
         init_config(

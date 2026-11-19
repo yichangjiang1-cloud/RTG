@@ -1,10 +1,11 @@
 """
-港口集装箱 RTG GNSS ↔ PLC 通信协议 V1.0.0（20260422 xlsx）
+港口集装箱 RTG GNSS ↔ PLC 通信协议 V1.3（20261118 xlsx）
 
 - TCP，PLC 服务端，GNSS/中控客户端，小端
 - 帧头 0xFEEF，帧尾 0x0A0D
 - PLC→GNSS：68 字节
 - GNSS→PLC：158 字节
+- V1.3：GNSS→PLC 第 24-41 项，六根天线 X、Y 为有符整型（int32），Z 为有符短整型（int16）
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ _GNSS_BODY_FMT = (
     "H"  # 18 小车相对起始点行程 mm（无符号）
     "hhh"  # 19-21 速度 mm/s
     "HH"  # 22-23 过街场标志
-    + "IIH" * 6  # 24-41 六天线 XYZ（X/Y uint32 mm, Z uint16 mm）
+    + "iih" * 6  # 24-41 六天线 XYZ（V1.3：X/Y int32 mm, Z int16 mm，均有符号）
     + "20H"  # 42 预留，20 个字全部填 0，不用作大车航向
     + "H"  # 43 包尾
 )
@@ -105,10 +106,12 @@ def _clamp_u16(v: int) -> int:
     return max(0, min(65535, int(v)))
 
 
-def _pack_mm_u32(v: int) -> int:
-    """有符号毫米值按 uint32 位模式打包（PLC 小端）。"""
-    v = max(-2147483648, min(2147483647, int(v)))
-    return struct.unpack("<I", struct.pack("<i", v))[0]
+def _clamp_i32(v: int) -> int:
+    return max(-2147483648, min(2147483647, int(v)))
+
+
+def _clamp_u32(v: int) -> int:
+    return max(0, min(4294967295, int(v)))
 
 
 def _m_to_mm(m: float) -> int:
@@ -205,7 +208,7 @@ def _antenna_triplet_from_dict(
     xy = _yard_xy_from_enu(east, north, y_east, y_north)
     if xy is None:
         return 0, 0, 0
-    return _pack_mm_u32(_m_to_mm(xy[0])), _pack_mm_u32(_m_to_mm(xy[1])), _clamp_u16(_m_to_mm(up))
+    return _clamp_i32(_m_to_mm(xy[0])), _clamp_i32(_m_to_mm(xy[1])), _clamp_i16(_m_to_mm(up))
 
 
 def _resolve_base_station(
@@ -310,8 +313,8 @@ def encode_gnss_to_plc(
         _clamp_i16(leg_mm[1]),
         _clamp_i16(leg_mm[2]),
         _clamp_i16(leg_mm[3]),
-        _pack_mm_u32(gantry_elec_mm),
-        _pack_mm_u32(gantry_dsl_mm),
+        _clamp_u32(gantry_elec_mm),  # 16 无符整型
+        _clamp_u32(gantry_dsl_mm),  # 17 无符整型
         _clamp_u16(trolley_travel_mm),
         spd_g,  # 19 电气侧大车速度（与 20 相同，符号与车体系一致）
         spd_g,  # 20 动力侧大车速度

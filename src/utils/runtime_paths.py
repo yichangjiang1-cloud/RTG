@@ -1,10 +1,10 @@
 """中控运行路径。
 
 开发机不设环境变量，仍读项目里的 config/。
-车上由 systemd 设置：
+车上由 systemd 设置（见 deploy/rtg-controller.service）：
 
-  RTG_CONFIG_DIR=/etc/rtg       只放 system.yaml，升级不覆盖
-  RTG_STATE_DIR=/var/lib/rtg    程序写的 vehicle_params.yaml、yard_config.yaml
+  RTG_CONFIG_DIR=/home/guide/CLionProjects/GNSS/config   只放 system.yaml，升级不覆盖
+  RTG_STATE_DIR=/home/guide/CLionProjects/GNSS/state     程序写的 vehicle_params.yaml、yard_config.yaml
 """
 
 from __future__ import annotations

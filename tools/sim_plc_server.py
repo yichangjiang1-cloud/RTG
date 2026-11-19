@@ -2,7 +2,7 @@
 """
 模拟 PLC 端（TCP 服务端），与中控机联调。
 
-协议约定（V1.0.0）：
+协议约定（V1.3-20261118，天线 X/Y 为有符 int32，Z 为有符 int16）：
   - PLC = TCP 服务端，中控 = TCP 客户端（中控主动连上来）
   - 小端，帧头 0xFEEF，帧尾 0x0A0D
   - GNSS→PLC：158 B（中控上行）
@@ -55,7 +55,7 @@ _GNSS_BODY_FMT = (
     "H"
     "hhh"
     "HH"
-    + "IIH" * 6
+    + "iih" * 6  # V1.3：天线 X/Y 有符 int32，Z 有符 int16
     + "20H"
     + "H"
 )
@@ -70,9 +70,6 @@ def _pack_ascii(text: str, size: int) -> bytes:
     return (text or "").encode("ascii", errors="ignore")[:size].ljust(size, b"\x00")
 
 
-def _u32_as_i32(v: int) -> int:
-    """协议把有符号 mm 按 uint32 位模式发送，还原为有符号。"""
-    return struct.unpack("<i", struct.pack("<I", int(v) & 0xFFFFFFFF))[0]
 
 
 # GNSS→PLC 字段 24-41，名称与协议表一致
@@ -133,12 +130,8 @@ def _fmt_fix(value: int) -> str:
     )
 
 
-def _fmt_signed_u32(signed_mm: int) -> str:
-    """X/Y 在表里是无符整型，负坐标按补码发出。"""
-    raw = int(signed_mm) & 0xFFFFFFFF
-    if int(signed_mm) < 0:
-        return f"{signed_mm} mm（无符整型原值 {raw}，负值按补码）"
-    return f"{signed_mm} mm"
+def _fmt_mm(value: int) -> str:
+    return f"{int(value)} mm"
 
 
 def decode_gnss_to_plc(data: bytes) -> dict | None:
@@ -153,12 +146,12 @@ def decode_gnss_to_plc(data: bytes) -> dict | None:
     if rest[-1] != FRAME_FOOTER:
         return None
 
-    # 六天线 XYZ：rest[19..36]，每根 (X u32→i32, Y u32→i32, Z u16)
+    # 六天线 XYZ：rest[19..36]，每根 (X int32, Y int32, Z int16)，V1.3 均为有符号
     antennas = []
     base = 19
     for i in range(6):
-        x = _u32_as_i32(rest[base + i * 3 + 0])
-        y = _u32_as_i32(rest[base + i * 3 + 1])
+        x = rest[base + i * 3 + 0]
+        y = rest[base + i * 3 + 1]
         z = rest[base + i * 3 + 2]
         antennas.append({"name": _ANTENNA_NAMES[i], "x_mm": x, "y_mm": y, "z_mm": z})
 
@@ -176,8 +169,8 @@ def decode_gnss_to_plc(data: bytes) -> dict | None:
         "bay_no": rest[5],
         "yard_in_out": rest[6],
         "leg_mm": list(rest[7:11]),
-        "gantry_elec_dist_mm": _u32_as_i32(rest[11]),
-        "gantry_diesel_dist_mm": _u32_as_i32(rest[12]),
+        "gantry_elec_dist_mm": rest[11],
+        "gantry_diesel_dist_mm": rest[12],
         "trolley_travel_mm": rest[13],
         "speed_gantry_elec_mm_s": rest[14],
         "speed_gantry_diesel_mm_s": rest[15],
@@ -286,9 +279,9 @@ def format_uplink_full(f: dict) -> str:
         "     含义：轮胎中心点与车道线偏离；偏向场内为负，偏向场外为正，单位 mm",
         f"  15 动力房侧GNSS2偏差 = {leg[3]} mm",
         "     含义：轮胎中心点与车道线偏离；偏向场内为负，偏向场外为正，单位 mm",
-        f"  16 电气房侧RTG中心与起始参考线距离 = {_fmt_signed_u32(f['gantry_elec_dist_mm'])}",
+        f"  16 电气房侧RTG中心与起始参考线距离 = {_fmt_mm(f['gantry_elec_dist_mm'])}",
         "     含义：大车当前位置，单位 mm",
-        f"  17 动力房侧RTG中心与起始参考线距离 = {_fmt_signed_u32(f['gantry_diesel_dist_mm'])}",
+        f"  17 动力房侧RTG中心与起始参考线距离 = {_fmt_mm(f['gantry_diesel_dist_mm'])}",
         "     含义：大车当前位置，单位 mm",
         f"  18 小车中心与小车起始参考线距离 = {f['trolley_travel_mm']} mm",
         "     含义：小车当前位置，距离小车起始点的实际运行距离，单位 mm",
@@ -305,12 +298,12 @@ def format_uplink_full(f: dict) -> str:
     ]
     xyz_no = 24
     for ant in antennas:
-        lines.append(f"  {xyz_no:<2} {ant['name']}天线X = {_fmt_signed_u32(ant['x_mm'])}")
-        lines.append("     含义：堆场坐标 X，朝贝位增大方向看时右侧为正，原点为堆场原点，单位 mm")
-        lines.append(f"  {xyz_no + 1:<2} {ant['name']}天线Y = {_fmt_signed_u32(ant['y_mm'])}")
-        lines.append("     含义：堆场坐标 Y，沿贝位号增大方向为正，原点为堆场原点，单位 mm")
+        lines.append(f"  {xyz_no:<2} {ant['name']}天线X = {_fmt_mm(ant['x_mm'])}")
+        lines.append("     含义：堆场坐标 X（有符整型），朝贝位增大方向看时右侧为正，原点为堆场原点，单位 mm")
+        lines.append(f"  {xyz_no + 1:<2} {ant['name']}天线Y = {_fmt_mm(ant['y_mm'])}")
+        lines.append("     含义：堆场坐标 Y（有符整型），沿贝位号增大方向为正，原点为堆场原点，单位 mm")
         lines.append(f"  {xyz_no + 2:<2} {ant['name']}天线Z = {ant['z_mm']} mm")
-        lines.append("     含义：相对堆场原点的高度，单位 mm")
+        lines.append("     含义：相对堆场原点的高度（有符短整型），单位 mm")
         xyz_no += 3
     lines.append("  42 预留（无符短整型 × 20）")
     lines.append("     含义：预留，全部为 0，不承载大车航向")
