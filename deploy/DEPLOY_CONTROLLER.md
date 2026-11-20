@@ -20,13 +20,15 @@ GNSS 不进 Docker。接收机把数据送到**中控机的 IP**，不是送到 
 
 ### 程序和配置分开
 
+约定的根目录 `BASE` 为 `/home/guide/CLionProjects/GNSS`（见 `deploy/install.sh`），下面所有路径都在它下面。
+
 | 内容 | 路径 | 升级时 |
 |------|------|--------|
-| 程序与虚拟环境 | `/opt/rtg/releases/<版本>`，`/opt/rtg/current` 指向正在用的版本 | 换 `current` |
-| 人改的配置 | `/etc/rtg/system.yaml` | **不覆盖** |
-| 程序自己写的备份 | `/var/lib/rtg/`（`vehicle_params.yaml`、`yard_config.yaml`） | 保留 |
-| 运行日志 | `/var/log/rtg/session_日期时间/` | 每次启动新建一个会话目录 |
-| GNSS 原始报文 | `/var/lib/rtg/gnss_raw/` | 按接收机分子目录 |
+| 程序与虚拟环境 | `$BASE/releases/<版本>`，`$BASE/current` 指向正在用的版本 | 换 `current` |
+| 人改的配置 | `$BASE/config/system.yaml` | **不覆盖** |
+| 程序自己写的备份 | `$BASE/state/`（`vehicle_params.yaml`、`yard_config.yaml`） | 保留 |
+| 运行日志 | `$BASE/logs/session_日期时间/` | 每次启动新建一个会话目录 |
+| GNSS 原始报文 | `$BASE/state/gnss_raw/` | 按接收机分子目录 |
 
 开发机不设环境变量时，仍读仓库里的 `config/`，和车上这套路径互不影响。
 
@@ -53,27 +55,35 @@ powershell -File deploy\package.ps1 -Version 1.0.0
 
 ### 2.1 安装
 
+先确认 `current` 是符号链接（不是真实目录）。如果是真实目录，`install.sh` 的 `ln -sfn` 不会替换它，服务会继续跑旧代码：
+
+```bash
+ls -ld /home/guide/CLionProjects/GNSS/current
+```
+
+输出以 `l` 开头即可。若以 `d` 开头，先备份改名：`mv /home/guide/CLionProjects/GNSS/current /home/guide/CLionProjects/GNSS/current.bak`。
+
 ```bash
 tar -xzf rtg-controller-1.0.0.tar.gz
 cd rtg-controller-1.0.0
-sudo bash install.sh    会执行systemctl enable rtg-controller 开机自启    systemctl is-enabled rtg-controller
+sudo bash install.sh
 ```
 
 脚本会：
 
-1. 安装 `python3`、`python3-venv`，在 `/opt/rtg/releases/1.0.0` 创建虚拟环境并 `pip install`
-2. 把 `/opt/rtg/current` 指到这一版
-3. **仅当** `/etc/rtg/system.yaml` 不存在时，从模板生成它
-4. 注册并 enable `rtg-controller.service`（开机自启，异常退出 3 秒后拉起） 
+1. 在 `$BASE/releases/1.0.0` 创建虚拟环境并安装依赖（发布包里有离线 wheel 时不访问外网）
+2. 把 `$BASE/current` 指到这一版
+3. **仅当** `$BASE/config/system.yaml` 不存在时，从模板生成它
+4. 注册并 enable `rtg-controller.service`（开机自启，异常退出 3 秒后拉起）
 
-第一次安装后先改配置再启动。车上要能访问外网或内网 pip，用来装 numpy 等依赖。
+第一次安装后先改配置再启动。
 
-`system.yaml` 在 Ubuntu 系统目录里，不在解压出来的发布包目录里。发布包里只有模板 `system.yaml.example`。
+`system.yaml` 在 `$BASE/config/` 里，不在解压出来的发布包目录里。发布包里只有模板 `system.yaml.example`。
 
-### 2.2 填写 `/etc/rtg/system.yaml`
+### 2.2 填写 `$BASE/config/system.yaml`
 
 ```bash
-sudo nano /etc/rtg/system.yaml
+sudo nano /home/guide/CLionProjects/GNSS/config/system.yaml
 ```
 
 把所有 `CHANGE_ME` 换成**机房那台 Windows 的局域网 IP**（`ipconfig` 里插上网线的那块网卡，例如「以太网」的 `172.16.20.149`）。不要填 `localhost`，不要填 WSL 的 `172.23.x.x`。
@@ -102,7 +112,7 @@ journalctl -u rtg-controller -n 50 --no-pager
 
 日志里应同时有：
 
-- `配置文件: /etc/rtg/system.yaml`
+- `配置文件: /home/guide/CLionProjects/GNSS/config/system.yaml`
 - 后端地址是机房 Windows 的 `http://<局域网IP>:8000`，且连接正常
 - MQTT 已连上同一 IP 的 `1883`
 - 当前 `vehicle_id` 与这台车一致
@@ -114,16 +124,16 @@ journalctl -u rtg-controller -n 50 --no-pager
 ### 2.4 升级与回退
 
 开发机重新打包，例如 `-Version 1.0.1`。车上解压后再执行一次 `sudo bash install.sh`。  
-已有的 `/etc/rtg/system.yaml` 会保留，终端会打印「保留已有配置」。`current` 改指向新版本。
+已有的 `$BASE/config/system.yaml` 会保留，终端会打印「保留已有配置」。`current` 改指向新版本。
 
 退回上一版：
 
 ```bash
-sudo ln -sfn /opt/rtg/releases/1.0.0 /opt/rtg/current
+sudo ln -sfn /home/guide/CLionProjects/GNSS/releases/1.0.0 /home/guide/CLionProjects/GNSS/current
 sudo systemctl restart rtg-controller
 ```
 
-不要在车上改 `/opt/rtg/current` 里的源码。要改程序就在开发机改完，打下一个版本。
+不要在车上改 `$BASE/current` 里的源码。要改程序就在开发机改完，打下一个版本。
 
 ---
 
@@ -164,15 +174,15 @@ cd rtg-controller-1.0.0
 sudo bash install.sh
 ```
 
-安装结束只会提示「已生成 `/etc/rtg/system.yaml`」。这个文件在 WSL 的 Linux 文件系统里，**不会**出现在解压目录或 Windows 工程目录。
+安装结束只会提示「已生成 `/home/guide/CLionProjects/GNSS/config/system.yaml`」。这个文件在 WSL 的 Linux 文件系统里，**不会**出现在解压目录或 Windows 工程目录。
 
 查看：
 
 ```bash
-ls -l /etc/rtg/system.yaml
+ls -l /home/guide/CLionProjects/GNSS/config/system.yaml
 ```
 
-从 Windows 资源管理器打开：`\\wsl$\Ubuntu\etc\rtg`
+从 Windows 资源管理器打开：`\\wsl$\Ubuntu\home\guide\CLionProjects\GNSS\config`
 
 ### 3.3 填写地址
 
@@ -182,7 +192,7 @@ ls -l /etc/rtg/system.yaml
 ip route show default
 ```
 
-本机验证时这一跳是 `172.23.128.1`。把 `/etc/rtg/system.yaml` 里的 `CHANGE_ME` 都换成它，MQTT 密码与 `.env` 相同。
+本机验证时这一跳是 `172.23.128.1`。把 `$BASE/config/system.yaml` 里的 `CHANGE_ME` 都换成它，MQTT 密码与 `.env` 相同。
 
 先测端口，再启动中控：
 
@@ -229,14 +239,14 @@ WSL 重启后 `172.23.128.1` 也可能变，以 `ip route show default` 为准�
 journalctl -u rtg-controller -f
 ```
 
-落盘日志在 `/var/log/rtg/`。每次启动新建 `session_日期时间/`，当前会话路径写在 `/var/log/rtg/LATEST_SESSION.txt`。
+落盘日志在 `$BASE/logs/`。每次启动新建 `session_日期时间/`，当前会话路径写在 `$BASE/logs/LATEST_SESSION.txt`。
 
 | 文件 | 内容 |
 |------|------|
-| `session_.../system.log` | 连接、告警、解算过程 |
-| `session_.../position.log` | 坐标、姿态 |
+| `logs/session_.../system.log` | 连接、告警、解算过程 |
+| `logs/session_.../position.log` | 坐标、姿态 |
 
-GNSS 原文在 `/var/lib/rtg/gnss_raw/`：
+GNSS 原文在 `$BASE/state/gnss_raw/`：
 
 | 目录 | 接收机 |
 |------|--------|
@@ -247,11 +257,11 @@ GNSS 原文在 `/var/lib/rtg/gnss_raw/`：
 断流超过 `gnss.raw_log.session_gap_s`（默认 2 秒）会新开一个 `.nmea` 文件。
 
 ```bash
-tail -f /var/log/rtg/session_*/system.log
-tail -f /var/lib/rtg/gnss_raw/receiver_2_gantry_a2/*.nmea
+tail -f /home/guide/CLionProjects/GNSS/logs/session_*/system.log
+tail -f /home/guide/CLionProjects/GNSS/state/gnss_raw/receiver_2_gantry_a2/*.nmea
 ```
 
-Windows 资源管理器：`\\wsl$\Ubuntu\var\log\rtg` 与 `\\wsl$\Ubuntu\var\lib\rtg\gnss_raw`。大车上没有 `\\wsl$`，直接在 Ubuntu 里看上述路径。
+Windows 资源管理器：`\\wsl$\Ubuntu\home\guide\CLionProjects\GNSS\logs` 与 `\\wsl$\Ubuntu\home\guide\CLionProjects\GNSS\state\gnss_raw`。大车上没有 `\\wsl$`，直接在 Ubuntu 里看上述路径。
 
 ---
 
@@ -264,8 +274,9 @@ systemctl is-active rtg-controller        查看程序是否正在运行
 sudo systemctl disable rtg-controller     设置成不要开机自启
 systemctl status rtg-controller
 journalctl -u rtg-controller -n 80 --no-pager
-ls -l /opt/rtg/current
+ls -l /home/guide/CLionProjects/GNSS/current
 journalctl -u rtg-controller.service -f -l 日志查看
+ls -l /etc/systemd/system/rtg-controller.service
 ```
 
 ---
@@ -276,5 +287,5 @@ journalctl -u rtg-controller.service -f -l 日志查看
 |------|-------------|----------|
 | 中控访问 Windows 的 IP | 以太网局域网地址，如 `172.16.20.149` | `ip route` 的下一跳，如 `172.23.128.1` |
 | 模拟器 `targetHost` | 不使用；接收机发给中控机 IP | `hostname -I` 的 WSL 地址 |
-| `system.yaml` 位置 | `/etc/rtg/system.yaml` | 同一个路径，但是 WSL 里的文件 |
+| `system.yaml` 位置 | `/home/guide/CLionProjects/GNSS/config/system.yaml` | 同一个路径，但是 WSL 里的文件 |
 | 升级是否覆盖配置 | 否 | 否 |

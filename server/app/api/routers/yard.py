@@ -1,21 +1,43 @@
 """堆场管理接口"""
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
 
+from app.config import settings
 from app.database import get_db
-from app.models import Yard, CalibrationData, SurveyPoint, VehicleBayTransform, LaneCorrection
+from app.models import Yard, CalibrationData, SurveyPoint, VehicleBayTransform, LaneCorrection, Vehicle
 from sqlalchemy import func
 from app.schemas import ApiResponse
+from app.utils.constants import MQTT_TOPIC_CONTROL
 from app.utils.logger import get_logger
 from app.utils.calibration_mode import resolve_calibration_mode
 from app.utils.yard_id import validate_yard_id
 from app.utils.yard_geometry import is_electrical_bay, normalize_bay_side
+from app.api.routers.survey_rtg import (
+    SURVEY_MODE_RTG,
+    SURVEY_MODE_RTK,
+    SURVEY_MODES,
+    apply_bay_count_change,
+    is_rtg_yard,
+    mapping_point_count,
+    notify_yard_map_updated,
+    rtg_ready,
+    survey_mode_of,
+)
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/yard", tags=["yard"])
+
+_mqtt_client = None
+
+
+def set_mqtt_client(client):
+    global _mqtt_client
+    _mqtt_client = client
 
 
 # ==================== 请求模型 ====================
@@ -30,6 +52,8 @@ class YardCreateRequest(BaseModel):
     bay_count: int = 0
     bay_half_width_m: float = 0.3
     boundary: Optional[list] = None
+    # rtk 手持逐贝位；rtg_ends 大车采头尾、其余自动生成。更新时不传表示不改。
+    survey_mode: Optional[str] = None
 
 
 # ==================== 堆场 CRUD ====================
@@ -45,9 +69,14 @@ async def get_all_yards(db: Session = Depends(get_db)):
                 SurveyPoint.yard_id == y.yard_id,
                 SurveyPoint.point_type == "mapping",
             ).scalar() or 0
-            has_rtk = rtk_count > 0
-            if has_rtk and not y.mapped:
-                y.mapped = True
+            if is_rtg_yard(y):
+                # RTG 采点：头尾四个点齐全才算采点完成
+                has_rtk = rtg_ready(db, y)
+                y.mapped = has_rtk
+            else:
+                has_rtk = rtk_count > 0
+                if has_rtk and not y.mapped:
+                    y.mapped = True
             data.append({
                 "yard_id": y.yard_id,
                 "name": y.name,
@@ -58,6 +87,7 @@ async def get_all_yards(db: Session = Depends(get_db)):
                 "boundary": y.boundary or [],
                 "y_axis_mode": y.y_axis_mode or "fit",
                 "y_axis_points": y.y_axis_points,
+                "survey_mode": survey_mode_of(y),
                 "mapped": has_rtk or y.mapped,
                 "rtk_point_count": rtk_count,
             })
@@ -79,6 +109,10 @@ def _parse_yard_request(req: YardCreateRequest):
     if len(boundary) < 3:
         raise HTTPException(status_code=400, detail="堆场区域至少需要 3 个顶点")
     boundary_payload = [{"lat": lat, "lon": lon} for lat, lon in boundary]
+    if req.survey_mode is not None and req.survey_mode not in SURVEY_MODES:
+        raise HTTPException(status_code=400, detail="采点方式只能是 rtk 或 rtg_ends")
+    if req.survey_mode == SURVEY_MODE_RTG and int(req.bay_count or 0) < 2:
+        raise HTTPException(status_code=400, detail="RTG 采点需要先填写贝位总数，且至少为 2")
     return yard_id, half, boundary_payload
 
 
@@ -91,6 +125,7 @@ async def create_yard(req: YardCreateRequest, db: Session = Depends(get_db)):
         if existing:
             raise HTTPException(status_code=409, detail=f"场地 {yard_id} 已存在，请用编辑修改")
         yard = Yard(
+            survey_mode=req.survey_mode or SURVEY_MODE_RTK,
             yard_id=yard_id,
             name=req.name,
             origin_lat=req.origin_lat,
@@ -126,17 +161,36 @@ async def update_yard(req: YardCreateRequest, db: Session = Depends(get_db)):
         yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
         if not yard:
             raise HTTPException(status_code=404, detail=f"场地 {yard_id} 不存在")
+        old_mode = survey_mode_of(yard)
+        new_mode = req.survey_mode or old_mode
+        if new_mode != old_mode and mapping_point_count(db, yard_id) > 0:
+            raise HTTPException(
+                status_code=409,
+                detail="该场地已有贝位点，不能直接切换采点方式，请先清空贝位点",
+            )
+        old_count = int(yard.bay_count or 0)
+        yard.survey_mode = new_mode
         yard.name = req.name
         yard.origin_lat = req.origin_lat
         yard.origin_lon = req.origin_lon
         yard.origin_alt = req.origin_alt
-        yard.bay_spacing = req.bay_spacing
+        if new_mode != SURVEY_MODE_RTG:
+            yard.bay_spacing = req.bay_spacing
         yard.bay_count = req.bay_count
         yard.bay_half_width_m = half
         yard.boundary = boundary_payload
+        warnings = []
+        if new_mode == SURVEY_MODE_RTG:
+            if int(req.bay_count or 0) < 2:
+                raise HTTPException(status_code=400, detail="RTG 采点需要先填写贝位总数，且至少为 2")
+            warnings = apply_bay_count_change(db, yard, old_count)
         db.commit()
+        if warnings:
+            notify_yard_map_updated(db, yard_id)
         logger.info(f"堆场更新: {yard_id}")
-        return ApiResponse(code=200, message="保存成功", data={"yard_id": yard_id})
+        return ApiResponse(
+            code=200, message="保存成功", data={"yard_id": yard_id, "warnings": warnings},
+        )
     except HTTPException:
         db.rollback()
         raise
@@ -147,6 +201,56 @@ async def update_yard(req: YardCreateRequest, db: Session = Depends(get_db)):
         db.rollback()
         logger.error(f"更新堆场失败: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+class YardForceRequest(BaseModel):
+    vehicle_id: str
+    yard_id: Optional[str] = None  # 空 = 清除偏好；重叠时恢复面积最小
+
+
+@router.post("/force", response_model=ApiResponse)
+async def force_active_yard(req: YardForceRequest, db: Session = Depends(get_db)):
+    """
+    设置某车的场地偏好（发给中控 SET_ACTIVE_YARD）。
+    仅当车辆同时落在多个场多边形内时用于消歧；场外或单场忽略。
+    yard_id 为空则清除偏好，重叠时仍取面积最小。
+    """
+    vehicle_id = (req.vehicle_id or "").strip()
+    if not vehicle_id:
+        raise HTTPException(status_code=400, detail="需要 vehicle_id")
+    vehicle = db.query(Vehicle).filter(Vehicle.vehicle_id == vehicle_id).first()
+    if vehicle is None:
+        raise HTTPException(status_code=404, detail=f"车辆 {vehicle_id} 不存在")
+
+    yard_id = (req.yard_id or "").strip() or None
+    if yard_id is not None:
+        try:
+            yard_id = validate_yard_id(yard_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
+        if yard is None:
+            raise HTTPException(status_code=404, detail=f"场地 {yard_id} 不存在")
+
+    if not _mqtt_client or not _mqtt_client.is_connected():
+        raise HTTPException(status_code=503, detail="MQTT 未连接，无法通知中控")
+
+    topic = MQTT_TOPIC_CONTROL.format(vehicle_id=vehicle_id)
+    payload = json.dumps(
+        {"cmd": "SET_ACTIVE_YARD", "data": {"yard_id": yard_id}},
+        ensure_ascii=False,
+    )
+    _mqtt_client.publish(topic, payload, qos=settings.MQTT_QOS_CONTROL)
+    logger.info(f"已下发场地偏好: {topic} yard={yard_id or '清除'}")
+    return ApiResponse(
+        code=200,
+        message=(
+            "已清除场地偏好，重叠时按面积最小"
+            if yard_id is None
+            else f"已设置场地偏好为 {yard_id}（仅重叠区生效）"
+        ),
+        data={"vehicle_id": vehicle_id, "yard_id": yard_id, "forced": yard_id is not None},
+    )
 
 
 class YardAxisRequest(BaseModel):
@@ -169,6 +273,11 @@ async def set_yard_axis(req: YardAxisRequest, db: Session = Depends(get_db)):
         yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
         if yard is None:
             raise HTTPException(status_code=404, detail=f"堆场 {yard_id} 不存在")
+        if is_rtg_yard(yard):
+            raise HTTPException(
+                status_code=400,
+                detail="该场地用 RTG 采点，+Y 固定为头贝位到尾贝位，不能手动设置",
+            )
         mode = (req.mode or "fit").strip().lower()
         if mode not in ("fit", "two_point"):
             raise HTTPException(status_code=400, detail="Y 轴方式只能是拟合或两点")
@@ -323,7 +432,10 @@ async def get_yard_map(
                 "vehicle_id": vehicle_id,
                 "calibration_status": calibration.status if calibration else "none",
                 "calibration_mode": cal_mode,
-                "has_rtk_map": len(survey_points) > 0,
+                "has_rtk_map": (
+                    rtg_ready(db, yard) if is_rtg_yard(yard) else len(survey_points) > 0
+                ),
+                "survey_mode": survey_mode_of(yard),
                 "rtk_point_count": len(survey_points),
                 "m_matrix": calibration.m_matrix if calibration else None,
                 "source_vehicle_id": (
@@ -339,6 +451,9 @@ async def get_yard_map(
                         "bay_side": normalize_bay_side(p.bay_side),
                         "lat": p.lat, "lon": p.lon, "alt": p.alt,
                         "local_x": p.local_x, "local_y": p.local_y, "local_z": p.local_z,
+                        "source": p.source or "rtk",
+                        "vehicle_id": p.vehicle_id,
+                        "std_m": p.std_m,
                     }
                     for p in survey_points
                 ],

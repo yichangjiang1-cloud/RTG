@@ -1,13 +1,15 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { CheckCircle, Loader, AlertTriangle, RefreshCw, Upload, Plus, Pencil } from 'lucide-react';
+import { Fragment, useState, useRef, useEffect, useCallback } from 'react';
+import { CheckCircle, Loader, AlertTriangle, RefreshCw, Upload, Plus, Pencil, Truck } from 'lucide-react';
 import { logger } from '../utils/logger';
 import { SectionHeader, showToast } from './common';
 import { useAppContext } from '../context/AppContext';
-import type { SurveyPoint, RealtimeData } from '../types';
+import type { SurveyPoint, RealtimeData, SurveyPointSource } from '../types';
 import { clsx } from 'clsx';
 import { httpBase } from '../utils/backendUrl';
+import BayPointAdjust from './BayPointAdjust';
+import RtgSurveyPanel from './RtgSurveyPanel';
 
-type MappingMode = 'rtk_manual' | 'rtk_csv';
+type MappingMode = 'rtk_manual' | 'rtk_csv' | 'rtg';
 
 function parseBayNo(value: string): number | null {
   const n = parseInt(value.replace(/\D/g, ''), 10);
@@ -48,10 +50,17 @@ function rowsByBay(points: SurveyPoint[]): BayRow[] {
 
 function PointCell({ point }: { point?: SurveyPoint }) {
   if (!point) return <span className="text-xs text-slate-600">未采集</span>;
+  const sourceTag =
+    point.source === 'auto' ? '自动'
+      : point.source === 'rtg_end' ? '头尾'
+        : point.source === 'rtg_fix' ? '重采'
+          : point.source === 'rtk' ? 'RTK' : '';
   return (
     <div className="leading-tight">
       <div className="font-mono text-xs text-slate-200">{point.lat.toFixed(7)}, {point.lon.toFixed(7)}</div>
-      <div className="mt-0.5 font-mono text-[10px] text-slate-500">{point.alt.toFixed(3)} m</div>
+      <div className="mt-0.5 font-mono text-[10px] text-slate-500">
+        {point.alt.toFixed(3)} m{sourceTag ? ` · ${sourceTag}` : ''}
+      </div>
     </div>
   );
 }
@@ -60,17 +69,21 @@ interface MappingProps {
   liveData: RealtimeData;
 }
 
-export default function Mapping({ liveData: _liveData }: MappingProps) {
-  const { yards, selectedYardId, backendConfig, useMock, fetchYards, markYardMapped } = useAppContext();
+export default function Mapping({ liveData }: MappingProps) {
+  const {
+    yards, selectedYardId, selectedVehicleId, backendConfig, useMock, fetchYards, markYardMapped,
+  } = useAppContext();
   const selectedYard = yards.find(y => y.yard_id === selectedYardId) ?? null;
+  const isRtgYard = selectedYard?.survey_mode === 'rtg_ends';
 
-  const [mode, setMode] = useState<MappingMode>('rtk_manual');
+  const [mode, setMode] = useState<MappingMode>(isRtgYard ? 'rtg' : 'rtk_manual');
   const [points, setPoints] = useState<SurveyPoint[]>([]);
   const [bayNo, setBayNo] = useState('1');
   const [baySide, setBaySide] = useState<BaySide>('elec');
   const [listSide, setListSide] = useState<'all' | BaySide>('all');
   const [bayQuery, setBayQuery] = useState('');
   const [page, setPage] = useState(0);
+  const [editBay, setEditBay] = useState<number | null>(null);
   const yardId = selectedYard?.yard_id ?? '';
   const [clearing, setClearing] = useState(false);
 
@@ -109,6 +122,10 @@ export default function Mapping({ liveData: _liveData }: MappingProps) {
     setAxisToLat(spec?.to?.lat != null ? String(spec.to.lat) : '');
     setAxisToLon(spec?.to?.lon != null ? String(spec.to.lon) : '');
   }, [selectedYard?.yard_id, selectedYard?.y_axis_mode, selectedYard?.y_axis_points]);
+
+  useEffect(() => {
+    setMode(isRtgYard ? 'rtg' : 'rtk_manual');
+  }, [selectedYard?.yard_id, isRtgYard]);
 
   const saveAxis = async () => {
     if (!yardId) return;
@@ -162,6 +179,7 @@ export default function Mapping({ liveData: _liveData }: MappingProps) {
         id: number; bay_id?: string; bay_no?: number; bay_side?: string; point_type?: string;
         lat: number; lon: number; alt: number;
         local_z?: number; created_at: string;
+        source?: string; vehicle_id?: string | null; std_m?: number | null;
       }> } | null) => {
         if (resp?.code === 200 && Array.isArray(resp.data)) {
           const loaded: SurveyPoint[] = resp.data.map(p => ({
@@ -176,6 +194,9 @@ export default function Mapping({ liveData: _liveData }: MappingProps) {
             dz: p.local_z ?? 0,
             timestamp: p.created_at,
             synced: true,
+            source: (p.source as SurveyPointSource | undefined) || 'rtk',
+            vehicle_id: p.vehicle_id ?? null,
+            std_m: p.std_m ?? null,
           }));
           loaded.sort((a, b) => {
             const sideOrder = (a.bay_side === 'diesel' ? 1 : 0) - (b.bay_side === 'diesel' ? 1 : 0);
@@ -417,6 +438,7 @@ export default function Mapping({ liveData: _liveData }: MappingProps) {
         </div>
       )}
 
+      {!isRtgYard && (
       <div className="card p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
@@ -524,13 +546,17 @@ export default function Mapping({ liveData: _liveData }: MappingProps) {
           </div>
         )}
       </div>
+      )}
 
       {/* ── 模式切换 ── */}
       <div className="flex flex-wrap gap-2">
-        {([
-          ['rtk_manual', 'RTK 手动录入', Pencil],
-          ['rtk_csv', 'CSV 批量导入', Upload],
-        ] as [MappingMode, string, typeof Pencil][]).map(([m, label, Icon]) => (
+        {(isRtgYard
+          ? ([['rtg', 'RTG 头尾采点', Truck]] as [MappingMode, string, typeof Truck][])
+          : ([
+              ['rtk_manual', 'RTK 手动录入', Pencil],
+              ['rtk_csv', 'CSV 批量导入', Upload],
+            ] as [MappingMode, string, typeof Pencil][])
+        ).map(([m, label, Icon]) => (
           <button
             key={m}
             onClick={() => setMode(m)}
@@ -547,6 +573,22 @@ export default function Mapping({ liveData: _liveData }: MappingProps) {
         ))}
       </div>
 
+      {mode === 'rtg' && selectedYard && (
+        <RtgSurveyPanel
+          yard={selectedYard}
+          liveData={liveData}
+          vehicleId={selectedVehicleId}
+          backendBase={baseUrl}
+          points={points}
+          onChanged={() => {
+            loadHistory();
+            fetchYards().catch(() => {});
+            markYardMapped(yardId);
+          }}
+        />
+      )}
+
+      {mode !== 'rtg' && (
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-5">
         {/* ── 左侧控制面板 ── */}
         <div className="space-y-4">
@@ -729,21 +771,61 @@ export default function Mapping({ liveData: _liveData }: MappingProps) {
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-800/80 border-b border-slate-700/60">
                 <tr>
-                  {['贝位', '电气侧', '动力侧'].map(h => (
+                  {['贝位', '电气侧', '动力侧', '操作'].map(h => (
                     <th key={h} className="px-4 py-2.5 section-title whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {pageRows.map(row => (
-                  <tr key={row.bay} className="border-b border-slate-700/40 hover:bg-slate-700/20">
-                    <td className="px-4 py-2.5 font-mono font-bold text-white align-top">{row.bay}</td>
-                    <td className="px-4 py-2.5 align-top"><PointCell point={row.elec} /></td>
-                    <td className="px-4 py-2.5 align-top"><PointCell point={row.diesel} /></td>
-                  </tr>
-                ))}
+                {pageRows.map(row => {
+                  const editing = editBay === row.bay;
+                  return (
+                    <Fragment key={row.bay}>
+                      <tr className="border-b border-slate-700/40 hover:bg-slate-700/20">
+                        <td className="px-4 py-2.5 font-mono font-bold text-white align-top">{row.bay}</td>
+                        <td className="px-4 py-2.5 align-top"><PointCell point={row.elec} /></td>
+                        <td className="px-4 py-2.5 align-top"><PointCell point={row.diesel} /></td>
+                        <td className="px-4 py-2.5 align-top">
+                          <button
+                            type="button"
+                            onClick={() => setEditBay(editing ? null : row.bay)}
+                            className="inline-flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                            {editing ? '收起' : '修正'}
+                          </button>
+                        </td>
+                      </tr>
+                      {editing && (
+                        <tr className="border-b border-slate-700/40 bg-slate-900/40">
+                          <td colSpan={4} className="px-4 pb-3">
+                            <BayPointAdjust
+                              backendBase={baseUrl}
+                              yardId={yardId}
+                              bayNo={row.bay}
+                              elec={row.elec}
+                              diesel={row.diesel}
+                              defaultSide={baySide}
+                              allowBoth
+                              onClose={() => setEditBay(null)}
+                              onApplied={() => {
+                                loadHistory();
+                                fetchYards().catch(() => {});
+                              }}
+                              onDone={() => {
+                                setEditBay(null);
+                                loadHistory();
+                                fetchYards().catch(() => {});
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
                 {pageRows.length === 0 && (
-                  <tr><td colSpan={3} className="px-4 py-10 text-center text-slate-500">没有符合条件的贝位</td></tr>
+                  <tr><td colSpan={4} className="px-4 py-10 text-center text-slate-500">没有符合条件的贝位</td></tr>
                 )}
               </tbody>
             </table>
@@ -771,6 +853,7 @@ export default function Mapping({ liveData: _liveData }: MappingProps) {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

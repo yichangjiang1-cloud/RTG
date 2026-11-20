@@ -22,6 +22,10 @@ const BLANK_DATA: RealtimeData = {
     receiver_right: { x: 0, y: 0, valid: false },
     elec_center: { x: 0, y: 0, valid: false },
     diesel_center: { x: 0, y: 0, valid: false },
+    center_geo: {
+      elec: { lat: 0, lon: 0, alt: 0, valid: false },
+      diesel: { lat: 0, lon: 0, alt: 0, valid: false },
+    },
     leg_offsets: { fl: 0, fr: 0, rl: 0, rr: 0 },
     speed: 0,
   },

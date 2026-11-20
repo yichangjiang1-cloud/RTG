@@ -126,6 +126,20 @@ def to_yard_xy(east: float, north: float, y_east: float, y_north: float) -> Poin
     return x, y
 
 
+def from_yard_xy(x: float, y: float, y_east: float, y_north: float) -> Point:
+    """堆场 X、Y → 东、北（to_yard_xy 的逆）。"""
+    east = float(x) * float(y_north) + float(y) * float(y_east)
+    north = -float(x) * float(y_east) + float(y) * float(y_north)
+    return east, north
+
+
+def yard_delta_to_en(dx, dy, axis):
+    """堆场 ΔX/ΔY → 东/北。axis=None 时 X=北、Y=东。"""
+    if axis is None:
+        return float(dy), float(dx)
+    return from_yard_xy(float(dx), float(dy), float(axis[0]), float(axis[1]))
+
+
 def resolve_bay_band(
     y: float,
     bay_ys: Sequence[Tuple[int, float]],

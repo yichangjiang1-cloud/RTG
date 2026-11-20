@@ -67,6 +67,9 @@ class YardManager:
         self._yard_meta: Dict[str, Dict[str, Any]] = {}
         self._b_matrices: Dict[str, Any] = {}
         self._current_yard_id: Optional[str] = None
+        # 前端选中的偏好场：仅在「点同时落在多个场」时用于消歧；场外/单场忽略
+        self._forced_yard_id: Optional[str] = None
+        self._last_detect_used_prefer: bool = False
         for yard_cfg in yard_configs:
             parsed = parse_yard_config_entry(yard_cfg)
             if not parsed:
@@ -90,6 +93,7 @@ class YardManager:
 
     def reload_yards(self, yard_configs: list) -> None:
         """从 API 或备份 YAML 刷新堆场投影定义。"""
+        kept_force = self._forced_yard_id
         self._transforms.clear()
         self._yard_meta.clear()
         self._current_yard_id = None
@@ -110,24 +114,43 @@ class YardManager:
                 origin_alt=parsed["origin_alt"],
             )
             self._yard_meta[yid] = parsed
+        if kept_force and kept_force in self._yard_meta:
+            self._forced_yard_id = kept_force
+            self._current_yard_id = kept_force
+        else:
+            self._forced_yard_id = None
         logger.info("堆场投影已刷新，共 %d 个堆场", len(self._transforms))
 
-    def detect_yard_from_point(
-        self,
-        lat: Optional[float],
-        lon: Optional[float],
-    ) -> Optional[str]:
-        """四个轮胎中心的中点落在多边形内才算在该场。重叠时取面积最小的场。"""
-        if lat is None or lon is None:
-            if self._current_yard_id is not None:
-                logger.info(
-                    "RTG 堆场判定: %s -> 场外（轮胎中心不齐，无法判断是否在场内）",
-                    self._current_yard_id,
-                )
-            self._current_yard_id = None
+    def set_forced_yard(self, yard_id: Optional[str]) -> Optional[str]:
+        """
+        设置前端偏好场（仅重叠区消歧用）。yard_id 为空则清除偏好，恢复「面积最小」规则。
+        不立刻改写当前场：场外仍算场外；单场仍用实际所在场。
+        """
+        raw = (yard_id or "").strip()
+        if not raw:
+            if self._forced_yard_id is not None:
+                logger.info("清除场地偏好，重叠时恢复面积最小（原偏好=%s）", self._forced_yard_id)
+            self._forced_yard_id = None
             return None
-        best_id = None
-        best_area = float("inf")
+        if raw not in self._yard_meta:
+            logger.warning("设置场地偏好失败：本地无场地 %s", raw)
+            self._forced_yard_id = None
+            return None
+        if self._forced_yard_id != raw:
+            logger.info("场地偏好: %s（仅当车辆同时落在多个场内时生效）", raw)
+        self._forced_yard_id = raw
+        return raw
+
+    def get_forced_yard(self) -> Optional[str]:
+        return self._forced_yard_id
+
+    def last_detect_used_prefer(self) -> bool:
+        """上一拍 detect 是否因重叠+偏好而选中了前端场地。"""
+        return self._last_detect_used_prefer
+
+    def _yards_containing_point(self, lat: float, lon: float) -> list:
+        """返回 (yard_id, area) 列表，按面积升序。"""
+        hits = []
         for yid, meta in self._yard_meta.items():
             ring = normalize_boundary(meta.get("boundary"))
             if len(ring) < 3:
@@ -138,12 +161,58 @@ class YardManager:
             east, north = en_meters(float(lat), float(lon), lat0, lon0)
             if not point_in_polygon(east, north, poly):
                 continue
-            area = polygon_area(poly)
-            if area < best_area:
-                best_area = area
-                best_id = yid
+            hits.append((yid, polygon_area(poly)))
+        hits.sort(key=lambda item: item[1])
+        return hits
+
+    def detect_yard_from_point(
+        self,
+        lat: Optional[float],
+        lon: Optional[float],
+    ) -> Optional[str]:
+        """
+        轮胎中心落在多边形内才算在该场。
+        - 0 个场：场外（前端选中无效）
+        - 1 个场：用该场（选中无效）
+        - 多个场：若前端偏好落在命中集合内则用偏好，否则取面积最小（原方案）
+        """
+        self._last_detect_used_prefer = False
+        if lat is None or lon is None:
+            if self._current_yard_id is not None:
+                logger.info(
+                    "RTG 堆场判定: %s -> 场外（轮胎中心不齐，无法判断是否在场内）",
+                    self._current_yard_id,
+                )
+            self._current_yard_id = None
+            return None
+
+        hits = self._yards_containing_point(float(lat), float(lon))
+        if not hits:
+            best_id = None
+            reason = "场外"
+        elif len(hits) == 1:
+            best_id = hits[0][0]
+            reason = "单场"
+        else:
+            prefer = self._forced_yard_id
+            hit_ids = {yid for yid, _ in hits}
+            if prefer and prefer in hit_ids:
+                best_id = prefer
+                self._last_detect_used_prefer = True
+                reason = f"重叠消歧(偏好={prefer})"
+            else:
+                best_id = hits[0][0]
+                reason = (
+                    f"重叠取最小面积(命中={sorted(hit_ids)}"
+                    + (f",偏好未命中={prefer}" if prefer else ",无偏好")
+                    + ")"
+                )
+
         if best_id != self._current_yard_id:
-            logger.info("RTG 堆场判定: %s -> %s", self._current_yard_id, best_id or "场外")
+            logger.info(
+                "RTG 堆场判定: %s -> %s（%s）",
+                self._current_yard_id, best_id or "场外", reason,
+            )
         self._current_yard_id = best_id
         return best_id
 

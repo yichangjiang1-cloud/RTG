@@ -168,6 +168,8 @@ export default function Manual() {
                   ['/api/survey/batch_import','POST',      'CSV 批量导入 RTK 真值'],
                   ['/api/survey/finalize',   'POST',       '标记校准完成（001 全场 / 002 求 M）'],
                   ['/api/yard/map',          'GET',        '堆场 RTK + 校准聚合查询'],
+                  ['/api/yard/force',        'POST',       '场地偏好（仅重叠消歧）'],
+                  ['/api/survey/points/adjust','POST',     '贝位点手填/XY平移'],
                   ['/api/vehicle/config',    'POST / GET', '车型静态参数存取'],
                   ['ws://host/ws/realtime',  'WebSocket',  '中控机实时推送坐标（10Hz+）'],
                 ].map(([path, method, desc]) => (

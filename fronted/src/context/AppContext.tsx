@@ -264,6 +264,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         bay_spacing?: number;
         y_axis_mode?: 'fit' | 'two_point';
         y_axis_points?: YardInfo['y_axis_points'];
+        survey_mode?: 'rtk' | 'rtg_ends';
       }> };
       if (json.code === 200 && Array.isArray(json.data) && json.data.length > 0) {
         const yards: YardInfo[] = json.data.map(y => ({
@@ -279,6 +280,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           bay_spacing: y.bay_spacing ?? 0,
           y_axis_mode: y.y_axis_mode === 'two_point' ? 'two_point' : 'fit',
           y_axis_points: y.y_axis_points ?? null,
+          survey_mode: y.survey_mode === 'rtg_ends' ? 'rtg_ends' : 'rtk',
         }));
         logger.info('AppContext', `fetchYards 成功，共 ${yards.length} 个场地`);
         setYards(yards);
@@ -392,6 +394,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }, 10000);
     return () => window.clearInterval(timer);
   }, [useMock, fetchVehicles]);
+
+  // 前端选中 → 场地偏好（仅重叠消歧）；未选中则清除偏好，中控按面积最小
+  useEffect(() => {
+    if (useMock || !selectedVehicleId) return;
+    const ctrl = new AbortController();
+    const body = {
+      vehicle_id: selectedVehicleId,
+      yard_id: selectedYardId || null,
+    };
+    logger.info('AppContext', 'POST /api/yard/force（偏好）', body);
+    fetch(`${httpBase(backendConfig)}/api/yard/force`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    })
+      .then(async (resp) => {
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => '');
+          throw new Error(`HTTP ${resp.status} ${text}`);
+        }
+        return resp.json();
+      })
+      .then((json) => {
+        logger.info('AppContext', '场地偏好已下发', json?.message ?? json);
+      })
+      .catch((e) => {
+        if ((e as { name?: string })?.name === 'AbortError') return;
+        logger.warn('AppContext', '场地偏好下发失败（中控可能离线）', e);
+      });
+    return () => ctrl.abort();
+  }, [useMock, selectedVehicleId, selectedYardId, backendConfig]);
 
   /** 为待初始化设备分配正式 ID，调用 POST /api/vehicle/init */
   const initDevice = useCallback(async (params: {

@@ -286,6 +286,45 @@ Base URL: `http://localhost:8000`
 
 ---
 
+### 2.0.1 贝位点修正（手填 / XY 平移）
+
+`POST /api/survey/points/adjust`
+
+适用于首尾贝建图与逐贝位建图。`mode=set` 写经纬度；`mode=nudge` 沿堆场 `dx_m/dy_m` 平移。`bay_side=both` 时两侧一起改。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `yard_id` | string | 场地 |
+| `bay_no` | int | 贝位号（含头尾） |
+| `bay_side` | string | `elec` / `diesel` / `both` |
+| `mode` | string | `set` \| `nudge` |
+| `lat/lon/alt` | float | set 单侧坐标 |
+| `elec` / `diesel` | object | set 两侧时各给 `{lat,lon,alt}` |
+| `dx_m` / `dy_m` | float | nudge 堆场坐标增量（米） |
+| `force` | bool | 大位移或 +Y 变化时二次确认 |
+
+RTG 场：改中间点会标成 `rtg_fix`（可恢复自动）；改头尾会重钉 +Y 并重生 auto；改 1 号电气侧会更新原点。
+
+### 2.1.1 场地偏好（重叠消歧）
+
+`POST /api/yard/force`
+
+前端选中场地后下发 `SET_ACTIVE_YARD`。中控规则：
+
+- 场外：忽略选中，仍算场外
+- 只在一个场内：忽略选中，用该场
+- 同时落在多个场：若选中场在命中集合内则用选中，否则取面积最小（原方案）
+- 未选中：重叠时取面积最小
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `vehicle_id` | string | 是 | 目标车辆 |
+| `yard_id` | string \| null | 否 | 偏好场号；空/省略 = 清除偏好 |
+
+```json
+{ "vehicle_id": "RTG-002", "yard_id": "Y01" }
+```
+
 ### 2.2 创建/更新堆场
 
 `POST /api/yard/create`

@@ -213,6 +213,21 @@ def position_result_to_realtime(result: PositionResult) -> dict:
                 "y": g.center_engine_y,
                 "valid": g.a2_valid,
             },
+            # 两侧轮胎中点的 WGS84，给前端做 RTG 头尾 / 重采贝位用
+            "center_geo": {
+                "elec": {
+                    "lat": g.center_elec_lat,
+                    "lon": g.center_elec_lon,
+                    "alt": g.center_elec_alt,
+                    "valid": g.a1_valid,
+                },
+                "diesel": {
+                    "lat": g.center_engine_lat,
+                    "lon": g.center_engine_lon,
+                    "alt": g.center_engine_alt,
+                    "valid": g.a2_valid,
+                },
+            },
             "tires": {
                 "elec_upstream": _tire_end(g, "elec", upstream=True),
                 "elec_downstream": _tire_end(g, "elec", upstream=False),

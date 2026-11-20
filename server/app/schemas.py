@@ -203,6 +203,61 @@ class SurveyBatchImportRequest(BaseModel):
     bay_side: str = "elec"  # 整批 CSV 属于哪一侧，文件格式不变
     points: List[SurveyBatchPoint]
 
+class RtgSidePoint(BaseModel):
+    """大车一侧两只轮胎中心的中点。"""
+    lat: float
+    lon: float
+    alt: float = 0.0
+
+
+class RtgCaptureRequest(BaseModel):
+    yard_id: str
+    vehicle_id: str
+    role: str  # head 头贝位 / tail 尾贝位 / fix 重采中间贝位
+    bay_no: Optional[int] = None  # 仅 fix 需要
+    elec: RtgSidePoint
+    diesel: RtgSidePoint
+    frame_count: int = 1
+    std_m: Optional[float] = None
+    force: bool = False
+
+
+class SurveyPointSideCoords(BaseModel):
+    lat: float
+    lon: float
+    alt: float = 0.0
+
+
+class SurveyPointAdjustRequest(BaseModel):
+    """
+    贝位点修正：手动写经纬度，或沿堆场 X/Y 平移。
+    bay_side=both 时两侧一起改（RTG 常用）；elec/diesel 只改一侧。
+    """
+    yard_id: str
+    bay_no: int
+    bay_side: str = "both"  # elec | diesel | both
+    mode: str  # set | nudge
+    force: bool = False
+    # set：单侧用 lat/lon/alt；两侧用 elec/diesel
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    alt: Optional[float] = None
+    elec: Optional[SurveyPointSideCoords] = None
+    diesel: Optional[SurveyPointSideCoords] = None
+    # nudge：堆场坐标增量（米）
+    dx_m: float = 0.0
+    dy_m: float = 0.0
+
+
+class RtgRestoreRequest(BaseModel):
+    yard_id: str
+    bay_no: int
+
+
+class RtgRegenerateRequest(BaseModel):
+    yard_id: str
+
+
 class SurveyFinalizeRequest(BaseModel):
     vehicle_id: str
     yard_id: str

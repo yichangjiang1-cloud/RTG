@@ -111,6 +111,71 @@ def to_yard_xy(east: float, north: float, y_east: float, y_north: float) -> Poin
     return x, y
 
 
+def from_yard_xy(x: float, y: float, y_east: float, y_north: float) -> Point:
+    """堆场 X、Y → 东、北（to_yard_xy 的逆）。"""
+    east = float(x) * float(y_north) + float(y) * float(y_east)
+    north = -float(x) * float(y_east) + float(y) * float(y_north)
+    return east, north
+
+
+def yard_delta_to_en(
+    dx: float,
+    dy: float,
+    axis: Optional[Point],
+) -> Point:
+    """
+    堆场 ΔX/ΔY → 东/北增量。
+    axis 为 +Y 单位向量 (east, north)；None 时与 YardTransform 未拟合一致：X=北、Y=东。
+    """
+    if axis is None:
+        return float(dy), float(dx)
+    return from_yard_xy(float(dx), float(dy), float(axis[0]), float(axis[1]))
+
+
+def _ecef_to_latlon(x: float, y: float, z: float) -> Point:
+    """ECEF → (lat_deg, lon_deg)，Bowring 迭代。"""
+    lon = math.atan2(y, x)
+    p = math.sqrt(x * x + y * y)
+    lat = math.atan2(z, p * (1.0 - _E2))
+    for _ in range(10):
+        n = _A / math.sqrt(1.0 - _E2 * math.sin(lat) ** 2)
+        lat_new = math.atan2(z + _E2 * n * math.sin(lat), p)
+        if abs(lat_new - lat) < 1e-12:
+            lat = lat_new
+            break
+        lat = lat_new
+    return math.degrees(lat), math.degrees(lon)
+
+
+def en_to_wgs84(east: float, north: float, lat0: float, lon0: float) -> Point:
+    """相对原点的东、北 → WGS84（高程按原点椭球，与 en_meters 互逆）。"""
+    lat_r = math.radians(float(lat0))
+    lon_r = math.radians(float(lon0))
+    x0, y0, z0 = _ecef(float(lat0), float(lon0))
+    sl, cl = math.sin(lon_r), math.cos(lon_r)
+    sp, cp = math.sin(lat_r), math.cos(lat_r)
+    e, n = float(east), float(north)
+    dx = -sl * e - sp * cl * n
+    dy = cl * e - sp * sl * n
+    dz = cp * n
+    return _ecef_to_latlon(x0 + dx, y0 + dy, z0 + dz)
+
+
+def shift_wgs84_by_yard(
+    lat: float,
+    lon: float,
+    dx: float,
+    dy: float,
+    origin_lat: float,
+    origin_lon: float,
+    axis: Optional[Point],
+) -> Point:
+    """把一点沿堆场 X/Y 平移，返回新的 (lat, lon)。"""
+    e0, n0 = en_meters(float(lat), float(lon), float(origin_lat), float(origin_lon))
+    de, dn = yard_delta_to_en(dx, dy, axis)
+    return en_to_wgs84(e0 + de, n0 + dn, float(origin_lat), float(origin_lon))
+
+
 def resolve_bay_band(
     y: float,
     bay_ys: Sequence[Tuple[int, float]],
@@ -144,6 +209,51 @@ def spacing_violation(
                 f"小于 {need:.3f} m（2×半宽）"
             )
     return None
+
+
+def lerp_bay_point(
+    head: Tuple[float, float, float],
+    tail: Tuple[float, float, float],
+    bay_no: int,
+    bay_count: int,
+) -> Tuple[float, float, float]:
+    """
+    头贝位 1、尾贝位 bay_count，按贝位号等分，返回第 bay_no 号的 (lat, lon, alt)。
+    N 个贝位只有 N-1 个间隔。范围几百米时，经纬度线性插值与真直线只差毫米级。
+    """
+    n = int(bay_count)
+    if n < 2:
+        raise ValueError("贝位数至少为 2")
+    t = (int(bay_no) - 1) / float(n - 1)
+    return (
+        head[0] + t * (tail[0] - head[0]),
+        head[1] + t * (tail[1] - head[1]),
+        head[2] + t * (tail[2] - head[2]),
+    )
+
+
+def monotonic_violation(bay_ys: Sequence[Tuple[int, float]]) -> Optional[str]:
+    """沿 +Y 的位置必须随贝位号严格增大。"""
+    ordered = sorted(bay_ys, key=lambda item: item[0])
+    for i in range(len(ordered) - 1):
+        left, right = ordered[i], ordered[i + 1]
+        if float(right[1]) <= float(left[1]) + 1e-6:
+            return (
+                f"贝位 {left[0]} 与 {right[0]} 沿堆场方向顺序反了或重合"
+                f"（{left[1]:.3f} m → {right[1]:.3f} m）"
+            )
+    return None
+
+
+def axis_bearing_deg(axis: Point) -> float:
+    """+Y 的方位角，正北 0°，顺时针为正。axis 是 (east, north) 单位向量。"""
+    return math.degrees(math.atan2(float(axis[0]), float(axis[1]))) % 360.0
+
+
+def bearing_diff_deg(a: float, b: float) -> float:
+    """两个方位角之差，取 0~180。"""
+    diff = abs(float(a) - float(b)) % 360.0
+    return 360.0 - diff if diff > 180.0 else diff
 
 
 def polygon_area(polygon: Sequence[Point]) -> float:

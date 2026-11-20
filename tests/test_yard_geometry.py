@@ -6,6 +6,7 @@ from src.solver.yard_geometry import (
     electrical_bays,
     en_meters,
     fit_y_axis,
+    from_yard_xy,
     is_electrical_bay,
     lane_deviation_m,
     lane_deviations_mm,
@@ -17,6 +18,7 @@ from src.solver.yard_geometry import (
     spacing_violation,
     to_yard_xy,
     two_point_y_axis,
+    yard_delta_to_en,
 )
 from src.solver.yard_manager import YardManager
 
@@ -36,6 +38,20 @@ class TestYardGeometry(unittest.TestCase):
         poly = [(0, 0), (10, 0), (10, 10), (0, 10)]
         self.assertTrue(point_in_polygon(5, 5, poly))
         self.assertFalse(point_in_polygon(15, 5, poly))
+
+    def test_yard_xy_inverse_and_delta(self):
+        axis = (0.0, 1.0)  # +Y 北，+X 东
+        x, y = to_yard_xy(10.0, 20.0, *axis)
+        e, n = from_yard_xy(x, y, *axis)
+        self.assertAlmostEqual(e, 10.0, places=9)
+        self.assertAlmostEqual(n, 20.0, places=9)
+        de, dn = yard_delta_to_en(1.0, 2.0, axis)
+        self.assertAlmostEqual(de, 1.0, places=9)
+        self.assertAlmostEqual(dn, 2.0, places=9)
+        # 未拟合：X=北 Y=东
+        de0, dn0 = yard_delta_to_en(3.0, 4.0, None)
+        self.assertAlmostEqual(de0, 4.0, places=9)
+        self.assertAlmostEqual(dn0, 3.0, places=9)
 
     def test_fit_y_points_toward_increasing_bay(self):
         # 贝位号增大时向东
@@ -85,6 +101,48 @@ class TestYardGeometry(unittest.TestCase):
         self.assertEqual(mgr.detect_yard_from_point(30.0005, 114.0005), "A01")
         self.assertIsNone(mgr.detect_yard_from_point(30.01, 114.01))
         self.assertIsNone(mgr.detect_yard_from_point(None, None))
+
+    def test_prefer_yard_only_on_overlap(self):
+        # 大半场 A02 包住小半场 A01；点在重叠区
+        small = [{"lat": lat, "lon": lon} for lat, lon in _square()]
+        big = [
+            {"lat": 29.999, "lon": 113.999},
+            {"lat": 29.999, "lon": 114.002},
+            {"lat": 30.002, "lon": 114.002},
+            {"lat": 30.002, "lon": 113.999},
+        ]
+        yards = [
+            {
+                "yard_id": "A01",
+                "name": "small",
+                "origin_lat": 30.0,
+                "origin_lon": 114.0,
+                "origin_alt": 0,
+                "boundary": small,
+            },
+            {
+                "yard_id": "A02",
+                "name": "big",
+                "origin_lat": 30.0,
+                "origin_lon": 114.0,
+                "origin_alt": 0,
+                "boundary": big,
+            },
+        ]
+        mgr = YardManager("missing.json", yards)
+        # 无偏好：重叠取面积最小 → A01
+        self.assertEqual(mgr.detect_yard_from_point(30.0005, 114.0005), "A01")
+        self.assertFalse(mgr.last_detect_used_prefer())
+        # 偏好大场：重叠消歧 → A02
+        self.assertEqual(mgr.set_forced_yard("A02"), "A02")
+        self.assertEqual(mgr.detect_yard_from_point(30.0005, 114.0005), "A02")
+        self.assertTrue(mgr.last_detect_used_prefer())
+        # 场外：选中无效
+        self.assertIsNone(mgr.detect_yard_from_point(30.01, 114.01))
+        self.assertFalse(mgr.last_detect_used_prefer())
+        # 只在大场内（小场外）：单场，忽略偏好
+        self.assertEqual(mgr.detect_yard_from_point(30.0015, 114.0015), "A02")
+        self.assertFalse(mgr.last_detect_used_prefer())
 
     def test_lane_deviation_toward_centroid_is_negative(self):
         square = [(1.0, 0.0), (1.0, 10.0), (-1.0, 10.0), (-1.0, 0.0)]

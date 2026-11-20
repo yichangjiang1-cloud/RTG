@@ -59,7 +59,7 @@ plc:
   base_station_mode: yard_origin
   cross_yard_deviation: 1
   cross_yard_flag: 1
-  enabled: true
+  enabled: false
   frame_rate_hz: 10
   host: 127.0.0.1
   port: 5000

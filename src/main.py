@@ -272,6 +272,8 @@ class RTGSystem:
           - UPDATE_CONFIG:         更新车辆配置
           - START_SVD:             刷新云端校准数据（与 finalize 后同步等价）
           - CALIBRATION_FINALIZED: 校准完成，拉取 M 矩阵与参考车全场表
+          - YARD_MAP_UPDATED:      场地贝位点变更（RTG 头尾采点 / 重采），重新同步
+          - SET_ACTIVE_YARD:       前端场地偏好（仅重叠消歧）；yard_id 空则恢复面积最小
           - SET_TROLLEY_ORIGIN:    小车零点（捕获/手动/重置）
 
         建图/校准采点走 Web API（POST /api/survey/confirm），不经 MQTT 打点指令。
@@ -288,8 +290,12 @@ class RTGSystem:
                 self._handle_start_svd(cmd)
             elif cmd_type == "CALIBRATION_FINALIZED":
                 self._handle_calibration_finalized(cmd)
+            elif cmd_type == "YARD_MAP_UPDATED":
+                self._handle_calibration_finalized(cmd)
             elif cmd_type == "LANE_CORRECTION_UPDATED":
                 self._handle_calibration_finalized(cmd)
+            elif cmd_type == "SET_ACTIVE_YARD":
+                self._handle_set_active_yard(cmd)
             elif cmd_type == "SET_TROLLEY_ORIGIN":
                 self._handle_set_trolley_origin(cmd)
             else:
@@ -313,6 +319,8 @@ class RTGSystem:
             self._mqtt_telemetry_paused = False
 
         telemetry = position_result_to_realtime(result)
+        # 仅在「重叠且偏好生效」时标记；场外/单场不因前端选中改写 yard_id
+        telemetry["yard_forced"] = bool(self._yard_manager.last_detect_used_prefer())
         self._mqtt_client.publish_telemetry(telemetry)
 
     def _log_position_snapshot(self, result) -> None:
@@ -439,6 +447,20 @@ class RTGSystem:
         yard_id = data.get("yard_id", "")
         logger.info(f"→ 收到校准完成通知: yard_id={yard_id}，同步堆场本地备份...")
         self._sync_yard_data_from_cloud()
+
+    def _handle_set_active_yard(self, cmd: dict) -> None:
+        """前端场地偏好：仅当车辆同时落在多个场内时用于消歧；空则恢复面积最小。"""
+        data = cmd.get("data", {}) or {}
+        yard_id = data.get("yard_id")
+        applied = self._yard_manager.set_forced_yard(
+            None if yard_id in (None, "") else str(yard_id)
+        )
+        if yard_id in (None, ""):
+            logger.info("✓ 已清除场地偏好，重叠时按面积最小")
+        elif applied:
+            logger.info("✓ 已设置场地偏好: %s（仅重叠区生效）", applied)
+        else:
+            logger.warning("⚠ 设置场地偏好失败（本地无此场或未同步）: %s", yard_id)
 
     def _handle_set_trolley_origin(self, cmd: dict) -> None:
         """处理小车零点设置：capture / manual / reset。"""

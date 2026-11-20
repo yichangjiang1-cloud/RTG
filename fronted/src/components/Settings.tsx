@@ -27,6 +27,9 @@ function YardFormModal({ backendBase, yard, onClose, onDone }: {
   const [originAlt, setOriginAlt] = useState(yard ? String(yard.origin_alt ?? 0) : '0');
   const [bayCount, setBayCount] = useState(yard ? String(yard.total_bays) : '40');
   const [halfWidth, setHalfWidth] = useState(yard ? String(yard.bay_half_width_m ?? 0.3) : '0.30');
+  const [surveyMode, setSurveyMode] = useState<'rtk' | 'rtg_ends'>(
+    yard?.survey_mode === 'rtg_ends' ? 'rtg_ends' : 'rtk',
+  );
   const [boundaryText, setBoundaryText] = useState(boundaryToText(yard?.boundary));
   const [saving, setSaving] = useState(false);
 
@@ -34,7 +37,6 @@ function YardFormModal({ backendBase, yard, onClose, onDone }: {
     const idErr = validateYardId(yardId);
     if (idErr) { showToast(idErr, 'error'); return; }
     if (!name.trim()) { showToast('请填写场地名称'); return; }
-    if (!originLat.trim() || !originLon.trim()) { showToast('请填写原点经纬度'); return; }
     const boundary = boundaryText.split(/\n+/).map(line => line.trim()).filter(Boolean).map(line => {
       const [lat, lon] = line.split(/[,，\s]+/).map(Number);
       return { lat, lon };
@@ -43,8 +45,38 @@ function YardFormModal({ backendBase, yard, onClose, onDone }: {
       showToast('区域至少 3 个顶点，每行：纬度,经度', 'error');
       return;
     }
+    // RTG 头尾采点：原点在采头贝位时用电气侧轮胎中点写入；新建时先用区域第一个顶点顶上
+    let originLatNum = parseFloat(originLat);
+    let originLonNum = parseFloat(originLon);
+    let originAltNum = parseFloat(originAlt) || 0;
+    if (surveyMode === 'rtg_ends') {
+      if (!Number.isFinite(originLatNum) || !Number.isFinite(originLonNum)) {
+        originLatNum = boundary[0].lat;
+        originLonNum = boundary[0].lon;
+        originAltNum = 0;
+      }
+    } else if (!originLat.trim() || !originLon.trim() || !Number.isFinite(originLatNum) || !Number.isFinite(originLonNum)) {
+      showToast('请填写原点经纬度', 'error');
+      return;
+    }
     const half = parseFloat(halfWidth);
     if (!Number.isFinite(half) || half <= 0) { showToast('贝位半宽必须大于 0', 'error'); return; }
+    const count = parseInt(bayCount) || 0;
+    if (surveyMode === 'rtg_ends' && count < 2) {
+      showToast('RTG 采点需要先填写贝位总数，且至少为 2', 'error');
+      return;
+    }
+    if (
+      editing
+      && surveyMode === 'rtg_ends'
+      && (yard?.total_bays ?? 0) > 0
+      && count !== (yard?.total_bays ?? 0)
+    ) {
+      const ok = window.confirm(
+        `贝位总数将从 ${yard?.total_bays} 改为 ${count}。已有的自动贝位点会按新的头尾重新生成，重采过的中间贝位请人工核对。继续吗？`,
+      );
+      if (!ok) return;
+    }
     setSaving(true);
     try {
       const path = editing ? '/api/yard/update' : '/api/yard/create';
@@ -54,13 +86,14 @@ function YardFormModal({ backendBase, yard, onClose, onDone }: {
         body: JSON.stringify({
           yard_id: yardId.trim(),
           name: name.trim(),
-          origin_lat: parseFloat(originLat),
-          origin_lon: parseFloat(originLon),
-          origin_alt: parseFloat(originAlt) || 0,
+          origin_lat: originLatNum,
+          origin_lon: originLonNum,
+          origin_alt: originAltNum,
           bay_spacing: editing ? (yard?.bay_spacing ?? 0) : 0,
-          bay_count: parseInt(bayCount) || 0,
+          bay_count: count,
           bay_half_width_m: half,
           boundary,
+          survey_mode: surveyMode,
         }),
         signal: AbortSignal.timeout(10000),
       });
@@ -71,6 +104,8 @@ function YardFormModal({ backendBase, yard, onClose, onDone }: {
       if (json?.code && json.code !== 200) {
         throw new Error(json.message || (editing ? '保存失败' : '创建失败'));
       }
+      const warns = Array.isArray(json?.data?.warnings) ? json.data.warnings as string[] : [];
+      if (warns.length) showToast(warns[0], 'info');
       showToast(editing ? `场地 ${name.trim()} 已保存` : `场地 ${name.trim()} 创建成功`);
       onDone();
     } catch (e) {
@@ -83,14 +118,14 @@ function YardFormModal({ backendBase, yard, onClose, onDone }: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-5 shadow-2xl">
-        <div className="flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl max-h-[min(90vh,720px)] flex flex-col">
+        <div className="flex items-center justify-between px-6 pt-5 pb-3 shrink-0 border-b border-slate-800">
           <h3 className="text-base font-bold text-white">{editing ? '编辑场地' : '新建场地'}</h3>
           <button onClick={onClose} className="text-slate-500 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
 
-        <div className="space-y-3">
+        <div className="px-6 py-4 space-y-3 overflow-y-auto min-h-0 flex-1">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="section-title block mb-1">场号 (yard_id)</label>
@@ -112,6 +147,20 @@ function YardFormModal({ backendBase, yard, onClose, onDone }: {
             </div>
           </div>
 
+          {surveyMode === 'rtg_ends' ? (
+            <div className="p-3 bg-cyan-900/15 border border-cyan-500/20 rounded-lg">
+              <p className="text-[10px] text-cyan-200 font-bold mb-1">原点坐标</p>
+              <p className="text-[10px] text-cyan-200/70 leading-relaxed">
+                RTG 头尾采点时，原点在采集头贝位（1 号）时自动写入：取电气侧两只轮胎中心的中点。
+                新建时不必手填；编辑里若已有原点，采头贝位后也会更新。
+              </p>
+              {editing && Number.isFinite(Number(originLat)) && Number.isFinite(Number(originLon)) && (
+                <p className="text-[10px] font-mono text-slate-400 mt-2">
+                  当前 {originLat}, {originLon}, {originAlt} m
+                </p>
+              )}
+            </div>
+          ) : (
           <div>
             <label className="section-title block mb-1">原点坐标 (WGS84)</label>
             <div className="grid grid-cols-3 gap-2">
@@ -129,6 +178,7 @@ function YardFormModal({ backendBase, yard, onClose, onDone }: {
               </div>
             </div>
           </div>
+          )}
 
           <div>
             <label className="section-title block mb-1">区域顶点（纬度,经度，按顺序首尾相连）</label>
@@ -147,19 +197,52 @@ function YardFormModal({ backendBase, yard, onClose, onDone }: {
           </div>
 
           <div>
-            <label className="section-title block mb-1">预估贝位数</label>
-            <input type="number" step="1" className="input-field font-mono w-32" value={bayCount} onChange={e => setBayCount(e.target.value)} placeholder="40" />
-            <p className="text-[10px] text-slate-500 mt-1">实际贝位位置由 RTK 打点确定，此处仅为预估</p>
+            <label className="section-title block mb-1">贝位总数</label>
+            <input type="number" step="1" min={2} className="input-field font-mono w-32" value={bayCount} onChange={e => setBayCount(e.target.value)} placeholder="40" />
+            <p className="text-[10px] text-slate-500 mt-1">
+              {surveyMode === 'rtg_ends'
+                ? '头贝位 1 号，尾贝位就是这个数。中间贝位按头尾间距等分自动生成。'
+                : '手持 RTK 逐个采点时，这里只是预估；实际贝位以采点为准。'}
+            </p>
+          </div>
+
+          <div>
+            <label className="section-title block mb-1">采点方式</label>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                ['rtk', '手持 RTK'],
+                ['rtg_ends', 'RTG 头尾采点'],
+              ] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setSurveyMode(id)}
+                  className={`py-2 rounded-lg text-sm font-bold border ${
+                    surveyMode === id
+                      ? 'bg-blue-600/30 border-blue-400 text-blue-100'
+                      : 'bg-slate-900 border-slate-700 text-slate-400'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1">
+              RTG 头尾采点：大车只采 1 号和尾号，其余贝位自动生成；偏差大的贝位再单独重采。
+              已有贝位点时不能直接切换方式，需要先清空。
+            </p>
+          </div>
+
+          <div className="p-3 bg-slate-800/60 rounded-lg">
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              {surveyMode === 'rtg_ends'
+                ? '原点在采头贝位时自动设为电气侧轮胎中点。建图状态和已打的贝位不会因这次保存被清掉。贝位间距由头尾距离 ÷ (总数−1) 算出。'
+                : '原点坐标为堆场坐标系的参考原点。建图状态和已打的贝位不会因这次保存被清掉。贝位间距由打点数据决定。'}
+            </p>
           </div>
         </div>
 
-        <div className="p-3 bg-slate-800/60 rounded-lg">
-          <p className="text-[10px] text-slate-400 leading-relaxed">
-            原点坐标为堆场坐标系的参考原点。建图状态和已打的贝位不会因这次保存被清掉。贝位间距由打点数据决定。
-          </p>
-        </div>
-
-        <div className="flex gap-3 pt-1">
+        <div className="flex gap-3 px-6 py-4 shrink-0 border-t border-slate-800">
           <button onClick={onClose} className="flex-1 btn-secondary">取消</button>
           <button onClick={handleSubmit} disabled={saving} className="flex-1 btn-primary flex items-center justify-center gap-2">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : (editing ? <Save className="w-4 h-4" /> : <Plus className="w-4 h-4" />)}

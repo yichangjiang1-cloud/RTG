@@ -43,11 +43,18 @@ class GantryResult:
     # 车道偏离 mm：电气 GGA、电气 GGA2、动力 GGA、动力 GGA2。朝场内为负。
     lane_mm: list = field(default_factory=lambda: [0, 0, 0, 0])
 
-    # 电气侧 / 动力侧中心 = 该侧两个轮胎的中点
+    # 电气侧 / 动力侧中心 = 该侧两个轮胎的中点（堆场局部坐标）
     center_elec_side: float = 0.0
     center_elec_y: float = 0.0
     center_engine_side: float = 0.0
     center_engine_y: float = 0.0
+    # 同一中点的 WGS84，给前端做 RTG 头尾采点用，不依赖 +Y
+    center_elec_lat: float = 0.0
+    center_elec_lon: float = 0.0
+    center_elec_alt: float = 0.0
+    center_engine_lat: float = 0.0
+    center_engine_lon: float = 0.0
+    center_engine_alt: float = 0.0
     a1_valid: bool = False   # 电气侧两个轮胎都有效
     a2_valid: bool = False   # 动力侧两个轮胎都有效
     recv1_live: bool = False  # gantry_a1 / 9001 接收机在线

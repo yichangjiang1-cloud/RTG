@@ -16,6 +16,7 @@ from app.schemas import (
     SurveyConfirmRequest,
     SurveyFinalizeRequest,
     SurveyBatchImportRequest,
+    SurveyPointAdjustRequest,
     LaneCorrectionRequest,
     ApiResponse,
 )
@@ -265,6 +266,18 @@ def _mark_yard_rtk_ready(db: Session, yard_id: str) -> None:
             yard.mapped = True
 
 
+def _reject_if_rtg_yard(db: Session, yard_id: str) -> None:
+    """RTG 采点的场地不接受手持 RTK 录入，避免两种来源混在一起。"""
+    from app.api.routers.survey_rtg import is_rtg_yard
+
+    yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
+    if yard is not None and is_rtg_yard(yard):
+        raise HTTPException(
+            status_code=400,
+            detail="该场地用 RTG 采点，请到 RTG 采点页录入头、尾贝位",
+        )
+
+
 def _upsert_mapping_point(db: Session, req: SurveyConfirmRequest, bay_no: int | None):
     side = normalize_bay_side(req.bay_side)
     existing = None
@@ -283,6 +296,7 @@ def _upsert_mapping_point(db: Session, req: SurveyConfirmRequest, bay_no: int | 
         existing.lon = req.lon
         existing.alt = req.alt
         existing.bay_side = side
+        existing.source = "rtk"
         return existing
     sp = SurveyPoint(
         yard_id=req.yard_id,
@@ -292,6 +306,7 @@ def _upsert_mapping_point(db: Session, req: SurveyConfirmRequest, bay_no: int | 
         lat=req.lat,
         lon=req.lon,
         alt=req.alt,
+        source="rtk",
     )
     db.add(sp)
     return sp
@@ -384,6 +399,47 @@ def _upsert_calibration_transform(
     return row
 
 
+@router.post("/points/adjust", response_model=ApiResponse)
+async def adjust_survey_point(req: SurveyPointAdjustRequest, db: Session = Depends(get_db)):
+    """
+    贝位点修正：mode=set 手动写经纬度；mode=nudge 沿堆场 X/Y 平移。
+    适用于首尾贝建图与逐贝位建图。bay_side=both 时两侧一起改。
+    """
+    from app.api.routers.survey_rtg import apply_adjust, notify_yard_map_updated
+
+    try:
+        result = apply_adjust(db, req)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"贝位点修正失败: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    notify_yard_map_updated(db, req.yard_id)
+    action = "平移" if req.mode == "nudge" else "写入"
+    parts = [f"贝位 {req.bay_no} 已{action}"]
+    if result.get("origin_updated"):
+        parts.append("原点已随 1 号电气侧更新")
+    gen = result.get("generated") or {}
+    auto_n = int(gen.get("updated") or 0) + int(gen.get("created") or 0)
+    if auto_n > 0:
+        parts.append(f"已重算 {auto_n} 个自动贝位")
+    summary = result.get("summary") or {}
+    bearing = summary.get("y_axis_bearing_deg")
+    if bearing is not None and int(req.bay_no) in (
+        1,
+        int((summary.get("bay_count") or 0) or 0),
+    ):
+        parts.append(f"+Y 方位 {float(bearing):.2f}°")
+    return ApiResponse(
+        code=200,
+        message="；".join(parts),
+        data=result,
+    )
+
+
 @router.post("/confirm", response_model=ApiResponse)
 async def confirm_survey_point(
     req: SurveyConfirmRequest,
@@ -403,6 +459,7 @@ async def confirm_survey_point(
                     status_code=400,
                     detail="场地真值仅允许 RTK 录入，请使用 RTK 手动或 CSV 导入",
                 )
+            _reject_if_rtg_yard(db, req.yard_id)
             survey_point = _upsert_mapping_point(db, req, bay_no)
             _reject_close_bays(db, req.yard_id)
             _mark_yard_rtk_ready(db, req.yard_id)
@@ -671,9 +728,13 @@ async def finalize_survey(
 async def clear_rtk_points(
     yard_id: str,
     bay_side: Optional[str] = None,
+    source: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """清空 RTK 真值。bay_side=elec 或 diesel 只清一侧；不传则两侧都清。"""
+    """
+    清空场地贝位点。bay_side=elec 或 diesel 只清一侧；不传则两侧都清。
+    source 只清某个来源（rtk / rtg_end / rtg_fix / auto）；不传则不限来源。
+    """
     try:
         rows = db.query(SurveyPoint).filter(
             SurveyPoint.yard_id == yard_id,
@@ -684,6 +745,8 @@ async def clear_rtk_points(
         for point in rows:
             if side is not None and normalize_bay_side(point.bay_side) != side:
                 continue
+            if source and (point.source or "rtk") != source:
+                continue
             db.delete(point)
             deleted += 1
 
@@ -693,10 +756,25 @@ async def clear_rtk_points(
             SurveyPoint.point_type == "mapping",
         ).count()
         yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
+        rtg_notify = False
         if yard:
-            yard.mapped = remaining > 0
+            from app.api.routers.survey_rtg import (
+                is_rtg_yard, regenerate_auto, _refresh_yard_flags,
+            )
+
+            if is_rtg_yard(yard):
+                # 头尾被清掉时，剩下的自动点没有依据，一并清掉
+                regenerate_auto(db, yard)
+                _refresh_yard_flags(db, yard)
+                rtg_notify = True
+            else:
+                yard.mapped = remaining > 0
 
         db.commit()
+        if rtg_notify:
+            from app.api.routers.survey_rtg import notify_yard_map_updated
+
+            notify_yard_map_updated(db, yard_id)
         logger.info(f"清空 RTK 真值: yard={yard_id}, side={side or 'all'}, deleted={deleted}")
         return ApiResponse(
             code=200,
@@ -798,6 +876,9 @@ async def get_survey_history(
                     "local_x": p.local_x,
                     "local_y": p.local_y,
                     "local_z": p.local_z,
+                    "source": p.source or "rtk",
+                    "vehicle_id": p.vehicle_id,
+                    "std_m": p.std_m,
                     "created_at": p.created_at.isoformat(),
                 }
                 for p in points
@@ -827,6 +908,7 @@ async def batch_import_survey_points(
         created = []
         if req.mode != "mapping":
             raise HTTPException(status_code=400, detail="批量导入仅支持 RTK 真值 (mode=mapping)")
+        _reject_if_rtg_yard(db, req.yard_id)
 
         side = normalize_bay_side(req.bay_side)
         seen: dict[int, int] = {}

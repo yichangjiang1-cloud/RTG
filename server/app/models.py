@@ -42,6 +42,8 @@ class Yard(Base):
     y_axis_mode = Column(String(20), nullable=True, default="fit")  # fit | two_point
     y_axis_points = Column(JSON, nullable=True)  # 两点：from→to 为 +Y
     mapped = Column(Boolean, default=False)       # 是否已有 RTK 场地真值（至少一个 mapping 点）
+    # 采点方式：rtk 手持逐贝位；rtg_ends 只用大车采头尾贝位，其余贝位自动生成
+    survey_mode = Column(String(16), nullable=True, default="rtk")
     created_at = Column(DateTime, default=get_cst_now)
 
 class SurveyPoint(Base):
@@ -60,7 +62,12 @@ class SurveyPoint(Base):
     local_y = Column(Float, nullable=True)
     local_z = Column(Float, nullable=True)
     frame_count = Column(Integer, default=10)
+    # 来源：rtk 手持；rtg_end 大车采的头尾；rtg_fix 大车重采的中间贝位；auto 按头尾等分生成
+    source = Column(String(16), nullable=False, default="rtk")
+    vehicle_id = Column(String(50), nullable=True)   # 大车采集时记录是哪台车
+    std_m = Column(Float, nullable=True)             # 采集窗口内位置标准差（米）
     created_at = Column(DateTime, default=get_cst_now)
+    updated_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
         Index('idx_yard_type', 'yard_id', 'point_type'),

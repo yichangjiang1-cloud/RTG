@@ -301,6 +301,22 @@ class SolverNode:
             gantry.lpoint_y = sum(p[1] for p in xs) / 4.0
             gantry.lpoint_z = sum(p[2] for p in xs) / 4.0
 
+    def _fill_center_geo(self, gantry: GantryResult, tires_ecef: dict) -> None:
+        """两侧轮胎中点的 WGS84，供前端 RTG 采点。不依赖堆场 +Y。"""
+        for side, lat_a, lon_a, alt_a, ok_flag in (
+            ("elec", "center_elec_lat", "center_elec_lon", "center_elec_alt", "a1_valid"),
+            ("diesel", "center_engine_lat", "center_engine_lon", "center_engine_alt", "a2_valid"),
+        ):
+            a = tires_ecef.get(f"{side}1")
+            b = tires_ecef.get(f"{side}2")
+            if a is None or b is None or not getattr(gantry, ok_flag):
+                continue
+            mid = tuple((a[i] + b[i]) * 0.5 for i in range(3))
+            lat, lon, alt = ecef_to_wgs84(*mid)
+            setattr(gantry, lat_a, float(lat))
+            setattr(gantry, lon_a, float(lon))
+            setattr(gantry, alt_a, float(alt))
+
     def _shift_tires(self, gantry: GantryResult, dx: float, dy: float, dz: float = 0.0) -> None:
         for name, flag in (
             ("tire_elec1", "tire_elec1_valid"),
@@ -858,6 +874,7 @@ class SolverNode:
             setattr(gantry, store, (float(xyz[0]), float(xyz[1]), float(xyz[2])))
             setattr(gantry, flag, True)
         self._recompute_centers(gantry)
+        self._fill_center_geo(gantry, tires)
         raw_lpoint_x = gantry.lpoint_x
         raw_lpoint_y = gantry.lpoint_y
 

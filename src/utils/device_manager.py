@@ -6,14 +6,30 @@
   3. 启动时的配置对齐（云端配置优先）
 """
 
+import csv
+import io
 import os
+import platform
+import re
+import subprocess
 import uuid
 import yaml
-from typing import Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 from src.utils.enhanced_logger import EnhancedLogger
 
 logger = EnhancedLogger.get_logger(__name__)
+
+# uuid.getnode() 在装了 VMware / Hyper-V 的 Windows 上经常拿到虚拟网卡，
+# 会把本机错认成另一台已绑定的车。优先挑物理有线网卡。
+_VIRTUAL_HINTS = (
+    "vmware", "virtual", "hyper-v", "vethernet", "wsl", "tap-", "tunnel",
+    "anyconnect", "meta ", "bluetooth", "loopback", "pseudo", "npcap",
+)
+_WIRED_HINTS = (
+    "asix", "realtek", "intel(r) ethernet", "ethernet", "gigabit",
+    "usb to", "lan", "有线", "以太网",
+)
 
 
 class DeviceManager:
@@ -214,11 +230,100 @@ class DeviceManager:
         }
 
     @staticmethod
-    def _get_mac_address() -> str:
-        """获取本机 MAC 地址（格式化为 xx:xx:xx:xx:xx:xx）。"""
+    def _format_mac(mac_hex: str) -> str:
+        cleaned = re.sub(r"[^0-9a-fA-F]", "", mac_hex)
+        if len(cleaned) != 12:
+            return ""
+        return ":".join(cleaned[i:i + 2].lower() for i in range(0, 12, 2))
+
+    @classmethod
+    def _is_virtual_adapter(cls, name: str, description: str) -> bool:
+        text = f"{name} {description}".lower()
+        return any(hint in text for hint in _VIRTUAL_HINTS)
+
+    @classmethod
+    def _wired_score(cls, name: str, description: str) -> int:
+        """分数越高越优先：物理有线 > 其它物理 > 不要虚拟。"""
+        text = f"{name} {description}".lower()
+        if cls._is_virtual_adapter(name, description):
+            return -100
+        score = 10
+        if any(hint in text for hint in _WIRED_HINTS):
+            score += 50
+        if "wi-fi" in text or "wifi" in text or "wireless" in text or "wlan" in text:
+            score -= 20
+        return score
+
+    @classmethod
+    def _adapters_from_getmac(cls) -> List[Tuple[str, str, str]]:
+        """Windows getmac：返回 (连接名, 适配器描述, mac)。"""
+        if platform.system().lower() != "windows":
+            return []
+        try:
+            raw = subprocess.check_output(
+                ["getmac", "/v", "/fo", "csv"],
+                stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            return []
+        text = None
+        for enc in ("utf-8", "gbk", "cp936"):
+            try:
+                text = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            text = raw.decode("utf-8", errors="replace")
+        rows: List[Tuple[str, str, str]] = []
+        reader = csv.reader(io.StringIO(text))
+        header = True
+        for cols in reader:
+            if header:
+                header = False
+                continue
+            if len(cols) < 3:
+                continue
+            name, description, address = cols[0].strip(), cols[1].strip(), cols[2].strip()
+            if not address or address.upper() in ("N/A", "NA"):
+                continue
+            mac = cls._format_mac(address)
+            if mac:
+                rows.append((name, description, mac))
+        return rows
+
+    @classmethod
+    def _get_mac_address(cls) -> str:
+        """
+        获取本机用于车辆绑定的 MAC。
+        Windows 优先选物理有线网卡（如港迪 ASIX USB），避开 VMware / Hyper-V。
+        其它系统或枚举失败时回退 uuid.getnode()。
+        """
+        adapters = cls._adapters_from_getmac()
+        if adapters:
+            ranked = sorted(
+                adapters,
+                key=lambda item: cls._wired_score(item[0], item[1]),
+                reverse=True,
+            )
+            best_name, best_desc, best_mac = ranked[0]
+            score = cls._wired_score(best_name, best_desc)
+            if score >= 0:
+                logger.info(
+                    "选用网卡 MAC=%s（%s / %s，score=%d）",
+                    best_mac, best_name, best_desc, score,
+                )
+                return best_mac
+            logger.warning(
+                "仅找到疑似虚拟网卡，暂用 %s（%s）", best_mac, best_desc,
+            )
+            return best_mac
+
         mac = uuid.getnode()
         mac_hex = f"{mac:012x}"
-        return ":".join(mac_hex[i:i+2] for i in range(0, 12, 2))
+        formatted = ":".join(mac_hex[i:i + 2] for i in range(0, 12, 2))
+        logger.warning("网卡枚举失败，回退 uuid.getnode()=%s", formatted)
+        return formatted
 
     def _generate_temp_id(self) -> str:
         """生成临时 ID（基于 MAC 地址后4位）。"""

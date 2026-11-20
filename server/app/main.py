@@ -13,7 +13,7 @@ from app.utils.logger import setup_logging, get_logger, get_frontend_file_logger
 from app.mqtt.client import MqttClient
 from app.mqtt.handlers import MqttMessageHandler
 from app.api.ws import WebSocketManager
-from app.api.routers import vehicle, yard, survey, health, calibration, client_log
+from app.api.routers import vehicle, yard, survey, survey_rtg, health, calibration, client_log
 
 logger = None
 mqtt_client = None
@@ -67,6 +67,7 @@ async def lifespan(app: FastAPI):
     health.set_ws_manager(ws_manager)
     vehicle.set_mqtt_client(mqtt_client)
     survey.set_mqtt_client(mqtt_client)
+    yard.set_mqtt_client(mqtt_client)
     calibration.set_mqtt_client(mqtt_client)
 
     get_frontend_file_logger()
@@ -122,6 +123,7 @@ app.add_middleware(RequestErrorLogMiddleware)
 app.include_router(vehicle.router)
 app.include_router(yard.router)
 app.include_router(survey.router)
+app.include_router(survey_rtg.router)
 app.include_router(calibration.router)
 app.include_router(health.router)
 app.include_router(client_log.router)

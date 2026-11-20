@@ -62,6 +62,11 @@ def _sqlite_migrate():
         ("yards", "y_axis_mode", "VARCHAR(20)"),
         ("yards", "y_axis_points", "JSON"),
         ("survey_points", "bay_side", "VARCHAR(10) NOT NULL DEFAULT 'elec'"),
+        ("survey_points", "source", "VARCHAR(16) NOT NULL DEFAULT 'rtk'"),
+        ("survey_points", "vehicle_id", "VARCHAR(50)"),
+        ("survey_points", "std_m", "FLOAT"),
+        ("survey_points", "updated_at", "DATETIME"),
+        ("yards", "survey_mode", "VARCHAR(16) DEFAULT 'rtk'"),
     ]
     conn = sqlite3.connect(db_path)
     try:

@@ -64,6 +64,11 @@ export interface GantryData {
     diesel_upstream: GantryCenter;
     diesel_downstream: GantryCenter;
   };
+  /** 两侧轮胎中点的 WGS84，给 RTG 头尾 / 重采贝位用 */
+  center_geo?: {
+    elec: GpsCoord & { valid?: boolean };
+    diesel: GpsCoord & { valid?: boolean };
+  };
   leg_offsets: { fl: number; fr: number; rl: number; rr: number };
   speed: number;
 }
@@ -152,6 +157,8 @@ export interface RealtimeData {
     secondary?: GantryAntennaPoint;
   };
   yard_id?: string;
+  /** 重叠区且前端偏好生效时为 true；场外/单场/未消歧为 false */
+  yard_forced?: boolean;
   /** 四轮胎中心的中心所在贝位。不在半宽内为 0。 */
   current_bay_no?: number;
 }
@@ -328,6 +335,9 @@ export interface BackendConfig {
 }
 
 // ===== 测绘数据类型 =====
+export type SurveyPointSource = 'rtk' | 'rtg_end' | 'rtg_fix' | 'auto';
+export type YardSurveyMode = 'rtk' | 'rtg_ends';
+
 export interface SurveyPoint {
   id: string;
   bay_id: string;
@@ -340,6 +350,9 @@ export interface SurveyPoint {
   dz: number;
   timestamp: string;
   synced: boolean;
+  source?: SurveyPointSource;
+  vehicle_id?: string | null;
+  std_m?: number | null;
 }
 
 export interface YardAxisPoint {
@@ -368,6 +381,8 @@ export interface YardInfo {
   bay_spacing?: number;
   y_axis_mode?: 'fit' | 'two_point';
   y_axis_points?: YardAxisSpec | null;
+  /** rtk 手持逐贝位；rtg_ends 大车采头尾，其余自动生成 */
+  survey_mode?: YardSurveyMode;
 }
 
 // ===== 校准数据类型 =====
