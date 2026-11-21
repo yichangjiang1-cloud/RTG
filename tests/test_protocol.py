@@ -24,6 +24,14 @@ from src.bridge.plc_protocol_v1 import (
 )
 from src.bridge.protocol import encode_frame, decode_frame, FRAME_SIZE
 from src.models.positioning import PositionResult, GantryResult, TrolleyResult
+from src.solver.coordinate_transform import enu_to_ecef
+
+
+def _ant_ecef(east: float, north: float, up: float,
+              lat: float = 30.0, lon: float = 120.0, alt: float = 10.0) -> dict:
+    """堆场原点处的 ENU 偏移 -> 天线 ecef 字典（编码器只认 ecef 或 lat/lon/alt）。"""
+    ex, ey, ez = enu_to_ecef(east, north, up, lat, lon, alt)
+    return {"ecef_x": float(ex), "ecef_y": float(ey), "ecef_z": float(ez)}
 
 
 def _build_plc_downlink(
@@ -94,8 +102,16 @@ class TestPlcProtocolV1(unittest.TestCase):
             is_valid=True,
         )
 
-        result.gantry.tire_elec1 = (1.25, 2.0, -1.5)
-        result.gantry.tire_elec1_valid = True
+        # 24-41 发的是四根天线的堆场坐标（不是轮胎点）。把 +Y 设成正北，
+        # 于是 ENU(东 1.25, 北 2.0, 天 1.5) 正好编码成 (1250, 2000, 1500) mm。
+        result.yard_axis_east = 0.0
+        result.yard_axis_north = 1.0
+        result.gantry_antennas = {
+            "a1": _ant_ecef(1.25, 2.0, 1.5),
+            "a2": _ant_ecef(0.0, 0.0, 0.0),
+            "b1": _ant_ecef(0.0, 0.0, 0.0),
+            "b2": _ant_ecef(0.0, 0.0, 0.0),
+        }
         result.gantry.lane_mm = [-120, 80, -30, 40]
         result.gantry.a1_valid = True
         frame = encode_gnss_to_plc(result, ctx)

@@ -47,7 +47,7 @@ class TestLPointSolver(unittest.TestCase):
 
     def test_roll_pitch_combined(self):
         """测试：横滚 + 俯仰组合姿态。"""
-        L_arm = [0.0, 0.0, -5.0]  # 垂直向下 5m
+        L_arm = [0.0, 0.0, 5.0]  # 杆臂：天线在基准点上方 5 m（与 config 里 dz=+20.9 同一约定）
         solver = LPointSolver(L_arm)
 
         gps_pos = np.array([100.0, 200.0, 8.0])

@@ -61,8 +61,19 @@ class GantryResult:
     recv2_live: bool = False  # gantry_a2 / 9002 接收机在线（监控用）
 
     # ---- 四个门腿相对跑道中心线偏移（米）----
-    # 排列顺序：左前、左后、右前、右后
+    # 排列顺序：左前、左后、右前、右后（主通道：分侧航向俯仰 + 共用横滚）
     leg_offsets: list = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
+    # 对比通道：四天线刚体整车 H/P/R 投轮胎（仅 UI，不参与下发）
+    tire_elec1_rigid: tuple = (0.0, 0.0, 0.0)
+    tire_elec1_rigid_valid: bool = False
+    tire_elec2_rigid: tuple = (0.0, 0.0, 0.0)
+    tire_elec2_rigid_valid: bool = False
+    tire_diesel1_rigid: tuple = (0.0, 0.0, 0.0)
+    tire_diesel1_rigid_valid: bool = False
+    tire_diesel2_rigid: tuple = (0.0, 0.0, 0.0)
+    tire_diesel2_rigid_valid: bool = False
+    # 顺序同 leg_offsets：fl, rl, fr, rr
+    leg_offsets_rigid: list = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
 
     # ---- 速度（m/s）----
     speed: float = 0.0

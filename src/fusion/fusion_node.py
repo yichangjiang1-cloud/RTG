@@ -35,6 +35,8 @@ from src.fusion.gantry_attitude import (
     derive_heading_pitch_from_dual_gga,
     normalize_heading_deg,
 )
+from src.fusion.gnss_pair import DEFAULT_MAX_PAIR_SKEW_S, apply_pair_skew
+from src.solver.side_layout import parse_side_layout
 from src.utils.config_loader import get_config
 
 logger = logging.getLogger(__name__)
@@ -111,6 +113,11 @@ class FusionNode:
         self._offline_timeout_s = max(
             0.1, float(cfg.get("gnss.offline_timeout_s", 0.5))
         )
+        self._max_pair_skew_s = max(
+            0.05, float(cfg.get("gnss.max_pair_skew_s", DEFAULT_MAX_PAIR_SKEW_S))
+        )
+        self._pair_skew_log_ts = 0.0
+        self._require_rtk_fixed = bool(cfg.get("gnss.require_rtk_fixed", True))
 
         # 三台接收机各自的状态
         self._states: Dict[str, ReceiverState] = {
@@ -124,6 +131,8 @@ class FusionNode:
 
         att_block = cfg.get("gantry.attitude", {})
         self._gantry_att_cfg = GantryAttitudeConfig.from_dict(att_block)
+        layout = cfg.get("receiver_layout") if isinstance(cfg.get("receiver_layout"), dict) else {}
+        self._side = parse_side_layout(layout)
         self._last_gantry_att_source: str = ""
         self._att_missing = False
         self._att_missing_log_ts = 0.0
@@ -133,9 +142,10 @@ class FusionNode:
         self._bus.subscribe(EventBus.TOPIC_IMU_RAW, self._on_imu)
 
         logger.info(
-            "FusionNode 初始化完成，管理 %d 台接收机，大车姿态模式=%s",
+            "FusionNode 初始化完成，管理 %d 台接收机，大车姿态模式=%s tire_attitude=%s",
             len(self._states),
             self._gantry_att_cfg.mode,
+            self._gantry_att_cfg.tire_attitude,
         )
 
     def update_gantry_attitude_config(self, cloud_config: dict) -> None:
@@ -146,8 +156,24 @@ class FusionNode:
         att = block.get("gantry_attitude")
         if not isinstance(att, dict):
             att = block.get("gantry", {}).get("attitude") if isinstance(block.get("gantry"), dict) else {}
+        prev = self._gantry_att_cfg
         self._gantry_att_cfg = GantryAttitudeConfig.from_dict(att)
-        logger.info("大车姿态配置已热更新: mode=%s", self._gantry_att_cfg.mode)
+        # 下发配置缺这些键时保留当前值，避免部分配置静默改变投轮胎方式
+        if not isinstance(att, dict) or "tire_attitude" not in att:
+            self._gantry_att_cfg.tire_attitude = prev.tire_attitude
+        if not isinstance(att, dict) or "side_pitch_zero_deg" not in att:
+            self._gantry_att_cfg.side_pitch_zero_deg = dict(prev.side_pitch_zero_deg)
+        # 服务端 _sanitize_attitude 会去掉 roll_alt0_m，热更新时保留当前安装零点
+        if not isinstance(att, dict) or "roll_alt0_m" not in att:
+            self._gantry_att_cfg.roll_alt0_m = prev.roll_alt0_m
+        layout = block.get("receiver_layout")
+        if isinstance(layout, dict):
+            self._side = parse_side_layout(layout)
+        logger.info(
+            "大车姿态配置已热更新: mode=%s tire_attitude=%s",
+            self._gantry_att_cfg.mode,
+            self._gantry_att_cfg.tire_attitude,
+        )
 
     # ------------------------------------------------------------------
     # 回调：GNSS 原始数据到来
@@ -417,6 +443,14 @@ class FusionNode:
                     and (now_ts - s.last_gnss_time) < self._offline_timeout_s
                     and s.fix_quality > int(FixQuality.INVALID)
                 )
+                # 大车两台接收机：两根天线都必须 RTK 固定解才参与姿态与轮胎解算
+                if is_live and self._require_rtk_fixed and (s is s_a1 or s is s_a2):
+                    ant2_fixed = (
+                        s.last_gnss is None
+                        or not s.last_gnss.has_antenna2
+                        or int(s.last_gnss.antenna2_fix_quality) == int(FixQuality.RTK_FIXED)
+                    )
+                    is_live = s.fix_quality == int(FixQuality.RTK_FIXED) and ant2_fixed
                 has_antenna2 = False
                 a2_ecef = (0.0, 0.0, 0.0)
                 a2_lat = a2_lon = a2_alt = 0.0
@@ -482,6 +516,23 @@ class FusionNode:
         d_a1 = _state_dict(s_a1)
         d_a2 = _state_dict(s_a2)
         d_tly = _state_dict(s_tly)
+        # 左右机最新帧到达时间差超限：丢弃较旧一台，避免两侧位置错位后联合解算
+        live1, live2, dropped = apply_pair_skew(
+            bool(d_a1.get("is_live")),
+            bool(d_a2.get("is_live")),
+            float(d_a1.get("last_gnss_time", 0.0)),
+            float(d_a2.get("last_gnss_time", 0.0)),
+            self._max_pair_skew_s,
+        )
+        if dropped:
+            d_a1["is_live"], d_a2["is_live"] = live1, live2
+            now_log = time.time()
+            if now_log - self._pair_skew_log_ts >= 30.0:
+                self._pair_skew_log_ts = now_log
+                logger.warning(
+                    "左右接收机帧时间差超过 %.2fs，丢弃较旧一台（a1 live=%s a2 live=%s）",
+                    self._max_pair_skew_s, live1, live2,
+                )
         att_compare = self._apply_gantry_attitude(s_a1, s_a2, d_a1, d_a2)
         if d_a1.get("is_live"):
             ref = d_a1
@@ -552,6 +603,9 @@ class FusionNode:
             ref_lat,
             ref_lon,
             ref_alt,
+            elec_left=self._side.elec_left,
+            a1_primary_down=self._side.left_primary_down,
+            a2_primary_down=self._side.right_primary_down,
         )
         att = compare.primary
         if att is None:
@@ -577,21 +631,36 @@ class FusionNode:
             )
             self._att_missing = False
 
+        # 仪表盘/小车主航向：per_side 用两侧合成航向；横滚用共用 roll
+        write_hdg = att.heading_deg
+        write_pitch = att.pitch_deg
+        write_roll = att.roll_deg
+        if (
+            self._gantry_att_cfg.tire_attitude == "per_side"
+            and compare.synthetic_heading is not None
+        ):
+            write_hdg = float(compare.synthetic_heading)
+            # 俯仰取两侧分侧俯仰的平均（不再用四天线中点值）；横滚用四天线共用值
+            if compare.synthetic_pitch is not None:
+                write_pitch = float(compare.synthetic_pitch)
+            if compare.shared_roll is not None:
+                write_roll = float(compare.shared_roll)
+
         for d in (d_a1, d_a2):
-            d["heading"] = att.heading_deg
-            d["pitch"] = att.pitch_deg
-            d["roll"] = att.roll_deg
+            d["heading"] = write_hdg
+            d["pitch"] = write_pitch
+            d["roll"] = write_roll
             d["attitude_source"] = att.source
             d["attitude_primary_method"] = compare.primary_method
 
         with s_a1._lock:
-            s_a1.heading_deg = att.heading_deg
-            s_a1.pitch_deg = att.pitch_deg
-            s_a1.roll_deg = att.roll_deg
+            s_a1.heading_deg = write_hdg
+            s_a1.pitch_deg = write_pitch
+            s_a1.roll_deg = write_roll
         with s_a2._lock:
-            s_a2.heading_deg = att.heading_deg
-            s_a2.pitch_deg = att.pitch_deg
-            s_a2.roll_deg = att.roll_deg
+            s_a2.heading_deg = write_hdg
+            s_a2.pitch_deg = write_pitch
+            s_a2.roll_deg = write_roll
 
         compare_dict = compare.to_dict()
         if att.source != self._last_gantry_att_source:

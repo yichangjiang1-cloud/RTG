@@ -4,7 +4,9 @@ backend:
   port: 8000
   timeout_s: 10
 gnss:
-  offline_timeout_s: 2.0
+  offline_timeout_s: 0.5
+  max_pair_skew_s: 0.3
+  require_rtk_fixed: true
   raw_log:
     dir: logs/gnss_raw
     echo_console: false

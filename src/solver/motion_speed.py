@@ -8,6 +8,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from src.solver.gantry_frame import heading_axes_lycs
+
 DEADBAND_MPS = 0.03
 EMA_ALPHA = 0.35
 MIN_DISPLACEMENT_M = 1e-4
@@ -54,16 +56,19 @@ def mid_heading_deg(h0: float, h1: float) -> float:
     return (h0 + 0.5 * shortest_arc_deg(h0, h1)) % 360.0
 
 
-def lycs_along_heading(dx: float, dy: float, heading_deg: float) -> float:
-    """LYCS 位移在航向上的分量。X=北、Y=东；航向 0=北、顺时针。"""
-    h = math.radians(heading_deg)
-    return dx * math.cos(h) + dy * math.sin(h)
+def lycs_along_heading(dx: float, dy: float, heading_deg: float, r2d=None) -> float:
+    """LYCS 位移在航向前向上的分量。航向 0=北、顺时针；r2d 为拟合后的 LYCS 轴。"""
+    (fx, fy), _ = heading_axes_lycs(heading_deg, r2d)
+    return dx * fx + dy * fy
 
 
-def lycs_left_heading(dx: float, dy: float, heading_deg: float) -> float:
-    """LYCS 位移在航向左侧（逆时针 90°）的分量。"""
-    h = math.radians(heading_deg)
-    return -dx * math.sin(h) + dy * math.cos(h)
+def lycs_left_heading(dx: float, dy: float, heading_deg: float, r2d=None) -> float:
+    """
+    LYCS 位移在车右侧的分量（与原 lycs_left_heading 数值约定一致：车右为正）。
+    名称沿用旧接口，供 translational_along_m 的转弦计算使用。
+    """
+    _, (rx, ry) = heading_axes_lycs(heading_deg, r2d)
+    return dx * rx + dy * ry
 
 
 def yaw_rate_rad(h0: float, h1: float, dt: float) -> float:
@@ -73,7 +78,7 @@ def yaw_rate_rad(h0: float, h1: float, dt: float) -> float:
     return math.radians(shortest_arc_deg(h0, h1)) / dt
 
 
-def translational_along_m(dx: float, dy: float, h0: float, h1: float) -> float:
+def translational_along_m(dx: float, dy: float, h0: float, h1: float, r2d=None) -> float:
     """
     作业点位移扣掉刚体转动后的沿航向平移（米）。
 
@@ -82,10 +87,10 @@ def translational_along_m(dx: float, dy: float, h0: float, h1: float) -> float:
     扣掉后只剩走行。
     """
     dpsi = math.radians(shortest_arc_deg(h0, h1))
-    along = lycs_along_heading(dx, dy, h1)
+    along = lycs_along_heading(dx, dy, h1, r2d)
     if abs(dpsi) < 1e-8:
         return along
-    lat = lycs_left_heading(dx, dy, h1)
+    lat = lycs_left_heading(dx, dy, h1, r2d)
     along_rot = lat * math.tan(0.5 * dpsi)
     return along - along_rot
 
@@ -95,12 +100,13 @@ def _signed_gnss_speed(
     gnss_speed_mps: float,
     course_deg: float | None,
     deadband: float,
+    r2d=None,
 ) -> float:
     """VTG/RMC 只提供标量地速；符号跟位移，航迹与位移接近正交时不用航迹翻号。"""
     if course_deg is not None and (abs(state.vx) > 1e-9 or abs(state.vy) > 1e-9):
         motion = math.hypot(state.vx, state.vy)
         if motion > 1e-9:
-            along = lycs_along_heading(state.vx, state.vy, course_deg)
+            along = lycs_along_heading(state.vx, state.vy, course_deg, r2d)
             align = along / motion
             if abs(align) >= MIN_COURSE_ALIGN:
                 return math.copysign(gnss_speed_mps, align)
@@ -116,12 +122,13 @@ def hold_gnss_speed(
     *,
     deadband: float = DEADBAND_MPS,
     alpha: float = EMA_ALPHA,
+    r2d=None,
 ) -> float:
     """GNSS RMC 地速保持（位移未变、仅重复发布融合状态时）。"""
     if gnss_speed_mps < deadband:
         return state.speed
 
-    signed = _signed_gnss_speed(state, gnss_speed_mps, course_deg, deadband)
+    signed = _signed_gnss_speed(state, gnss_speed_mps, course_deg, deadband, r2d)
     state.speed = alpha * signed + (1.0 - alpha) * state.speed
     state.speed = _snap(state.speed, deadband)
     return state.speed
@@ -139,6 +146,7 @@ def update_motion_speed(
     *,
     deadband: float = DEADBAND_MPS,
     alpha: float = EMA_ALPHA,
+    r2d=None,
 ) -> float:
     """
     大车速度 = 作业点地速去掉 ω×r 后的沿航向走行。
@@ -162,12 +170,12 @@ def update_motion_speed(
             state.speed = _snap(0.0, deadband)
             return state.speed
         return hold_gnss_speed(
-            state, gnss_speed_mps, course_deg, deadband=deadband, alpha=alpha
+            state, gnss_speed_mps, course_deg, deadband=deadband, alpha=alpha, r2d=r2d
         )
 
     if heading_deg is not None:
         h0 = heading_prev_deg if heading_prev_deg is not None else heading_deg
-        along = translational_along_m(dx, dy, h0, heading_deg)
+        along = translational_along_m(dx, dy, h0, heading_deg, r2d)
         vx, vy = along / dt, 0.0
         pos_speed = abs(vx)
         rotating = abs(math.degrees(omega)) >= MIN_YAW_RATE_DPS

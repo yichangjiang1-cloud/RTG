@@ -40,12 +40,10 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
   const { vehicles, selectedVehicleId } = useAppContext();
   const layout = vehicles.find(v => v.vehicle_id === selectedVehicleId)?.receiver_layout;
   const attCmp = data.gantry_attitude_compare;
-  const dualAtt = attCmp?.dual_receiver;
-  const dualAttOk = Boolean(dualAtt?.valid);
   const fourGgaReady = attCmp?.four_ready === true;
   const primaryIsFour = attCmp?.primary_method === 'four_antenna';
   const primaryIsDual = attCmp?.primary_method === 'dual_receiver';
-  const attDelta = attCmp?.delta;
+  const perSide = attCmp?.tire_attitude === 'per_side';
 
   const chartData = useMemo(
     () =>
@@ -115,79 +113,89 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
           </div>
         </div>
 
-        <div className="card p-5 flex flex-col max-h-[11.5rem]">
+        <div className="card p-5 flex flex-col max-h-[16rem]">
           <p className="section-title mb-1 shrink-0">实时姿态（主通道 · L-Point）</p>
           <div className="min-h-0 flex-1 overflow-y-auto pr-1 space-y-3 scrollbar-thin">
             <div>
               <p className="text-[10px] text-slate-500 mb-2 leading-relaxed">
-                {primaryIsFour
-                  ? `${headingAlongGnss(layout)}，俯仰为该轴线仰角，横滚为电气房相对动力房`
-                  : primaryIsDual
-                    ? '双接收机四 GGA（跟随配置 mode=dual_receiver）'
-                    : '等待姿态解算'}
+                {perSide
+                  ? '分侧定姿：航向、俯仰取电气/动力两侧各自双 GGA 的平均，横滚取四天线刚体共用值'
+                  : primaryIsFour
+                    ? `${headingAlongGnss(layout)}，俯仰为该轴线仰角，横滚为电气房相对动力房`
+                    : primaryIsDual
+                      ? '双接收机四 GGA（跟随配置 mode=dual_receiver）'
+                      : '等待姿态解算'}
                 {data.attitude_source ? ` · ${data.attitude_source}` : ''}
               </p>
               <div className="space-y-1">
-                <div className="flex justify-between items-baseline">
-                  <span className="text-[10px] text-slate-500">Heading</span>
-                  <span className="font-mono text-amber-400 text-sm">{data.heading.toFixed(2)}°</span>
+                <div className="flex justify-between items-baseline gap-2">
+                  <span className="text-[10px] text-slate-500 shrink-0">Heading</span>
+                  <span className="font-mono text-amber-400 text-sm whitespace-nowrap">{data.heading.toFixed(2)}°</span>
                 </div>
-                <div className="flex justify-between items-baseline">
-                  <span className="text-[10px] text-slate-500">Roll</span>
-                  <span className="font-mono text-amber-400 text-sm">{data.roll.toFixed(3)}°</span>
+                <div className="flex justify-between items-baseline gap-2">
+                  <span className="text-[10px] text-slate-500 shrink-0">Roll</span>
+                  <span className="font-mono text-amber-400 text-sm whitespace-nowrap">{data.roll.toFixed(3)}°</span>
                 </div>
-                <div className="flex justify-between items-baseline">
-                  <span className="text-[10px] text-slate-500">Pitch</span>
-                  <span className="font-mono text-amber-400 text-sm">{data.pitch.toFixed(3)}°</span>
+                <div className="flex justify-between items-baseline gap-2">
+                  <span className="text-[10px] text-slate-500 shrink-0">Pitch</span>
+                  <span className="font-mono text-amber-400 text-sm whitespace-nowrap">{data.pitch.toFixed(3)}°</span>
                 </div>
               </div>
+              {perSide && (
+                <div className="mt-2 pt-2 border-t border-slate-700/60 space-y-1">
+                  {([['电气侧', attCmp?.elec_dual], ['动力侧', attCmp?.diesel_dual]] as const).map(([label, side]) => (
+                    <div key={label} className="flex justify-between items-baseline gap-2 font-mono">
+                      <span className="text-slate-500 text-[10px] shrink-0">{label} H / P</span>
+                      <span className={`text-sm whitespace-nowrap ${side?.valid ? 'text-emerald-400' : 'text-slate-600'}`}>
+                        {side?.valid && side.heading != null && side.pitch != null
+                          ? `${side.heading.toFixed(2)}° / ${side.pitch.toFixed(3)}°`
+                          : '— / —（回退整车）'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {attCmp?.nmea?.valid !== false && attCmp?.nmea && (
-              <div className="pt-3 border-t border-slate-700/60">
-                <p className="section-title mb-1">接收机 NMEA（PASHR/HDT）</p>
-                <p className="text-[10px] text-slate-500 mb-2">
-                  语句原值，不经四天线刚体 · {attCmp.nmea.source || 'nmea'}
+            <div className="pt-3 border-t border-slate-700/60 space-y-3">
+              <div>
+                <p className="section-title mb-1">两侧接收机 NMEA</p>
+                <p className="text-[10px] text-slate-500">
+                  PASHR/TRA/HDT 原值 · 不经四天线刚体
                 </p>
-                <div className="flex justify-between font-mono text-sm">
-                  <span className="text-slate-500 text-[10px]">H / P / R</span>
-                  <span className="text-emerald-400">
-                    {attCmp.nmea.heading.toFixed(2)}° / {attCmp.nmea.pitch.toFixed(3)}° / {attCmp.nmea.roll.toFixed(3)}°
-                  </span>
-                </div>
               </div>
-            )}
-
-            <div className="pt-3 border-t border-slate-700/60">
-              <p className="section-title mb-1">对比路（非主用）</p>
-              <p className="text-[10px] text-slate-500 mb-2">
-                {primaryIsFour ? '双接收机四 GGA' : '四天线刚体'} · 与主通道并行
-              </p>
-              <div className="space-y-1 text-sm">
-                <div className="flex justify-between font-mono">
-                  <span className="text-slate-500 text-[10px]">H / P / R</span>
-                  <span className={
-                    (primaryIsFour ? dualAttOk : Boolean(attCmp?.four_antenna?.valid))
-                      ? 'text-cyan-400' : 'text-slate-600'
-                  }>
-                    {primaryIsFour
-                      ? (dualAttOk
-                        ? `${dualAtt!.heading.toFixed(2)}° / ${dualAtt!.pitch.toFixed(3)}° / ${dualAtt!.roll.toFixed(3)}°`
-                        : '— / — / —')
-                      : (attCmp?.four_antenna?.valid
-                        ? `${attCmp.four_antenna.heading.toFixed(2)}° / ${attCmp.four_antenna.pitch.toFixed(3)}° / ${attCmp.four_antenna.roll.toFixed(3)}°`
-                        : '— / — / —')}
-                  </span>
-                </div>
-                <div className="flex justify-between font-mono">
-                  <span className="text-slate-500 text-[10px]">Δ（对比−主）</span>
-                  <span className={attDelta ? 'text-violet-300' : 'text-slate-600'}>
-                    {attDelta
-                      ? `${attDelta.heading_deg >= 0 ? '+' : ''}${attDelta.heading_deg.toFixed(2)}° / ${attDelta.pitch_deg >= 0 ? '+' : ''}${attDelta.pitch_deg.toFixed(3)}° / ${attDelta.roll_deg >= 0 ? '+' : ''}${attDelta.roll_deg.toFixed(3)}°`
-                      : '— / — / —'}
-                  </span>
-                </div>
-              </div>
+              {([
+                ['左侧 a1', attCmp?.nmea_a1],
+                ['右侧 a2', attCmp?.nmea_a2],
+              ] as const).map(([label, nmea]) => {
+                const ok = Boolean(nmea && nmea.valid !== false);
+                const prOk = ok && nmea?.pitch_roll_valid !== false && nmea?.pitch != null && nmea?.roll != null;
+                return (
+                  <div key={label} className="space-y-1">
+                    <p className="text-[10px] text-slate-500">
+                      {label}{ok && !prOk ? ' · 仅航向' : ''}
+                    </p>
+                    <div className="flex justify-between items-baseline gap-2">
+                      <span className="text-slate-500 text-[10px] shrink-0">Heading</span>
+                      <span className={`font-mono text-sm whitespace-nowrap ${ok ? 'text-emerald-400' : 'text-slate-600'}`}>
+                        {ok ? `${nmea!.heading.toFixed(2)}°` : '—'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-baseline gap-2">
+                      <span className="text-slate-500 text-[10px] shrink-0">Pitch</span>
+                      <span className={`font-mono text-sm whitespace-nowrap ${prOk ? 'text-emerald-400' : 'text-slate-600'}`}>
+                        {prOk ? `${nmea!.pitch!.toFixed(3)}°` : '—'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-baseline gap-2">
+                      <span className="text-slate-500 text-[10px] shrink-0">Roll</span>
+                      <span className={`font-mono text-sm whitespace-nowrap ${prOk ? 'text-emerald-400' : 'text-slate-600'}`}>
+                        {prOk ? `${nmea!.roll!.toFixed(3)}°` : '—'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             <p className="text-[10px] text-slate-600 pt-2 border-t border-slate-800 leading-relaxed">
@@ -334,21 +342,30 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
               ['动力 GNSS2 轮胎中心', 'diesel', 'GNSS2', 'text-purple-300'],
             ] as const).map(([label, role, gnss, color]) => {
               const end = gnssAtEnd(layout, role, 'downstream') === gnss ? 'downstream' : 'upstream';
-              const point = data.gantry.tires?.[`${role}_${end}`];
+              const tireKey = `${role}_${end}` as 'elec_upstream' | 'elec_downstream' | 'diesel_upstream' | 'diesel_downstream';
+              const point = data.gantry.tires?.[tireKey];
+              const rigid = data.gantry.tires_rigid?.[tireKey];
               const ok = point?.valid === true;
+              const rigidOk = rigid?.valid === true;
               return (
               <div key={label} className="bg-slate-900/50 rounded-lg p-3">
                 <p className="section-title mb-2">{label}</p>
               <div className="space-y-1">
-                <div className="flex justify-between items-baseline">
-                  <span className="text-[10px] text-slate-500">X</span>
-                    <span className={`font-mono text-sm ${ok ? color : 'text-slate-500'}`}>
+                <div className="flex justify-between items-baseline gap-2">
+                  <span className="text-[10px] text-slate-500 shrink-0">X（分侧）</span>
+                    <span className={`font-mono text-sm whitespace-nowrap ${ok ? color : 'text-slate-500'}`}>
                       {formatCoordM(point?.x ?? 0, ok)}
                   </span>
                 </div>
-                <div className="flex justify-between items-baseline">
-                  <span className="text-[10px] text-slate-500">Y</span>
-                    <span className={`font-mono text-sm ${ok ? color : 'text-slate-500'}`}>
+                <div className="flex justify-between items-baseline gap-2">
+                  <span className="text-[10px] text-slate-500 shrink-0">X（四天线刚体）</span>
+                  <span className={`font-mono text-sm whitespace-nowrap ${rigidOk ? 'text-cyan-400' : 'text-slate-500'}`}>
+                    {rigidOk ? formatCoordM(rigid?.x ?? 0, true) : '—'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-baseline gap-2">
+                  <span className="text-[10px] text-slate-500 shrink-0">Y</span>
+                    <span className={`font-mono text-sm whitespace-nowrap ${ok ? color : 'text-slate-500'}`}>
                       {formatCoordM(point?.y ?? 0, ok)}
                   </span>
                 </div>
@@ -361,22 +378,43 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
           {/* 四门腿偏移 */}
           <div>
             <p className="section-title mb-2">门腿偏移量（相对跑道中心线）</p>
+            <p className="text-[10px] text-slate-500 mb-2">
+              分侧定姿（主用）与四天线刚体整车姿态并行对比
+            </p>
             <div className="grid grid-cols-2 gap-2">
               {(
                 [
-                  ['电气 GNSS1', data.gantry.leg_offsets.fl],
-                  ['电气 GNSS2', data.gantry.leg_offsets.rl],
-                  ['动力 GNSS1', data.gantry.leg_offsets.fr],
-                  ['动力 GNSS2', data.gantry.leg_offsets.rr],
-                ] as [string, number][]
-              ).map(([label, val]) => (
-                <div key={label} className="flex justify-between items-center px-3 py-1.5 bg-slate-900/40 rounded-lg">
-                  <span className="text-[10px] text-slate-500">{label}</span>
-                  <span className={`font-mono text-xs font-bold ${Math.abs(val) < 0.05 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                    {val >= 0 ? '+' : ''}{val.toFixed(4)} m
-                  </span>
+                  ['电气 GNSS1', data.gantry.leg_offsets.fl, data.gantry.leg_offsets_rigid?.fl],
+                  ['电气 GNSS2', data.gantry.leg_offsets.rl, data.gantry.leg_offsets_rigid?.rl],
+                  ['动力 GNSS1', data.gantry.leg_offsets.fr, data.gantry.leg_offsets_rigid?.fr],
+                  ['动力 GNSS2', data.gantry.leg_offsets.rr, data.gantry.leg_offsets_rigid?.rr],
+                ] as [string, number, number | undefined][]
+              ).map(([label, perSideOff, rigidOff]) => {
+                const rigidOk = rigidOff !== undefined && (
+                  data.gantry.tires_rigid?.elec_downstream?.valid
+                  || data.gantry.tires_rigid?.elec_upstream?.valid
+                  || data.gantry.tires_rigid?.diesel_downstream?.valid
+                  || data.gantry.tires_rigid?.diesel_upstream?.valid
+                );
+                return (
+                <div key={label} className="px-3 py-1.5 bg-slate-900/40 rounded-lg space-y-0.5">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] text-slate-500">{label}（分侧）</span>
+                    <span className={`font-mono text-xs font-bold ${Math.abs(perSideOff) < 0.05 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {perSideOff >= 0 ? '+' : ''}{perSideOff.toFixed(4)} m
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] text-slate-500">四天线刚体</span>
+                    <span className={`font-mono text-xs font-bold ${rigidOk && rigidOff !== undefined ? (Math.abs(rigidOff) < 0.05 ? 'text-emerald-400' : 'text-cyan-400') : 'text-slate-500'}`}>
+                      {rigidOk && rigidOff !== undefined
+                        ? `${rigidOff >= 0 ? '+' : ''}${rigidOff.toFixed(4)} m`
+                        : '—'}
+                    </span>
+                  </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

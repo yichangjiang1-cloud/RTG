@@ -182,6 +182,12 @@ class YardTransform:
             return 0.0
         return float(self._R2d[1, 1])
 
+    @property
+    def r2d(self):
+        """ENU(E,N) → LYCS(X,Y) 的 2×2 矩阵（未拟合时为默认 X=北、Y=东）。"""
+        return ((float(self._R2d[0, 0]), float(self._R2d[0, 1])),
+                (float(self._R2d[1, 0]), float(self._R2d[1, 1])))
+
     def reset_axis(self) -> None:
         self._R2d = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=float)
         self.axis_ready = False

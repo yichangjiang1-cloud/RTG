@@ -64,12 +64,22 @@ export interface GantryData {
     diesel_upstream: GantryCenter;
     diesel_downstream: GantryCenter;
   };
+  /** 四天线刚体整车姿态投轮胎（仅对比） */
+  tires_rigid?: {
+    elec_upstream: GantryCenter;
+    elec_downstream: GantryCenter;
+    diesel_upstream: GantryCenter;
+    diesel_downstream: GantryCenter;
+  };
   /** 两侧轮胎中点的 WGS84，给 RTG 头尾 / 重采贝位用 */
   center_geo?: {
     elec: GpsCoord & { valid?: boolean };
     diesel: GpsCoord & { valid?: boolean };
   };
+  /** 主通道门腿偏移（分侧航向俯仰 + 共用横滚） */
   leg_offsets: { fl: number; fr: number; rl: number; rr: number };
+  /** 四天线刚体整车姿态门腿偏移（仅对比） */
+  leg_offsets_rigid?: { fl: number; fr: number; rl: number; rr: number };
   speed: number;
 }
 
@@ -98,10 +108,13 @@ export interface TrolleyData {
 /** 单路姿态解算结果 */
 export interface GantryAttitudeSolution {
   heading: number;
-  pitch: number;
-  roll: number;
+  /** 无完整姿态句时可为 null（勿当成 0°） */
+  pitch: number | null;
+  roll: number | null;
   source: string;
   valid?: boolean;
+  /** false：仅有 HDT 航向，无 PASHR/TRA 俯仰横滚 */
+  pitch_roll_valid?: boolean;
 }
 
 /** 大车双路姿态对比 */
@@ -111,8 +124,11 @@ export interface GantryAttitudeCompare {
   dual_receiver?: GantryAttitudeSolution | null;
   /** @deprecated 已移除，恒为 null */
   nmea_height?: GantryAttitudeSolution | null;
-  /** 接收机 PASHR/HDT 原值（未经四天线刚体） */
+  /** 接收机 PASHR/HDT 原值（优选一侧，兼容） */
   nmea?: GantryAttitudeSolution | null;
+  /** 左机 / 右机各自 NMEA 姿态原值 */
+  nmea_a1?: GantryAttitudeSolution | null;
+  nmea_a2?: GantryAttitudeSolution | null;
   delta?: {
     heading_deg: number;
     pitch_deg: number;
@@ -121,6 +137,30 @@ export interface GantryAttitudeCompare {
   four_ready?: boolean;
   /** four_antenna | dual_receiver */
   primary_method?: string;
+  /** per_side（分侧定姿）| rigid（四轮共用整车姿态） */
+  tire_attitude?: string;
+  /** 电气侧 / 动力侧各自的双 GGA 姿态（航向、俯仰已扣安装俯仰；横滚为共用值） */
+  elec_dual?: GantrySideAttitude | null;
+  diesel_dual?: GantrySideAttitude | null;
+  /** 共用横滚（四天线刚体；无解时回退主天线高差） */
+  shared_roll?: number | null;
+  shared_roll_source?: string;
+  /** 两侧航向圆周平均 / 两侧俯仰平均（仪表盘显示值） */
+  synthetic_heading?: number | null;
+  synthetic_pitch?: number | null;
+}
+
+/** 单侧双 GGA 分侧姿态 */
+export interface GantrySideAttitude {
+  heading: number | null;
+  /** 已扣除模板安装俯仰 */
+  pitch: number | null;
+  /** 双 GGA 基线原始俯仰（含安装俯仰） */
+  pitch_raw?: number | null;
+  roll?: number | null;
+  baseline_m?: number | null;
+  source?: string;
+  valid: boolean;
 }
 
 export interface RealtimeData {

@@ -21,6 +21,9 @@ from src.solver.coordinate_transform import ecef_to_enu
 
 # 双 GGA 基线低于此水平长度时不解算航向/俯仰
 MIN_DUAL_GGA_BASELINE_M = 0.5
+# 投轮胎用的分侧航向/俯仰对基线噪声敏感（0.6 m 基线上 1 cm 高差≈0.95°，经 ~21 m 杆臂放大 35 cm），
+# 基线短于此值时该侧不参与分侧投影，回退整车主姿态
+MIN_SIDE_TIRE_BASELINE_M = 2.0
 # 两主点估横滚时，左右间距过小则放弃
 MIN_ROLL_SPAN_M = 1.0
 
@@ -41,12 +44,24 @@ def normalize_attitude_mode(mode: Optional[str]) -> str:
     return "four_antenna"
 
 
+def normalize_tire_attitude(mode: Optional[str]) -> str:
+    """归一化为 per_side | rigid。仅显式写 per_side 才开启，缺省/未知值一律 rigid。"""
+    m = (mode or "").strip().lower()
+    if m == "per_side":
+        return "per_side"
+    return "rigid"
+
+
 @dataclass
 class GantryAttitudeConfig:
     """来自 vehicle_params.yaml → gantry.attitude"""
 
     # four_antenna | dual_receiver
     mode: str = "four_antenna"
+    # per_side：电气/动力各用本侧双 GGA 航向俯仰；rigid：整车一套姿态（缺省）
+    tire_attitude: str = "rigid"
+    # 分侧原始双 GGA 俯仰的静态零偏（度）：{"elec": x, "diesel": y}；缺省则该侧用整车俯仰
+    side_pitch_zero_deg: Dict[str, float] = field(default_factory=dict)
     baseline_m: float = 1.0  # 前后定向基线长（四天线安装坐标参考）
     # 已废弃：横滚间距改为由两主 GGA 实时计算；保留字段仅兼容旧配置/四天线参考布局
     roll_span_m: float = 0.0
@@ -59,6 +74,7 @@ class GantryAttitudeConfig:
             block = {}
         _ = w_span  # 已废弃，不再作为横滚间距
         mode = normalize_attitude_mode(str(block.get("mode", "four_antenna")))
+        tire_attitude = normalize_tire_attitude(block.get("tire_attitude"))
         baseline_m = float(block.get("baseline_m", 1.0))
         roll_span_m = 0.0
         roll_alt0_m = float(block.get("roll_alt0_m", 0.0))
@@ -72,8 +88,16 @@ class GantryAttitudeConfig:
                 for k, v in body.items()
                 if isinstance(v, (list, tuple))
             }
+        zeros: Dict[str, float] = {}
+        raw_zero = block.get("side_pitch_zero_deg")
+        if isinstance(raw_zero, dict):
+            for side in ("elec", "diesel"):
+                if raw_zero.get(side) is not None:
+                    zeros[side] = float(raw_zero[side])
         return cls(
             mode=mode,
+            tire_attitude=tire_attitude,
+            side_pitch_zero_deg=zeros,
             baseline_m=baseline_m,
             roll_span_m=roll_span_m,
             roll_alt0_m=roll_alt0_m,
@@ -87,13 +111,16 @@ class GantryAttitudeResult:
     pitch_deg: float
     roll_deg: float
     source: str
+    # False：仅有 HDT 航向，无 PASHR/TRA 俯仰横滚（勿把缺失当成 0°）
+    pitch_roll_valid: bool = True
 
     def to_dict(self) -> dict:
         return {
             "heading": self.heading_deg,
-            "pitch": self.pitch_deg,
-            "roll": self.roll_deg,
+            "pitch": self.pitch_deg if self.pitch_roll_valid else None,
+            "roll": self.roll_deg if self.pitch_roll_valid else None,
             "source": self.source,
+            "pitch_roll_valid": self.pitch_roll_valid,
             "valid": True,
         }
 
@@ -105,6 +132,8 @@ class GantryAttitudeCompare:
       - primary 严格跟随配置 mode（four_antenna / dual_receiver）
       - 所选模式无解时回退另一路
       - four_antenna / dual_receiver 两路并行供对比
+      - elec_dual / diesel_dual：分侧双 GGA 航向俯仰（投轮胎用）
+      - shared_roll / synthetic_heading：共用横滚与两侧合成航向
     """
 
     primary: Optional[GantryAttitudeResult]
@@ -114,7 +143,18 @@ class GantryAttitudeCompare:
     four_ready: bool
     primary_method: str = "four_antenna"  # four_antenna | dual_receiver
     nmea_height: Optional[GantryAttitudeResult] = None  # 已废弃，恒 None
-    nmea: Optional[GantryAttitudeResult] = None  # 接收机 PASHR/HDT 原值
+    nmea: Optional[GantryAttitudeResult] = None  # 优选一侧 PASHR/HDT（兼容）
+    nmea_a1: Optional[GantryAttitudeResult] = None  # 左机 gantry_a1 原值
+    nmea_a2: Optional[GantryAttitudeResult] = None  # 右机 gantry_a2 原值
+    a1_dual: Optional[GantryAttitudeResult] = None
+    a2_dual: Optional[GantryAttitudeResult] = None
+    elec_dual: Optional[GantryAttitudeResult] = None
+    diesel_dual: Optional[GantryAttitudeResult] = None
+    shared_roll: Optional[float] = None
+    shared_roll_source: str = "0"
+    synthetic_heading: Optional[float] = None
+    synthetic_pitch: Optional[float] = None
+    tire_attitude: str = "per_side"
 
     def to_dict(self) -> dict:
         delta = self.delta
@@ -125,6 +165,29 @@ class GantryAttitudeCompare:
         )
         if delta is None and self.primary is not None and other is not None:
             delta = _attitude_delta(self.primary, other)
+
+        def _side(r: Optional[GantryAttitudeResult], roll: Optional[float]) -> dict:
+            """valid 表示确实拿到该侧双 GGA 分侧姿态；否则下游按整车主姿态回退。"""
+            if r is None:
+                return {
+                    "heading": None,
+                    "pitch": None,
+                    "pitch_raw": None,
+                    "roll": roll,
+                    "baseline_m": None,
+                    "source": "",
+                    "valid": False,
+                }
+            return {
+                "heading": r.heading_deg,
+                "pitch": r.pitch_deg,
+                "pitch_raw": getattr(r, "pitch_raw_deg", r.pitch_deg),
+                "roll": roll,
+                "baseline_m": getattr(r, "baseline_m", None),
+                "source": r.source,
+                "valid": True,
+            }
+
         return {
             "primary": self.primary.to_dict() if self.primary else None,
             "four_antenna": self.four_antenna.to_dict() if self.four_antenna else None,
@@ -133,10 +196,21 @@ class GantryAttitudeCompare:
             ),
             "nmea_height": None,
             "nmea": self.nmea.to_dict() if self.nmea else None,
+            "nmea_a1": self.nmea_a1.to_dict() if self.nmea_a1 else None,
+            "nmea_a2": self.nmea_a2.to_dict() if self.nmea_a2 else None,
             "delta": delta,
             "four_ready": self.four_ready,
             "primary_method": self.primary_method,
             "configured_mode": self.primary_method,
+            "a1_dual": _side(self.a1_dual, self.shared_roll),
+            "a2_dual": _side(self.a2_dual, self.shared_roll),
+            "elec_dual": _side(self.elec_dual, self.shared_roll),
+            "diesel_dual": _side(self.diesel_dual, self.shared_roll),
+            "shared_roll": self.shared_roll,
+            "shared_roll_source": self.shared_roll_source,
+            "synthetic_heading": self.synthetic_heading,
+            "synthetic_pitch": self.synthetic_pitch,
+            "tire_attitude": self.tire_attitude,
         }
 
 
@@ -287,28 +361,88 @@ def _pick_nmea_heading_pitch(
     return None
 
 
+_nmea_att_sticky_tag: Optional[str] = None
+
+
+def _nmea_pr_score(g: GnssRaw) -> float:
+    return abs(float(g.pitch or 0.0)) + abs(float(g.roll or 0.0))
+
+
+def _raw_nmea_from_gnss(
+    g: Optional[GnssRaw],
+    live: bool,
+    tag: str,
+) -> Optional[GantryAttitudeResult]:
+    """单台接收机 NMEA 姿态原值（有航向才出；俯仰/横滚可缺）。"""
+    if not live or g is None or g.heading is None:
+        return None
+    pr_ok = g.pitch is not None and g.roll is not None
+    return GantryAttitudeResult(
+        heading_deg=normalize_heading_deg(float(g.heading)),
+        pitch_deg=float(g.pitch) if pr_ok else 0.0,
+        roll_deg=float(g.roll) if pr_ok else 0.0,
+        source=tag,
+        pitch_roll_valid=pr_ok,
+    )
+
+
 def _pick_nmea_attitude(
     ga1: Optional[GnssRaw],
     ga2: Optional[GnssRaw],
     ga1_live: bool,
     ga2_live: bool,
 ) -> Optional[GantryAttitudeResult]:
-    """接收机 PASHR/HDT 原值，不经四天线刚体。"""
-    hp = _pick_nmea_heading_pitch(ga1, ga2, ga1_live, ga2_live)
-    if hp is None:
-        return None
-    heading, pitch, src = hp
-    roll = 0.0
-    for live, g in ((ga1_live, ga1), (ga2_live, ga2)):
-        if live and g is not None and g.roll is not None:
-            roll = float(g.roll)
-            break
-    return GantryAttitudeResult(
-        heading_deg=heading,
-        pitch_deg=pitch,
-        roll_deg=roll,
-        source=src,
-    )
+    """接收机姿态原值，不经四天线刚体。
+
+    优先取同一台机上带俯仰+横滚的完整句（PASHR/TRA/HPR）。
+    两侧都有完整值时取 |P|+|R| 更大的一侧（避免 a1 常年 0° 压过 a2 真实双天线姿态），
+    并用 sticky 减少帧间来回切源。
+    """
+    global _nmea_att_sticky_tag
+
+    full: list[tuple[GnssRaw, str]] = []
+    heading_only: list[tuple[GnssRaw, str]] = []
+    for live, g, tag in (
+        (ga1_live, ga1, "nmea_a1"),
+        (ga2_live, ga2, "nmea_a2"),
+    ):
+        if not live or g is None or g.heading is None:
+            continue
+        if g.pitch is not None and g.roll is not None:
+            full.append((g, tag))
+        else:
+            heading_only.append((g, tag))
+
+    if full:
+        best = max(full, key=lambda it: _nmea_pr_score(it[0]))
+        chosen = best
+        if _nmea_att_sticky_tag:
+            sticky = next((it for it in full if it[1] == _nmea_att_sticky_tag), None)
+            if sticky is not None:
+                # sticky 仍可用，且不比最优差超过 0.2° 时保持，避免噪声切源
+                if _nmea_pr_score(best[0]) - _nmea_pr_score(sticky[0]) < 0.2:
+                    chosen = sticky
+        _nmea_att_sticky_tag = chosen[1]
+        g, tag = chosen
+        return GantryAttitudeResult(
+            heading_deg=normalize_heading_deg(float(g.heading)),
+            pitch_deg=float(g.pitch),
+            roll_deg=float(g.roll),
+            source=tag,
+            pitch_roll_valid=True,
+        )
+
+    _nmea_att_sticky_tag = None
+    if heading_only:
+        g, tag = heading_only[0]
+        return GantryAttitudeResult(
+            heading_deg=normalize_heading_deg(float(g.heading)),
+            pitch_deg=0.0,
+            roll_deg=0.0,
+            source=tag,
+            pitch_roll_valid=False,
+        )
+    return None
 
 
 def _collect_four_ecef(
@@ -587,6 +721,156 @@ def compute_dual_receiver_attitude(
     return None
 
 
+def _side_dual_from_gga(
+    gnss: Optional[GnssRaw],
+    live: bool,
+    tag: str,
+    primary_down: bool = True,
+) -> Optional[GantryAttitudeResult]:
+    """
+    单侧双 GGA → 航向/俯仰（横滚留空，由 shared_roll 共用）。
+
+    基线短于 MIN_SIDE_TIRE_BASELINE_M 返回 None（回退整车姿态）。
+    航向统一为"下游端→上游端"（与 SolverNode._upstream_heading 一致）：
+      primary_down=True  主天线在下游，主→副即下游→上游，直接用；
+      primary_down=False 主天线在上游（receiver_layout 的 *_primary_end: up），
+                         主→副是上游→下游，按配置反向：航向 +180°、俯仰取反。
+    这是按配置换算，不是对安装错误的自动纠正。
+    """
+    if not live or gnss is None or not gnss.has_antenna2:
+        return None
+    e2, n2, u2 = ecef_to_enu(
+        gnss.antenna2_ecef_x,
+        gnss.antenna2_ecef_y,
+        gnss.antenna2_ecef_z,
+        gnss.latitude,
+        gnss.longitude,
+        gnss.altitude,
+    )
+    horiz = math.hypot(e2, n2)
+    if horiz < MIN_SIDE_TIRE_BASELINE_M:
+        return None
+    heading = normalize_heading_deg(math.degrees(math.atan2(e2, n2)))
+    pitch = math.degrees(math.atan2(u2, horiz))
+    if not primary_down:
+        heading = normalize_heading_deg(heading + 180.0)
+        pitch = -pitch
+    out = GantryAttitudeResult(heading, pitch, 0.0, tag)
+    out.baseline_m = horiz  # type: ignore[attr-defined]
+    return out
+
+
+def _pair_mount_pitch_deg(
+    body: Dict[str, List[float]],
+    first: str,
+    second: str,
+    primary_down: bool = True,
+) -> Optional[float]:
+    """
+    车体系中一对天线（主→副）基线自身的俯仰角（安装几何，不含大车姿态）。
+    与 _side_dual_from_gga 的符号约定一致：primary_down=False 时取反。
+    """
+    if not body or first not in body or second not in body:
+        return None
+    a = body[first]
+    b = body[second]
+    dx = float(b[0]) - float(a[0])
+    dy = float(b[1]) - float(a[1])
+    dz = float(b[2]) - float(a[2])
+    horiz = math.hypot(dx, dy)
+    if horiz < 1e-6:
+        return None
+    m = math.degrees(math.atan2(dz, horiz))
+    return m if primary_down else -m
+
+
+def _calibrate_side_pitch(
+    side: Optional[GantryAttitudeResult],
+    shared_pitch: Optional[float],
+    mount_pitch: Optional[float] = None,
+) -> Optional[GantryAttitudeResult]:
+    """
+    分侧俯仰：本侧双 GGA 测得的基线俯仰 − 本侧安装基线俯仰（车体系模板）= 大车俯仰。
+    不再取四天线中点平均。模板缺失时退回整车俯仰。原始侧俯仰保存在 pitch_raw_deg 供诊断。
+    """
+    if side is None:
+        return None
+    raw = side.pitch_deg
+    if mount_pitch is not None:
+        pitch = float(raw) - float(mount_pitch)
+    elif shared_pitch is not None:
+        pitch = float(shared_pitch)
+    else:
+        pitch = raw
+    out = GantryAttitudeResult(side.heading_deg, pitch, side.roll_deg, side.source)
+    out.pitch_raw_deg = raw  # type: ignore[attr-defined]
+    out.mount_pitch_deg = mount_pitch  # type: ignore[attr-defined]
+    out.baseline_m = getattr(side, "baseline_m", None)  # type: ignore[attr-defined]
+    return out
+
+
+def _compute_shared_roll(
+    ga1: Optional[GnssRaw],
+    ga2: Optional[GnssRaw],
+    ga1_live: bool,
+    ga2_live: bool,
+    cfg: GantryAttitudeConfig,
+    four: Optional[GantryAttitudeResult],
+) -> Tuple[float, str]:
+    """
+    共用横滚：优先四天线刚体（与杆臂标定同一口径）；四天线不可用时退回左右主天线高差，
+    再不行为 0。高差零点 roll_alt0_m 只影响后一种回退路径。
+    """
+    if four is not None:
+        return float(four.roll_deg), "four_antenna"
+    if ga1_live and ga2_live and ga1 is not None and ga2 is not None:
+        r = derive_roll_from_dual_master_height(
+            ga1, ga2, cfg.roll_span_m, cfg.roll_alt0_m
+        )
+        if r is not None:
+            return float(r), "dual_master_height"
+    return 0.0, "0"
+
+
+def _synthetic_heading(
+    elec: Optional[GantryAttitudeResult],
+    diesel: Optional[GantryAttitudeResult],
+    primary: Optional[GantryAttitudeResult],
+) -> Optional[float]:
+    """两侧双 GGA 航向圆周平均；单侧缺失则用有的一侧；都无则用 primary。"""
+    if elec is not None and diesel is not None:
+        return normalize_heading_deg(
+            _pick_gantry_heading(
+                (elec.heading_deg, elec.pitch_deg),
+                (diesel.heading_deg, diesel.pitch_deg),
+            )
+        )
+    if elec is not None:
+        return normalize_heading_deg(elec.heading_deg)
+    if diesel is not None:
+        return normalize_heading_deg(diesel.heading_deg)
+    if primary is not None:
+        return normalize_heading_deg(primary.heading_deg)
+    return None
+
+
+def _synthetic_pitch(
+    elec: Optional[GantryAttitudeResult],
+    diesel: Optional[GantryAttitudeResult],
+    primary: Optional[GantryAttitudeResult],
+) -> Optional[float]:
+    """两侧分侧俯仰（已扣安装俯仰）取平均；单侧缺失用有的一侧；都无则用 primary。"""
+    if elec is not None and diesel is not None:
+        return 0.5 * (float(elec.pitch_deg) + float(diesel.pitch_deg))
+    if elec is not None:
+        return float(elec.pitch_deg)
+    if diesel is not None:
+        return float(diesel.pitch_deg)
+    if primary is not None:
+        return float(primary.pitch_deg)
+    return None
+
+
 def compute_gantry_attitude_compare(
     ga1: Optional[GnssRaw],
     ga2: Optional[GnssRaw],
@@ -596,9 +880,13 @@ def compute_gantry_attitude_compare(
     ref_lat: float,
     ref_lon: float,
     ref_alt: float,
+    elec_left: bool = True,
+    a1_primary_down: bool = True,
+    a2_primary_down: bool = True,
 ) -> GantryAttitudeCompare:
-    """并行解算两路姿态；primary 跟随 cfg.mode。"""
+    """并行解算两路姿态；primary 跟随 cfg.mode；附带分侧双 GGA 与合成航向。"""
     mode = normalize_attitude_mode(cfg.mode)
+    tire_attitude = normalize_tire_attitude(cfg.tire_attitude)
     four_ready = (
         ga1 is not None
         and ga1.has_antenna2
@@ -632,6 +920,33 @@ def compute_gantry_attitude_compare(
         if primary is not None and other is not None
         else None
     )
+
+    a1_dual = _side_dual_from_gga(
+        ga1, ga1_live, "dual_gga_a1", primary_down=a1_primary_down
+    )
+    a2_dual = _side_dual_from_gga(
+        ga2, ga2_live, "dual_gga_a2", primary_down=a2_primary_down
+    )
+    body = cfg.antenna_body or {}
+    # 左接收机(a)、右接收机(b) 各自的安装基线俯仰；用来扣掉模板里的高度差
+    a_mount = _pair_mount_pitch_deg(body, "a1", "a2", a1_primary_down)
+    b_mount = _pair_mount_pitch_deg(body, "b1", "b2", a2_primary_down)
+    if elec_left:
+        elec_dual, diesel_dual = a1_dual, a2_dual
+        elec_mount, diesel_mount = a_mount, b_mount
+    else:
+        elec_dual, diesel_dual = a2_dual, a1_dual
+        elec_mount, diesel_mount = b_mount, a_mount
+    shared_pitch = primary.pitch_deg if primary is not None else None
+    elec_dual = _calibrate_side_pitch(elec_dual, shared_pitch, elec_mount)
+    diesel_dual = _calibrate_side_pitch(diesel_dual, shared_pitch, diesel_mount)
+
+    shared_roll, shared_roll_source = _compute_shared_roll(
+        ga1, ga2, ga1_live, ga2_live, cfg, four
+    )
+    synth = _synthetic_heading(elec_dual, diesel_dual, primary)
+    synth_pitch = _synthetic_pitch(elec_dual, diesel_dual, primary)
+
     return GantryAttitudeCompare(
         primary=primary,
         four_antenna=four,
@@ -641,6 +956,17 @@ def compute_gantry_attitude_compare(
         primary_method=primary_method or mode,
         nmea_height=None,
         nmea=_pick_nmea_attitude(ga1, ga2, ga1_live, ga2_live),
+        nmea_a1=_raw_nmea_from_gnss(ga1, ga1_live, "nmea_a1"),
+        nmea_a2=_raw_nmea_from_gnss(ga2, ga2_live, "nmea_a2"),
+        a1_dual=a1_dual,
+        a2_dual=a2_dual,
+        elec_dual=elec_dual,
+        diesel_dual=diesel_dual,
+        shared_roll=shared_roll,
+        shared_roll_source=shared_roll_source,
+        synthetic_heading=synth,
+        synthetic_pitch=synth_pitch,
+        tire_attitude=tire_attitude,
     )
 
 

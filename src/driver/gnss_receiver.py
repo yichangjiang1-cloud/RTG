@@ -147,6 +147,9 @@ class GnssReceiver(threading.Thread):
         self._peer_addr: Optional[tuple] = None
         # 副天线最近一次有效 GGA（跨 UDP 包保留，供「一行一 GGA」类接收机/模拟器）
         self._cached_antenna2: Optional[dict] = None
+        # 姿态句常与 GGA 不同 UDP 包；发布后 _frame 会清空，需跨包锁存，否则 pitch/roll 闪断成空
+        self._cached_attitude: Optional[dict] = None
+        self._attitude_cache_ttl_s: float = 3.0
         # 单 GGA 包交替：主 → 副 → 主 …
         self._expect_secondary_gga: bool = False
         self._publish_count: int = 0
@@ -780,6 +783,38 @@ class GnssReceiver(threading.Thread):
             self._frame.heading = parsed["heading_deg"]
             self._frame.pitch = parsed.get("pitch_deg")
             self._frame.roll = parsed.get("roll_deg")
+            if self._frame.pitch is not None and self._frame.roll is not None:
+                self._cached_attitude = {
+                    "heading_deg": float(self._frame.heading),
+                    "pitch_deg": float(self._frame.pitch),
+                    "roll_deg": float(self._frame.roll),
+                    "timestamp": time.time(),
+                }
+
+    def _apply_cached_attitude(self) -> None:
+        """GGA 单独成包时补回最近一次 PASHR/TRA/HPR，避免俯仰横滚每帧闪断。"""
+        if self.receiver_id == "trolley":
+            return
+        if self._frame.pitch is not None and self._frame.roll is not None:
+            self._cached_attitude = {
+                "heading_deg": float(self._frame.heading)
+                if self._frame.heading is not None
+                else float((self._cached_attitude or {}).get("heading_deg") or 0.0),
+                "pitch_deg": float(self._frame.pitch),
+                "roll_deg": float(self._frame.roll),
+                "timestamp": time.time(),
+            }
+            return
+        cached = self._cached_attitude
+        if not cached:
+            return
+        age = time.time() - float(cached.get("timestamp") or 0.0)
+        if age > self._attitude_cache_ttl_s:
+            return
+        if self._frame.heading is None and cached.get("heading_deg") is not None:
+            self._frame.heading = float(cached["heading_deg"])
+        self._frame.pitch = float(cached["pitch_deg"])
+        self._frame.roll = float(cached["roll_deg"])
 
     def _publish_frame(self) -> None:
         """
@@ -787,6 +822,7 @@ class GnssReceiver(threading.Thread):
         发布后重置帧缓存（保留 receiver_id）。
         """
         self._apply_cached_antenna2()
+        self._apply_cached_attitude()
 
         # 附加 ECEF 坐标（供 EKF 直接使用）
         ex, ey, ez = wgs84_to_ecef(

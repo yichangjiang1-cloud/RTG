@@ -50,6 +50,8 @@ from src.solver.side_layout import (
     parse_side_layout,
     split_sides,
 )
+from src.fusion.gantry_attitude import normalize_tire_attitude
+from src.fusion.gnss_pair import DEFAULT_MAX_PAIR_SKEW_S, apply_pair_skew
 from src.solver.motion_speed import (
     DEADBAND_MPS,
     MIN_DISPLACEMENT_M,
@@ -90,6 +92,11 @@ def _arm_len(arm) -> float:
     if not arm or len(arm) < 3:
         return 0.0
     return math.hypot(float(arm[0]), float(arm[1]), float(arm[2]))
+
+
+def _fmt_tire_x(pt) -> str:
+    """日志用：只打轮胎的堆场 X，缺值时打 None。"""
+    return "None" if not pt else f"{pt[0]:.3f}"
 
 
 def _end_arm(cfg, end_key: str, side_key: str) -> list:
@@ -140,6 +147,10 @@ class SolverNode:
         self._offline_timeout_s = max(
             0.1, float(cfg.get("gnss.offline_timeout_s", 0.5))
         )
+        self._max_pair_skew_s = max(
+            0.05, float(cfg.get("gnss.max_pair_skew_s", DEFAULT_MAX_PAIR_SKEW_S))
+        )
+        self._require_rtk_fixed = bool(cfg.get("gnss.require_rtk_fixed", True))
 
         # 小车零点（大车车体系，锚定 L-Point，随大车移动）
         origin_mode, origin_body = _trolley_origin_from_cfg(cfg)
@@ -164,6 +175,13 @@ class SolverNode:
         self._last_upstream_heading: Optional[float] = None
         layout = cfg.get("receiver_layout") if isinstance(cfg.get("receiver_layout"), dict) else {}
         self._side = parse_side_layout(layout)
+        att_block = cfg.get("gantry.attitude", {})
+        if not isinstance(att_block, dict):
+            gantry_block = cfg.get("gantry") if isinstance(cfg.get("gantry"), dict) else {}
+            att_block = gantry_block.get("attitude") if isinstance(gantry_block.get("attitude"), dict) else {}
+        self._tire_attitude = normalize_tire_attitude(
+            att_block.get("tire_attitude") if isinstance(att_block, dict) else None
+        )
         self._last_elec_y: Optional[tuple[float, float]] = None
         self._last_diesel_y: Optional[tuple[float, float]] = None
         self._last_trolley_x: Optional[tuple[float, float]] = None
@@ -176,7 +194,7 @@ class SolverNode:
         self._bus.subscribe(EventBus.TOPIC_FUSED_STATE, self._on_fused_state)
         self._yard_missing_logged = False
         self._solve_place = ""
-        logger.info("SolverNode 初始化完成")
+        logger.info("SolverNode 初始化完成 tire_attitude=%s", self._tire_attitude)
 
     # ------------------------------------------------------------------
     # 回调：处理融合状态
@@ -242,29 +260,102 @@ class SolverNode:
         self._last_upstream_heading = heading
         return heading
 
-    def _four_tire_ecef(self, ga1, ga2, roll, pitch, heading, recv1, recv2) -> dict:
-        """每个轮胎用自己那一端的杆臂。主天线在下游时，主天线套下游杆臂。"""
+    def _side_hpr(
+        self,
+        side_dual: Optional[dict],
+        roll: float,
+        pitch: float,
+        heading: float,
+        primary: Optional[dict],
+    ) -> tuple[float, float, float]:
+        """
+        分侧：航向、俯仰取本侧双 GGA（已扣除模板安装俯仰）；横滚返回共用值。
+        侧双 GGA 无效时航向回退整车 primary，俯仰回退整车俯仰，再回退共享 heading。
+        """
+        side_ok = (
+            isinstance(side_dual, dict)
+            and side_dual.get("valid", True)
+            and side_dual.get("heading") is not None
+        )
+        if side_ok:
+            side_heading = float(side_dual["heading"])
+        elif isinstance(primary, dict) and primary.get("heading") is not None:
+            side_heading = float(primary["heading"])
+        else:
+            side_heading = float(heading)
+        side_pitch = side_dual.get("pitch") if side_ok else None
+        side_pitch = float(pitch) if side_pitch is None else float(side_pitch)
+        return side_heading, side_pitch, float(roll)
+
+    def _four_tire_ecef(
+        self,
+        ga1,
+        ga2,
+        roll,
+        pitch,
+        heading,
+        recv1,
+        recv2,
+        attitude_compare: Optional[dict] = None,
+        tire_attitude: Optional[str] = None,
+    ) -> dict:
+        """每个轮胎用自己那一端的杆臂。per_side 时电气/动力各用本侧航向俯仰。"""
         elec, diesel, elec_live, diesel_live, elec_down, diesel_down = self._sides(
             ga1, ga2, recv1, recv2,
         )
         out = {"elec1": None, "elec2": None, "diesel1": None, "diesel2": None}
+        mode = normalize_tire_attitude(
+            tire_attitude if tire_attitude is not None else self._tire_attitude
+        )
+        cmp = attitude_compare if isinstance(attitude_compare, dict) else {}
+        primary = cmp.get("primary") if isinstance(cmp.get("primary"), dict) else {}
 
-        def solve(solver, g, live, primary):
+        if mode == "per_side":
+            he, pe, re = self._side_hpr(cmp.get("elec_dual"), roll, pitch, heading, primary)
+            hd, pd, rd = self._side_hpr(cmp.get("diesel_dual"), roll, pitch, heading, primary)
+        else:
+            he = hd = float(heading)
+            pe = pd = float(pitch)
+            re = rd = float(roll)
+
+        def solve(solver, g, live, primary_ant, h, p, r):
             if not live:
                 return None
-            ecef = antenna_ecef_from_dict(g, primary)
+            ecef = antenna_ecef_from_dict(g, primary_ant)
             if ecef is None:
                 return None
-            return tuple(solver.solve(np.array(ecef), roll, pitch, heading))
+            return tuple(solver.solve(np.array(ecef), r, p, h))
 
         elec_primary = self._solver_elec_down if elec_down else self._solver_elec_up
         elec_secondary = self._solver_elec_up if elec_down else self._solver_elec_down
         diesel_primary = self._solver_diesel_down if diesel_down else self._solver_diesel_up
         diesel_secondary = self._solver_diesel_up if diesel_down else self._solver_diesel_down
-        out["elec1"] = solve(elec_primary, elec, elec_live, True)
-        out["elec2"] = solve(elec_secondary, elec, elec_live, False)
-        out["diesel1"] = solve(diesel_primary, diesel, diesel_live, True)
-        out["diesel2"] = solve(diesel_secondary, diesel, diesel_live, False)
+        # 主通道：分侧航向俯仰（或 rigid 整车）+ 共用横滚
+        out["elec1"] = solve(elec_primary, elec, elec_live, True, he, pe, re)
+        out["elec2"] = solve(elec_secondary, elec, elec_live, False, he, pe, re)
+        out["diesel1"] = solve(diesel_primary, diesel, diesel_live, True, hd, pd, rd)
+        out["diesel2"] = solve(diesel_secondary, diesel, diesel_live, False, hd, pd, rd)
+        # 对比：四天线 Kabsch 刚体整车 H/P/R（有解才算）
+        four = cmp.get("four_antenna") if isinstance(cmp.get("four_antenna"), dict) else None
+        if (
+            four
+            and four.get("valid", True)
+            and four.get("heading") is not None
+            and four.get("pitch") is not None
+            and four.get("roll") is not None
+        ):
+            hr = float(four["heading"])
+            pr = float(four["pitch"])
+            rr = float(four["roll"])
+            out["elec1_rigid"] = solve(elec_primary, elec, elec_live, True, hr, pr, rr)
+            out["elec2_rigid"] = solve(elec_secondary, elec, elec_live, False, hr, pr, rr)
+            out["diesel1_rigid"] = solve(diesel_primary, diesel, diesel_live, True, hr, pr, rr)
+            out["diesel2_rigid"] = solve(diesel_secondary, diesel, diesel_live, False, hr, pr, rr)
+        else:
+            out["elec1_rigid"] = None
+            out["elec2_rigid"] = None
+            out["diesel1_rigid"] = None
+            out["diesel2_rigid"] = None
         return out
 
     def _tire_centroid_wgs84(self, tires: dict):
@@ -323,6 +414,10 @@ class SolverNode:
             ("tire_elec2", "tire_elec2_valid"),
             ("tire_diesel1", "tire_diesel1_valid"),
             ("tire_diesel2", "tire_diesel2_valid"),
+            ("tire_elec1_rigid", "tire_elec1_rigid_valid"),
+            ("tire_elec2_rigid", "tire_elec2_rigid_valid"),
+            ("tire_diesel1_rigid", "tire_diesel1_rigid_valid"),
+            ("tire_diesel2_rigid", "tire_diesel2_rigid_valid"),
         ):
             if not getattr(gantry, flag):
                 continue
@@ -332,6 +427,7 @@ class SolverNode:
 
     def _fill_lane(self, gantry: GantryResult, transform, yard_id: str) -> None:
         gantry.lane_mm = [0, 0, 0, 0]
+        gantry.leg_offsets_rigid = [0.0, 0.0, 0.0, 0.0]
         if transform is None or not transform.axis_ready:
             return
         meta = self._yard_manager.get_yard_meta(yard_id or "") or {}
@@ -365,6 +461,37 @@ class SolverNode:
             mm.append(int(round(meters * 1000.0)))
         gantry.lane_mm = mm
         gantry.leg_offsets = [v / 1000.0 for v in mm]
+
+        rigid_specs = (
+            (gantry.tire_elec1_rigid, bool(gantry.tire_elec1_rigid_valid), False),
+            (gantry.tire_elec2_rigid, bool(gantry.tire_elec2_rigid_valid), False),
+            (gantry.tire_diesel1_rigid, bool(gantry.tire_diesel1_rigid_valid), True),
+            (gantry.tire_diesel2_rigid, bool(gantry.tire_diesel2_rigid_valid), True),
+        )
+        rigid_m = []
+        for tire, ok, on_diesel in rigid_specs:
+            if not ok:
+                rigid_m.append(0.0)
+                continue
+            rigid_m.append(float(self._tire_lane_m(
+                tire[0], tire[1], on_diesel, elec_pts, diesel_pts, center, x_elec,
+            )))
+        gantry.leg_offsets_rigid = rigid_m
+        self._log_lane(gantry, mm)
+
+    def _log_lane(self, gantry, mm) -> None:
+        """诊断用：把字段 12-15 和四个轮胎的堆场 X、姿态一起打出来（每 1 s 最多一条）。"""
+        now = time.monotonic()
+        if now - getattr(self, "_last_lane_log_t", 0.0) < 1.0:
+            return
+        self._last_lane_log_t = now
+        logger.info(
+            "lane e1=%d e2=%d d1=%d d2=%d | tireX %s %s %s %s | roll=%.3f pitch=%.3f hdg=%.2f",
+            mm[0], mm[1], mm[2], mm[3],
+            _fmt_tire_x(gantry.tire_elec1), _fmt_tire_x(gantry.tire_elec2),
+            _fmt_tire_x(gantry.tire_diesel1), _fmt_tire_x(gantry.tire_diesel2),
+            gantry.roll, gantry.pitch, gantry.heading,
+        )
 
     def _side_reference_x(self, transform, yard_id: str, side: str) -> Optional[float]:
         """该侧贝位点投影到当前堆场坐标后的平均 X。不足两个点时返回 None。"""
@@ -598,9 +725,16 @@ class SolverNode:
         tly = state.get("trolley", {})
 
         stale = self._offline_timeout_s
-        recv1_live = _is_receiver_live(ga1, now, stale)
-        recv2_live = _is_receiver_live(ga2, now, stale)
+        recv1_live = _is_receiver_live(ga1, now, stale, self._require_rtk_fixed)
+        recv2_live = _is_receiver_live(ga2, now, stale, self._require_rtk_fixed)
         tly_live = _is_receiver_live(tly, now, stale)
+        recv1_live, recv2_live, _ = apply_pair_skew(
+            recv1_live,
+            recv2_live,
+            float(ga1.get("last_gnss_time", 0.0)),
+            float(ga2.get("last_gnss_time", 0.0)),
+            self._max_pair_skew_s,
+        )
         # 大车任一侧在线即可出帧（单侧作业点仍可算）；两侧皆无则不出
         if not recv1_live and not recv2_live:
             return None
@@ -617,16 +751,44 @@ class SolverNode:
         elif recv2_live:
             roll = float(ga2.get("roll") or 0.0)
             pitch = float(ga2.get("pitch") or 0.0)
-        heading = self._upstream_heading(ga1, ga2, recv1_live, recv2_live)
-        if heading is None:
+
+        att_cmp = state.get("gantry_attitude_compare") or {}
+        if not isinstance(att_cmp, dict):
+            att_cmp = {}
+        tire_mode = normalize_tire_attitude(
+            att_cmp.get("tire_attitude") or self._tire_attitude
+        )
+        # 共用横滚只在 per_side 生效；rigid 保持原来的主通道横滚
+        if tire_mode == "per_side" and att_cmp.get("shared_roll") is not None:
+            roll = float(att_cmp["shared_roll"])
+
+        # rigid 保持下水→上水中点航向；per_side 优先两侧双 GGA 合成航向
+        upstream = self._upstream_heading(ga1, ga2, recv1_live, recv2_live)
+        synth = att_cmp.get("synthetic_heading")
+        if tire_mode == "per_side" and synth is not None:
+            heading = float(synth)
+        elif upstream is not None:
+            heading = float(upstream)
+        else:
             heading = float((ga1 if recv1_live else ga2).get("heading") or 0.0)
+
         ga1 = dict(ga1)
         ga2 = dict(ga2)
         ga1["heading"] = heading
         ga2["heading"] = heading
+        ga1["roll"] = roll
+        ga2["roll"] = roll
 
         tires_ecef = self._four_tire_ecef(
-            ga1, ga2, roll, pitch, heading, recv1_live, recv2_live
+            ga1,
+            ga2,
+            roll,
+            pitch,
+            heading,
+            recv1_live,
+            recv2_live,
+            attitude_compare=att_cmp,
+            tire_attitude=tire_mode,
         )
         center_ll = self._tire_centroid_wgs84(tires_ecef)
         if not self._yard_manager._yard_meta:
@@ -671,6 +833,8 @@ class SolverNode:
         # ---- 2. 大车解算 ----
         gantry_result = self._solve_gantry(
             ga1, ga2, transform, yard_id, now, recv1_live, recv2_live, tires_ecef,
+            attitude_compare=att_cmp,
+            tire_attitude=tire_mode,
         )
 
         # ---- 3. 小车解算 ----
@@ -834,6 +998,8 @@ class SolverNode:
         recv1_live: bool,
         recv2_live: bool,
         tires_ecef: Optional[dict] = None,
+        attitude_compare: Optional[dict] = None,
+        tire_attitude: Optional[str] = None,
     ) -> GantryResult:
         """
         四个轮胎中心：电气/动力各用该侧主天线标定的杆臂，套到主天线和从天线。
@@ -856,9 +1022,15 @@ class SolverNode:
             roll = float(ga2.get("roll") or 0.0)
             pitch = float(ga2.get("pitch") or 0.0)
             heading = float(ga2.get("heading") or 0.0)
+        # 须在 _fill_lane / _log_lane 之前写入，否则诊断日志一直是 0
+        gantry.heading = heading
+        gantry.pitch = pitch
+        gantry.roll = roll
 
         tires = tires_ecef or self._four_tire_ecef(
             ga1, ga2, roll, pitch, heading, recv1_live, recv2_live,
+            attitude_compare=attitude_compare,
+            tire_attitude=tire_attitude,
         )
         slots = (
             ("elec1", "tire_elec1", "tire_elec1_valid"),
@@ -867,6 +1039,18 @@ class SolverNode:
             ("diesel2", "tire_diesel2", "tire_diesel2_valid"),
         )
         for key, store, flag in slots:
+            ecef = tires.get(key)
+            if ecef is None:
+                continue
+            xyz = transform.ecef_to_lycs(*ecef)
+            setattr(gantry, store, (float(xyz[0]), float(xyz[1]), float(xyz[2])))
+            setattr(gantry, flag, True)
+        for key, store, flag in (
+            ("elec1_rigid", "tire_elec1_rigid", "tire_elec1_rigid_valid"),
+            ("elec2_rigid", "tire_elec2_rigid", "tire_elec2_rigid_valid"),
+            ("diesel1_rigid", "tire_diesel1_rigid", "tire_diesel1_rigid_valid"),
+            ("diesel2_rigid", "tire_diesel2_rigid", "tire_diesel2_rigid_valid"),
+        ):
             ecef = tires.get(key)
             if ecef is None:
                 continue
@@ -925,6 +1109,8 @@ class SolverNode:
             if dt > 1e-6 else 0.0
         )
 
+        speed_r2d = transform.r2d if transform is not None else None
+
         def _apply_speed():
             if dt < PAIR_DT:
                 # 刚锁定参考点后的配对包，间隔太短，只改参考、不算速度
@@ -936,9 +1122,10 @@ class SolverNode:
                     self._gantry_motion, dx, dy, dt, gnss_speed, course_deg,
                     heading_deg=heading,
                     heading_prev_deg=self._last_gantry_heading,
+                    r2d=speed_r2d,
                 )
             elif gnss_speed >= DEADBAND_MPS:
-                hold_gnss_speed(self._gantry_motion, gnss_speed, course_deg)
+                hold_gnss_speed(self._gantry_motion, gnss_speed, course_deg, r2d=speed_r2d)
             elif abs(self._gantry_motion.speed) >= DEADBAND_MPS:
                 self._gantry_motion.speed *= _STATIC_DECAY
                 from src.solver.motion_speed import _snap
@@ -1054,6 +1241,7 @@ class SolverNode:
             cx, cy, cz,
             gantry.lpoint_x, gantry.lpoint_y, gantry.lpoint_z,
             float(gantry.heading),
+            r2d=transform.r2d,
         )
         trolley.body_x, trolley.body_y, trolley.body_z = bx, by, bz
 
@@ -1178,6 +1366,14 @@ class SolverNode:
             elec_down, elec_up, diesel_down, diesel_up,
         )
         self._sync_side(block)
+        att = block.get("gantry_attitude")
+        if not isinstance(att, dict):
+            gantry = block.get("gantry") if isinstance(block.get("gantry"), dict) else {}
+            att = gantry.get("attitude") if isinstance(gantry.get("attitude"), dict) else {}
+        # 下发配置缺该键时保持当前值，避免部分配置静默改变投轮胎方式
+        if isinstance(att, dict) and "tire_attitude" in att:
+            self._tire_attitude = normalize_tire_attitude(att.get("tire_attitude"))
+            logger.info("tire_attitude 已热更新: %s", self._tire_attitude)
         trolley_cfg = block.get("trolley")
         if isinstance(trolley_cfg, dict):
             self.apply_trolley_origin_config(trolley_cfg)
@@ -1287,6 +1483,10 @@ class SolverNode:
             ("tire_elec2", "tire_elec2_valid", 1, False, elec_ys),
             ("tire_diesel1", "tire_diesel1_valid", 2, True, diesel_ys),
             ("tire_diesel2", "tire_diesel2_valid", 3, True, diesel_ys),
+            ("tire_elec1_rigid", "tire_elec1_rigid_valid", 0, False, elec_ys),
+            ("tire_elec2_rigid", "tire_elec2_rigid_valid", 1, False, elec_ys),
+            ("tire_diesel1_rigid", "tire_diesel1_rigid_valid", 2, True, diesel_ys),
+            ("tire_diesel2_rigid", "tire_diesel2_rigid_valid", 3, True, diesel_ys),
         )
         moved = False
         for name, flag, index, on_diesel, bay_ys in specs:
@@ -1313,13 +1513,22 @@ class SolverNode:
             self._recompute_centers(gantry)
 
 
-def _is_receiver_live(g: dict, now: float, stale_s: float = 0.5) -> bool:
+def _is_receiver_live(
+    g: dict, now: float, stale_s: float = 0.5, require_fixed: bool = False,
+) -> bool:
     if not g:
         return False
     last = float(g.get("last_gnss_time", 0.0))
     if last <= 0 or (now - last) > stale_s:
         return False
-    return int(g.get("fix_quality", 0)) > int(FixQuality.INVALID)
+    fq = int(g.get("fix_quality", 0))
+    if not require_fixed:
+        return fq > int(FixQuality.INVALID)
+    if fq != int(FixQuality.RTK_FIXED):
+        return False
+    if g.get("has_antenna2"):
+        return int(g.get("antenna2_fix_quality", 0)) == int(FixQuality.RTK_FIXED)
+    return True
 
 
 def _pick_gnss_motion(

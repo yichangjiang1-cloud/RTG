@@ -207,3 +207,19 @@ def test_trolley_relative_xy_from_origin():
         update_trolley_beam_speed(state, 0.05, 0.04, 0.10)
     # √(0.5²+0.4²)=0.64
     assert 0.50 <= abs(state.speed) <= 0.78
+
+def test_fitted_axis_forward_and_inplace_yaw():
+    """拟合贝位轴（+Y 沿车头）时：沿车头走 1 m 投影为 1 m；原地转 L-Point 不动则走行为 0。"""
+    from src.solver.motion_speed import lycs_along_heading, translational_along_m
+
+    ye, yn = -0.747, -0.6648
+    norm = math.hypot(ye, yn)
+    r2d = ((yn / norm, -ye / norm), (ye / norm, yn / norm))
+    h = 228.2316
+    # 车头方向在 LYCS 中近似为 +Y
+    fwd = (0.0, 1.0)
+    assert abs(lycs_along_heading(fwd[0], fwd[1], h, r2d) - 1.0) < 0.01
+    # 沿车头位移 1 m、航向不变
+    assert abs(translational_along_m(0.0, 1.0, h, h, r2d) - 1.0) < 0.01
+    # 原地转：航向变化、位移为 0 时走行为 0
+    assert abs(translational_along_m(0.0, 0.0, h, h + 2.0, r2d)) < 1e-9

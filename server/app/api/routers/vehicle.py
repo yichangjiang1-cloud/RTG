@@ -118,7 +118,6 @@ def _sanitize_attitude(att):
     mode = str(out.get("mode") or "").strip().lower()
     out["mode"] = "dual_receiver" if mode in ("dual_receiver", "dual") else "four_antenna"
     out.pop("roll_span_m", None)
-    out.pop("roll_alt0_m", None)
     body_cal = out.get("body_calibration")
     if isinstance(body_cal, dict):
         body_cal = dict(body_cal)

@@ -339,7 +339,7 @@ function mergeVehicleConfig(
 function attitudeForSave(att: GantryAttitudeConfig | undefined): GantryAttitudeConfig | undefined {
   if (!att) return att;
   const mode = att.mode === 'dual_receiver' ? 'dual_receiver' : 'four_antenna';
-  const { roll_span_m: _roll, roll_alt0_m: _alt0, body_calibration, ...rest } = att;
+  const { roll_span_m: _roll, body_calibration, ...rest } = att;
   const cal = body_calibration ? { ...body_calibration } : undefined;
   if (cal) delete cal.span_m;
   return { ...rest, mode, ...(cal ? { body_calibration: cal } : {}) };
@@ -399,6 +399,111 @@ function pickAntennaEcef(src: AntennaEcefSource | undefined): { x: number; y: nu
   if (![x, y, z].every(v => typeof v === 'number' && Number.isFinite(v))) return null;
   if (x === 0 && y === 0 && z === 0) return null;
   return { x: x!, y: y!, z: z! };
+}
+
+// ------------------------------------------------------------
+// 标定取样：点击后连续取几秒实时数据求平均，避免单帧噪声
+// ------------------------------------------------------------
+const CALIB_AVG_SECONDS = 5;
+const CALIB_SAMPLE_POLL_MS = 100;
+const CALIB_MIN_SAMPLES = 10;
+
+type AveragedLive = {
+  antennas: Record<string, GantryAntennaPoint>;
+  attitude: { roll: number; pitch: number; heading: number };
+  count: number;
+};
+
+/** 取样过程中的条件检查：四天线齐、RTK 固定、静止；不满足返回原因 */
+function calibConditionError(live: RealtimeData): string | null {
+  const gaps = describeGantryAntennaGaps(live.gantry_antennas);
+  if (gaps.length) return `四天线未齐：${gaps.join('、')}`;
+  if (!isGantryRtkFixed(live)) return 'RTK 固定解丢失';
+  if (live.speed > MAX_CALIB_SPEED) return `车辆移动（${live.speed.toFixed(3)} m/s）`;
+  return null;
+}
+
+function meanOf(values: number[]): number {
+  return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+/** 航向取圆周平均，避免 359°/1° 平均成 180° */
+function circularMeanDeg(values: number[]): number {
+  let s = 0;
+  let c = 0;
+  for (const v of values) {
+    const r = (v * Math.PI) / 180;
+    s += Math.sin(r);
+    c += Math.cos(r);
+  }
+  return ((Math.atan2(s, c) * 180) / Math.PI + 360) % 360;
+}
+
+function averageLiveSamples(samples: RealtimeData[]): AveragedLive {
+  const keys = new Set<string>();
+  for (const s of samples) {
+    for (const k of Object.keys(s.gantry_antennas ?? {})) keys.add(k);
+  }
+  const antennas: Record<string, GantryAntennaPoint> = {};
+  for (const k of keys) {
+    const pts = samples
+      .map(s => s.gantry_antennas?.[k])
+      .filter((p): p is GantryAntennaPoint => !!p && p.valid !== false);
+    if (!pts.length) continue;
+    const avg = (pick: (p: GantryAntennaPoint) => number | undefined): number | undefined => {
+      const v = pts.map(pick).filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
+      return v.length ? meanOf(v) : undefined;
+    };
+    const last = pts[pts.length - 1];
+    const ex = avg(p => p.ecef_x);
+    const ey = avg(p => p.ecef_y);
+    const ez = avg(p => p.ecef_z);
+    antennas[k] = {
+      ...last,
+      lat: avg(p => p.lat) ?? last.lat,
+      lon: avg(p => p.lon) ?? last.lon,
+      alt: avg(p => p.alt) ?? last.alt,
+      ...(ex !== undefined && ey !== undefined && ez !== undefined
+        ? { ecef_x: ex, ecef_y: ey, ecef_z: ez }
+        : {}),
+    };
+  }
+  return {
+    antennas,
+    attitude: {
+      roll: meanOf(samples.map(s => s.roll)),
+      pitch: meanOf(samples.map(s => s.pitch)),
+      heading: circularMeanDeg(samples.map(s => s.heading)),
+    },
+    count: samples.length,
+  };
+}
+
+/**
+ * 点击后连续取 CALIB_AVG_SECONDS 秒实时帧求平均。
+ * 取样中任何一帧不满足条件（天线缺失、RTK 非固定、车辆移动）即放弃，不使用残缺数据。
+ */
+async function collectLiveAverage(
+  getLive: () => RealtimeData,
+  seconds: number = CALIB_AVG_SECONDS,
+): Promise<{ ok: true; data: AveragedLive } | { ok: false; error: string }> {
+  const samples: RealtimeData[] = [];
+  const t0 = Date.now();
+  let last: RealtimeData | null = null;
+  while (Date.now() - t0 < seconds * 1000) {
+    const live = getLive();
+    const err = calibConditionError(live);
+    if (err) return { ok: false, error: `取样中断：${err}` };
+    if (live !== last) {
+      samples.push(live);
+      last = live;
+    }
+    await new Promise(resolve => setTimeout(resolve, CALIB_SAMPLE_POLL_MS));
+  }
+  if (samples.length < CALIB_MIN_SAMPLES) {
+    return { ok: false, error: `取样帧数不足（${samples.length} 帧），请确认实时数据在持续更新` };
+  }
+  return { ok: true, data: averageLiveSamples(samples) };
 }
 
 function formatArm(arm: [number, number, number]) {
@@ -500,6 +605,9 @@ function LArmSmartCalibration({
   const [computing, setComputing] = useState<TireArmId | null>(null);
   const [method, setMethod] = useState<ArmCalibMethod>('live');
   const [snapshot, setSnapshot] = useState<ArmSnapshot | null>(null);
+  const [sampling, setSampling] = useState(false);
+  const liveRef = useRef(liveData);
+  liveRef.current = liveData;
 
   useEffect(() => {
     const id = cfg?.vehicle_id;
@@ -532,16 +640,33 @@ function LArmSmartCalibration({
       : '条件满足：四天线齐、RTK 固定且静止。每个轮胎中心单独填写，用这一端自己的天线计算杆臂';
   }, [cfg, useMock, isMock, connStatus, stationary, liveData.speed, liveData.status, liveData.receivers, fourReady, fourGaps, rtkFixed, method]);
 
-  function captureSnapshot() {
+  /** 点击后取几秒实时帧求平均；期间界面显示取样中 */
+  async function sampleAveraged(): Promise<AveragedLive | null> {
+    setSampling(true);
+    try {
+      const res = await collectLiveAverage(() => liveRef.current);
+      if (!res.ok) {
+        showToast(res.error, 'error');
+        return null;
+      }
+      return res.data;
+    } finally {
+      setSampling(false);
+    }
+  }
+
+  async function captureSnapshot() {
     if (!cfg) return;
     if (!canCalib) {
       showToast(liveHint, 'error');
       return;
     }
+    const avg = await sampleAveraged();
+    if (!avg) return;
     const layout = cfg.receiver_layout ?? DEFAULT_RECEIVER_LAYOUT;
     const antennas = {} as ArmSnapshot['antennas'];
     for (const spec of TIRE_ARMS) {
-      const src = endAntenna(liveData, layout, spec.role, spec.end);
+      const src = endAntenna({ gantry_antennas: avg.antennas }, layout, spec.role, spec.end);
       if (Math.abs(src.lat) < 1e-6 && Math.abs(src.lon) < 1e-6) {
         showToast(`${tireCenterLabel(layout, spec.role, spec.end)}的天线无效，未记录`, 'error');
         return;
@@ -557,7 +682,7 @@ function LArmSmartCalibration({
     const next: ArmSnapshot = {
       measured_at: new Date().toISOString(),
       vehicle_id: cfg.vehicle_id,
-      attitude: { roll: liveData.roll, pitch: liveData.pitch, heading: liveData.heading },
+      attitude: avg.attitude,
       antennas,
     };
     try {
@@ -568,7 +693,7 @@ function LArmSmartCalibration({
       return;
     }
     setSnapshot(next);
-    showToast('已记录四天线和姿态。车可以开走，测完轮胎中心再回来计算');
+    showToast(`已记录四天线和姿态（${CALIB_AVG_SECONDS} 秒平均，${avg.count} 帧）。车可以开走，测完轮胎中心再回来计算`);
   }
 
   function clearSnapshot() {
@@ -610,14 +735,16 @@ function LArmSmartCalibration({
         showToast(liveHint, 'error');
         return;
       }
-      const antennaSrc = endAntenna(liveData, layout, spec.role, spec.end);
+      const avg = await sampleAveraged();
+      if (!avg) return;
+      const antennaSrc = endAntenna({ gantry_antennas: avg.antennas }, layout, spec.role, spec.end);
       if (Math.abs(antennaSrc.lat) < 1e-6 && Math.abs(antennaSrc.lon) < 1e-6) {
         showToast(`${tireCenterLabel(layout, spec.role, spec.end)}的天线无效`, 'error');
         return;
       }
       antenna = { lat: antennaSrc.lat, lon: antennaSrc.lon, alt: antennaSrc.alt };
       antennaEcef = pickAntennaEcef(antennaSrc);
-      attitude = { roll: liveData.roll, pitch: liveData.pitch, heading: liveData.heading };
+      attitude = avg.attitude;
     }
     const lpoint = { lat, lon, alt };
 
@@ -744,10 +871,10 @@ function LArmSmartCalibration({
           <button
             type="button"
             onClick={captureSnapshot}
-            disabled={!canCalib}
+            disabled={!canCalib || sampling}
             className="btn-primary px-4 py-2 text-sm disabled:opacity-50"
           >
-            记录当前四天线
+            {sampling ? `取样中（${CALIB_AVG_SECONDS} 秒平均）…` : `记录当前四天线（${CALIB_AVG_SECONDS} 秒平均）`}
           </button>
           <button
             type="button"
@@ -801,12 +928,14 @@ function LArmSmartCalibration({
               {renderLpointInputs(spec.id)}
             <button
               type="button"
-              disabled={computing !== null || (method === 'live' ? !canCalib : !snapshot)}
+              disabled={computing !== null || sampling || (method === 'live' ? !canCalib : !snapshot)}
                 onClick={() => computeTire(spec.id)}
               className="w-full btn-primary py-3 flex items-center justify-center gap-2"
             >
-                {computing === spec.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                {method === 'snapshot' ? '用停车记录计算' : `计算 ${spec.armKey}`}
+                {computing === spec.id || sampling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                {sampling
+                  ? `取样中（${CALIB_AVG_SECONDS} 秒平均）…`
+                  : method === 'snapshot' ? '用停车记录计算' : `计算 ${spec.armKey}（${CALIB_AVG_SECONDS} 秒平均）`}
             </button>
             {cfg && (
               <ReadOnlyLArmBlock
@@ -1299,6 +1428,8 @@ function GantryAttitudePanel({
 }) {
   const att = cfg.gantry_attitude ?? defaultGantryAttitude(10);
   const [capturing, setCapturing] = useState(false);
+  const liveRef = useRef(liveData);
+  liveRef.current = liveData;
 
   const fourGaps = useMemo(
     () => describeGantryAntennaGaps(liveData.gantry_antennas),
@@ -1358,10 +1489,16 @@ function GantryAttitudePanel({
     }
     setCapturing(true);
     try {
+      // 点击后取几秒四天线平均坐标再反算安装坐标
+      const avg = await collectLiveAverage(() => liveRef.current);
+      if (!avg.ok) {
+        showToast(avg.error, 'error');
+        return;
+      }
       const res = await fetch(`${baseUrl}/api/vehicle/compute_antenna_body`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ antennas: liveData.gantry_antennas }),
+        body: JSON.stringify({ antennas: avg.data.antennas }),
         signal: AbortSignal.timeout(15000),
       });
       if (!res.ok) {
@@ -1433,13 +1570,23 @@ function GantryAttitudePanel({
           ) : null}
           <p className="text-amber-300/90">
             四GGA: H {liveData.gantry_attitude_compare.four_antenna!.heading.toFixed(2)}° P{' '}
-            {liveData.gantry_attitude_compare.four_antenna!.pitch.toFixed(3)}° R{' '}
-            {liveData.gantry_attitude_compare.four_antenna!.roll.toFixed(3)}°
+            {liveData.gantry_attitude_compare.four_antenna!.pitch != null
+              ? `${liveData.gantry_attitude_compare.four_antenna!.pitch.toFixed(3)}°`
+              : '—'}{' '}
+            R{' '}
+            {liveData.gantry_attitude_compare.four_antenna!.roll != null
+              ? `${liveData.gantry_attitude_compare.four_antenna!.roll.toFixed(3)}°`
+              : '—'}
           </p>
           <p className="text-cyan-400/90">
             双接收机: H {liveData.gantry_attitude_compare.dual_receiver!.heading.toFixed(2)}° P{' '}
-            {liveData.gantry_attitude_compare.dual_receiver!.pitch.toFixed(3)}° R{' '}
-            {liveData.gantry_attitude_compare.dual_receiver!.roll.toFixed(3)}°
+            {liveData.gantry_attitude_compare.dual_receiver!.pitch != null
+              ? `${liveData.gantry_attitude_compare.dual_receiver!.pitch.toFixed(3)}°`
+              : '—'}{' '}
+            R{' '}
+            {liveData.gantry_attitude_compare.dual_receiver!.roll != null
+              ? `${liveData.gantry_attitude_compare.dual_receiver!.roll.toFixed(3)}°`
+              : '—'}
           </p>
         </div>
       )}

@@ -27,6 +27,13 @@ const BLANK_DATA: RealtimeData = {
       diesel: { lat: 0, lon: 0, alt: 0, valid: false },
     },
     leg_offsets: { fl: 0, fr: 0, rl: 0, rr: 0 },
+    leg_offsets_rigid: { fl: 0, fr: 0, rl: 0, rr: 0 },
+    tires_rigid: {
+      elec_upstream: { x: 0, y: 0, valid: false },
+      elec_downstream: { x: 0, y: 0, valid: false },
+      diesel_upstream: { x: 0, y: 0, valid: false },
+      diesel_downstream: { x: 0, y: 0, valid: false },
+    },
     speed: 0,
   },
   trolley: {

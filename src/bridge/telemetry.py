@@ -98,12 +98,15 @@ def _antenna2_live(result: PositionResult) -> bool:
     )
 
 
-def _tire_end(g, side: str, upstream: bool) -> dict:
-    """GGA 是 1，GGA2 是 2。主天线在下游时，1 为下游、2 为上游。"""
-    primary = getattr(g, f"tire_{side}1")
-    secondary = getattr(g, f"tire_{side}2")
-    primary_ok = bool(getattr(g, f"tire_{side}1_valid"))
-    secondary_ok = bool(getattr(g, f"tire_{side}2_valid"))
+def _tire_end(g, side: str, upstream: bool, variant: str = "") -> dict:
+    """GGA 是 1，GGA2 是 2。主天线在下游时，1 为下游、2 为上游。
+    variant: '' 主通道（分侧）；'_rigid' 四天线刚体整车姿态。
+    """
+    suffix = variant if variant in ("", "_rigid") else ""
+    primary = getattr(g, f"tire_{side}1{suffix}", (0.0, 0.0, 0.0))
+    secondary = getattr(g, f"tire_{side}2{suffix}", (0.0, 0.0, 0.0))
+    primary_ok = bool(getattr(g, f"tire_{side}1{suffix}_valid", False))
+    secondary_ok = bool(getattr(g, f"tire_{side}2{suffix}_valid", False))
     primary_down = bool(getattr(g, f"{side}_primary_down", True))
     use_primary = primary_down != upstream
     point = primary if use_primary else secondary
@@ -118,6 +121,11 @@ def position_result_to_realtime(result: PositionResult) -> dict:
     g = result.gantry
     t = result.trolley
     legs = g.leg_offsets if len(g.leg_offsets) >= 4 else [0.0, 0.0, 0.0, 0.0]
+    legs_rigid = (
+        g.leg_offsets_rigid
+        if len(getattr(g, "leg_offsets_rigid", []) or []) >= 4
+        else [0.0, 0.0, 0.0, 0.0]
+    )
 
     ts = result.timestamp
     if ts > 0:
@@ -162,6 +170,21 @@ def position_result_to_realtime(result: PositionResult) -> dict:
         "attitude_source": (
             (result.gantry_attitude_compare or {}).get("primary") or {}
         ).get("source", ""),
+        "tire_attitude": (
+            (result.gantry_attitude_compare or {}).get("tire_attitude") or ""
+        ),
+        "synthetic_heading": (
+            (result.gantry_attitude_compare or {}).get("synthetic_heading")
+        ),
+        "shared_roll": (
+            (result.gantry_attitude_compare or {}).get("shared_roll")
+        ),
+        "elec_dual": (
+            (result.gantry_attitude_compare or {}).get("elec_dual")
+        ),
+        "diesel_dual": (
+            (result.gantry_attitude_compare or {}).get("diesel_dual")
+        ),
         "gantry_attitude_compare": result.gantry_attitude_compare or {},
         "speed": g.speed,
         # 接收机1 双天线 WGS84（杆臂智能标定：A1=ref_antenna，A2=antenna2）
@@ -234,11 +257,23 @@ def position_result_to_realtime(result: PositionResult) -> dict:
                 "diesel_upstream": _tire_end(g, "diesel", upstream=True),
                 "diesel_downstream": _tire_end(g, "diesel", upstream=False),
             },
+            "tires_rigid": {
+                "elec_upstream": _tire_end(g, "elec", upstream=True, variant="_rigid"),
+                "elec_downstream": _tire_end(g, "elec", upstream=False, variant="_rigid"),
+                "diesel_upstream": _tire_end(g, "diesel", upstream=True, variant="_rigid"),
+                "diesel_downstream": _tire_end(g, "diesel", upstream=False, variant="_rigid"),
+            },
             "leg_offsets": {
                 "fl": legs[0],
                 "fr": legs[2],
                 "rl": legs[1],
                 "rr": legs[3],
+            },
+            "leg_offsets_rigid": {
+                "fl": float(legs_rigid[0]),
+                "rl": float(legs_rigid[1]),
+                "fr": float(legs_rigid[2]),
+                "rr": float(legs_rigid[3]),
             },
             "speed": g.speed,
         },

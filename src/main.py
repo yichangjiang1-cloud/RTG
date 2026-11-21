@@ -335,6 +335,11 @@ class RTGSystem:
         cmp = result.gantry_attitude_compare or {}
         primary = (cmp.get("primary") or {})
         method = cmp.get("primary_method") or primary.get("source") or "-"
+        elec_s = cmp.get("elec_dual") or {}
+        diesel_s = cmp.get("diesel_dual") or {}
+
+        def fmt_ang(v, nd):
+            return "-" if v is None else f"{float(v):.{nd}f}"
 
         self._pos_logger.info(
             "yard=%s in_yard=%s tires=%d/4 fix=%s method=%s | "
@@ -342,7 +347,8 @@ class RTGSystem:
             "elec=%s(%.4f,%.4f) diesel=%s(%.4f,%.4f) | "
             "att hdg=%.2f pitch=%.3f roll=%.3f | "
             "trolley valid=%s travel=%.3f body=(%.3f,%.3f,%.3f) spd=%.3f | "
-            "recv live a1=%s a2=%s",
+            "recv live a1=%s a2=%s | "
+            "tire_att=%s elec(hdg=%s pitch=%s valid=%s) diesel(hdg=%s pitch=%s valid=%s) roll=%s",
             result.yard_id or "-",
             result.in_yard,
             sum(1 for ok in (
@@ -376,6 +382,14 @@ class RTGSystem:
             t.speed,
             g.recv1_live,
             g.recv2_live,
+            cmp.get("tire_attitude") or "-",
+            fmt_ang(elec_s.get("heading"), 2),
+            fmt_ang(elec_s.get("pitch"), 3),
+            bool(elec_s.get("valid")),
+            fmt_ang(diesel_s.get("heading"), 2),
+            fmt_ang(diesel_s.get("pitch"), 3),
+            bool(diesel_s.get("valid")),
+            fmt_ang(cmp.get("shared_roll"), 3),
         )
 
     # ------------------------------------------------------------------
