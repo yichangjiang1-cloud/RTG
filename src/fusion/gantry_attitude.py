@@ -45,8 +45,9 @@ def normalize_attitude_mode(mode: Optional[str]) -> str:
 
 
 def normalize_tire_attitude(mode: Optional[str]) -> str:
-    """归一化为 per_side | rigid。仅显式写 per_side 才开启，缺省/未知值一律 rigid。"""
+    """主通道统一整车 rigid。per_side 仅保留给显式单测/工具；运行配置一律当 rigid。"""
     m = (mode or "").strip().lower()
+    # 兼容旧调用：单测仍可显式传 per_side；生产配置经 from_dict/热更新会强制 rigid
     if m == "per_side":
         return "per_side"
     return "rigid"
@@ -74,7 +75,9 @@ class GantryAttitudeConfig:
             block = {}
         _ = w_span  # 已废弃，不再作为横滚间距
         mode = normalize_attitude_mode(str(block.get("mode", "four_antenna")))
-        tire_attitude = normalize_tire_attitude(block.get("tire_attitude"))
+        # 运行配置强制整车；忽略 yaml/云端遗留的 per_side
+        _ = block.get("tire_attitude")
+        tire_attitude = "rigid"
         baseline_m = float(block.get("baseline_m", 1.0))
         roll_span_m = 0.0
         roll_alt0_m = float(block.get("roll_alt0_m", 0.0))
@@ -154,7 +157,7 @@ class GantryAttitudeCompare:
     shared_roll_source: str = "0"
     synthetic_heading: Optional[float] = None
     synthetic_pitch: Optional[float] = None
-    tire_attitude: str = "per_side"
+    tire_attitude: str = "rigid"
 
     def to_dict(self) -> dict:
         delta = self.delta

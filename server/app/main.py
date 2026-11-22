@@ -13,7 +13,7 @@ from app.utils.logger import setup_logging, get_logger, get_frontend_file_logger
 from app.mqtt.client import MqttClient
 from app.mqtt.handlers import MqttMessageHandler
 from app.api.ws import WebSocketManager
-from app.api.routers import vehicle, yard, survey, survey_rtg, health, calibration, client_log
+from app.api.routers import vehicle, yard, survey, survey_rtg, health, calibration, client_log, lever_check
 
 logger = None
 mqtt_client = None
@@ -127,6 +127,7 @@ app.include_router(survey_rtg.router)
 app.include_router(calibration.router)
 app.include_router(health.router)
 app.include_router(client_log.router)
+app.include_router(lever_check.router)
 
 # ==================== WebSocket 端点 ====================
 

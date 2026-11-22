@@ -224,4 +224,6 @@ class PositionResult:
 
     # 大车双路姿态对比：primary=NMEA+高差，four_antenna=四 GGA 刚体
     gantry_attitude_compare: dict = field(default_factory=dict)
+    # 左右机历元对齐诊断：dt_s / source(utc|arrival) / dropped
+    gnss_pair_align: dict = field(default_factory=dict)
 

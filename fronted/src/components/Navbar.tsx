@@ -20,6 +20,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'config',      label: '参数配置' },
   { id: 'mapping',     label: '场地建图' },
   { id: 'calibration', label: '车辆校准' },
+  { id: 'lever',       label: '杆臂核对' },
   { id: 'manual',      label: '系统说明' },
 ];
 

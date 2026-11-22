@@ -182,6 +182,17 @@ export interface RealtimeData {
   attitude_source?: string;
   /** NMEA+高差 vs 四 GGA 刚体 对比 */
   gantry_attitude_compare?: GantryAttitudeCompare;
+  /** 轮胎投影姿态：per_side | rigid（与 compare 内字段同义，遥测顶层也发） */
+  tire_attitude?: string;
+  /** 左右机历元对齐：优先 NMEA UTC */
+  gnss_pair_align?: {
+    dt_s?: number | null;
+    source?: string;
+    dropped?: boolean;
+    max_skew_s?: number;
+    a1_utc?: string | null;
+    a2_utc?: string | null;
+  };
   speed: number;
   status: GnssStatus;
   receivers: ReceiverStatus[];
@@ -326,6 +337,8 @@ export interface GantryAttitudeConfig {
    * dual_receiver: 左右双 GGA 基线航向/俯仰
    */
   mode: 'four_antenna' | 'dual_receiver';
+  /** 轮胎投影姿态；当前固定 rigid（整车一套 H/P/R） */
+  tire_attitude?: 'rigid' | 'per_side';
   /** 前后定向基线长 (m) */
   baseline_m: number;
   /** @deprecated 跨距不再用于姿态；仅兼容旧配置 */
@@ -442,4 +455,4 @@ export interface ApiResponse<T> {
   message?: string;
 }
 
-export type TabId = 'dashboard' | 'live' | 'settings' | 'config' | 'mapping' | 'calibration' | 'manual';
+export type TabId = 'dashboard' | 'live' | 'settings' | 'config' | 'mapping' | 'calibration' | 'lever' | 'manual';

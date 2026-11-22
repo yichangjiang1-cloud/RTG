@@ -692,6 +692,8 @@ class GnssReceiver(threading.Thread):
 
     def _apply_primary_gga(self, parsed: dict) -> None:
         self._frame.timestamp = parsed["timestamp"]
+        self._frame.utc_sod = parsed.get("utc_sod")
+        self._frame.nmea_utc = parsed.get("nmea_utc")
         self._frame.latitude = parsed["lat"]
         self._frame.longitude = parsed["lon"]
         self._frame.altitude = parsed["alt"]
@@ -707,6 +709,16 @@ class GnssReceiver(threading.Thread):
         fix = int(parsed.get("fix_quality") or 0)
         # 无坐标或无解不能覆盖上一帧有效副天线，否则缓存会被 0,0 冲掉。
         if fix <= 0 or (abs(lat) < 1e-7 and abs(lon) < 1e-7):
+            return
+        # 同机主/副必须同一 UTC 历元；偏差过大则丢弃副天线本帧
+        from src.fusion.gnss_pair import (
+            DEFAULT_MAX_INTRA_ANTENNA_SKEW_S,
+            utc_sod_diff_s,
+        )
+        sec_utc = parsed.get("utc_sod")
+        pri_utc = self._frame.utc_sod
+        dt_intra = utc_sod_diff_s(pri_utc, sec_utc)
+        if dt_intra is not None and dt_intra > DEFAULT_MAX_INTRA_ANTENNA_SKEW_S:
             return
         # 一个 UDP 包里如果叠了两个历元，第 2 条 GGA 是下一历元的主天线，
         # 和当前主天线几乎重合。不能把它写成副天线，否则小车2会跳到小车1上。

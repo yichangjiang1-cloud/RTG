@@ -179,9 +179,8 @@ class SolverNode:
         if not isinstance(att_block, dict):
             gantry_block = cfg.get("gantry") if isinstance(cfg.get("gantry"), dict) else {}
             att_block = gantry_block.get("attitude") if isinstance(gantry_block.get("attitude"), dict) else {}
-        self._tire_attitude = normalize_tire_attitude(
-            att_block.get("tire_attitude") if isinstance(att_block, dict) else None
-        )
+        # 主通道统一整车姿态（忽略配置里遗留的 per_side）
+        self._tire_attitude = "rigid"
         self._last_elec_y: Optional[tuple[float, float]] = None
         self._last_diesel_y: Optional[tuple[float, float]] = None
         self._last_trolley_x: Optional[tuple[float, float]] = None
@@ -663,7 +662,7 @@ class SolverNode:
     # ------------------------------------------------------------------
     def _outside_result(
         self, now, ga1, ga2, tly, recv1, recv2, tly_live, ref, ref_rid,
-        gantry_antennas=None, attitude_compare=None,
+        gantry_antennas=None, attitude_compare=None, gnss_pair_align=None,
     ) -> PositionResult:
         """中点不在任何场内，或只有一个轮胎中心在场内：场号空，场内外和场类型发 0。
 
@@ -712,6 +711,7 @@ class SolverNode:
             hdop_trolley=float(tly.get("hdop", 99.9)) if tly_live else 99.9,
             gantry_antennas=gantry_antennas or {},
             gantry_attitude_compare=attitude_compare or {},
+            gnss_pair_align=dict(gnss_pair_align or {}),
             current_bay_no=0,
         )
 
@@ -728,13 +728,21 @@ class SolverNode:
         recv1_live = _is_receiver_live(ga1, now, stale, self._require_rtk_fixed)
         recv2_live = _is_receiver_live(ga2, now, stale, self._require_rtk_fixed)
         tly_live = _is_receiver_live(tly, now, stale)
-        recv1_live, recv2_live, _ = apply_pair_skew(
+        recv1_live, recv2_live, _, pair_dt, pair_src = apply_pair_skew(
             recv1_live,
             recv2_live,
             float(ga1.get("last_gnss_time", 0.0)),
             float(ga2.get("last_gnss_time", 0.0)),
             self._max_pair_skew_s,
+            utc_sod1=ga1.get("utc_sod"),
+            utc_sod2=ga2.get("utc_sod"),
         )
+        pair_align = state.get("gnss_pair_align") or {
+            "dt_s": None if pair_dt is None else round(float(pair_dt), 4),
+            "source": pair_src,
+            "dropped": False,
+            "max_skew_s": self._max_pair_skew_s,
+        }
         # 大车任一侧在线即可出帧（单侧作业点仍可算）；两侧皆无则不出
         if not recv1_live and not recv2_live:
             return None
@@ -810,6 +818,7 @@ class SolverNode:
                 now, ga1, ga2, tly, recv1_live, recv2_live, tly_live, ref, ref_rid,
                 state.get("gantry_antennas"),
                 state.get("gantry_attitude_compare"),
+                pair_align,
             )
             ep, es, dp, ds = self._side_fix(ga1, ga2, recv1_live, recv2_live)
             outside.fix_quality_elec = ep
@@ -977,6 +986,7 @@ class SolverNode:
             trolley_antenna_primary=_ant_dict(tly, True) if tly_live else {},
             trolley_antenna_secondary=_ant_dict(tly, False) if tly_live else {},
             gantry_attitude_compare=state.get("gantry_attitude_compare") or {},
+            gnss_pair_align=dict(state.get("gnss_pair_align") or pair_align),
         )
         ep, es, dp, ds = self._side_fix(ga1, ga2, recv1_live, recv2_live)
         result.fix_quality_elec = ep
@@ -1371,9 +1381,16 @@ class SolverNode:
             gantry = block.get("gantry") if isinstance(block.get("gantry"), dict) else {}
             att = gantry.get("attitude") if isinstance(gantry.get("attitude"), dict) else {}
         # 下发配置缺该键时保持当前值，避免部分配置静默改变投轮胎方式
-        if isinstance(att, dict) and "tire_attitude" in att:
-            self._tire_attitude = normalize_tire_attitude(att.get("tire_attitude"))
-            logger.info("tire_attitude 已热更新: %s", self._tire_attitude)
+        if isinstance(att, dict):
+            # 主通道统一整车；忽略云端 per_side
+            prev = self._tire_attitude
+            self._tire_attitude = "rigid"
+            if att.get("tire_attitude") not in (None, "", "rigid") or prev != "rigid":
+                logger.info(
+                    "tire_attitude 已热更新: rigid（忽略下发=%s，原=%s）",
+                    att.get("tire_attitude"),
+                    prev,
+                )
         trolley_cfg = block.get("trolley")
         if isinstance(trolley_cfg, dict):
             self.apply_trolley_origin_config(trolley_cfg)

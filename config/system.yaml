@@ -5,7 +5,8 @@ backend:
   timeout_s: 10
 gnss:
   offline_timeout_s: 0.5
-  max_pair_skew_s: 0.3
+  # 左右机配对：优先 NMEA UTC 历元差；超限丢弃较旧一侧（转弯时收紧）
+  max_pair_skew_s: 0.15
   require_rtk_fixed: true
   raw_log:
     dir: logs/gnss_raw

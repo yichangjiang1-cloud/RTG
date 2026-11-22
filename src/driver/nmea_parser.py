@@ -98,6 +98,32 @@ def _lat_lon_to_decimal(value: str, direction: str) -> float:
     return decimal
 
 
+def nmea_utc_to_sod(utc_raw: str) -> Optional[float]:
+    """
+    NMEA UTC hhmmss.ss → 当天秒数（0~86400）。
+    空/非法返回 None。
+    """
+    s = (utc_raw or "").strip()
+    if not s:
+        return None
+    try:
+        # 允许 065535.00 / 65535.00
+        if "." in s:
+            whole, frac = s.split(".", 1)
+        else:
+            whole, frac = s, "0"
+        whole = whole.zfill(6)
+        hh = int(whole[0:2])
+        mm = int(whole[2:4])
+        ss = int(whole[4:6])
+        frac_s = float(f"0.{frac}") if frac else 0.0
+        if not (0 <= hh < 24 and 0 <= mm < 60 and 0 <= ss < 60):
+            return None
+        return hh * 3600.0 + mm * 60.0 + ss + frac_s
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_unicore_bestpos2a(sentence: str) -> Optional[dict]:
     """
     解析和芯 UB482/UM 系列副天线位置 #BESTPOS2A ASCII 日志。
@@ -184,10 +210,14 @@ def parse_psat_gga2(sentence: str) -> Optional[dict]:
         num_sats = int(parts[8]) if parts[8] else 0
         hdop = float(parts[9]) if parts[9] else 99.9
         alt = float(parts[10]) if parts[10] else 0.0
+        utc_raw = parts[2] if len(parts) > 2 else ""
+        utc_sod = nmea_utc_to_sod(utc_raw)
 
         return {
             "type": "GGA2",
             "timestamp": time.time(),
+            "nmea_utc": utc_raw or None,
+            "utc_sod": utc_sod,
             "lat": lat,
             "lon": lon,
             "alt": alt,
@@ -222,10 +252,14 @@ def parse_gga(sentence: str) -> Optional[dict]:
         num_sats = int(parts[7]) if parts[7] else 0
         hdop = float(parts[8]) if parts[8] else 99.9
         alt = float(parts[9]) if parts[9] else 0.0
+        utc_raw = parts[1] if len(parts) > 1 else ""
+        utc_sod = nmea_utc_to_sod(utc_raw)
 
         return {
             "type": "GGA",
             "timestamp": time.time(),   # 使用系统时间（chrony 已与 GPS 同步）
+            "nmea_utc": utc_raw or None,
+            "utc_sod": utc_sod,
             "lat": lat,
             "lon": lon,
             "alt": alt,

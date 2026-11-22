@@ -7,6 +7,7 @@ import Mapping from './components/Mapping';
 import Calibration from './components/Calibration';
 import Manual from './components/Manual';
 import YardLive from './components/YardLive';
+import LeverCheck from './components/LeverCheck';
 import { ToastContainer } from './components/common';
 import { useWebSocket } from './hooks/useWebSocket';
 import { AppProvider, useAppContext } from './context/AppContext';
@@ -15,7 +16,7 @@ import { wsUrl as buildWsUrl } from './utils/backendUrl';
 
 const MAX_HISTORY = 120;
 
-const VALID_TABS = new Set<TabId>(['dashboard', 'live', 'settings', 'config', 'mapping', 'calibration', 'manual']);
+const VALID_TABS = new Set<TabId>(['dashboard', 'live', 'settings', 'config', 'mapping', 'calibration', 'lever', 'manual']);
 
 function getTabFromHash(): TabId {
   const hash = window.location.hash.slice(1) as TabId;
@@ -84,6 +85,8 @@ function AppInner() {
         return <Mapping liveData={data} />;
       case 'calibration':
         return <Calibration liveData={data} />;
+      case 'lever':
+        return <LeverCheck liveData={data} />;
       case 'manual':
         return <Manual />;
       default:

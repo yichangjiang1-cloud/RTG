@@ -41,6 +41,9 @@ class GnssRaw:
 
     # 时间戳（UNIX 时间，秒）
     timestamp: float = 0.0
+    # NMEA GGA UTC 当天秒（历元对齐用）；缺省 None
+    utc_sod: Optional[float] = None
+    nmea_utc: Optional[str] = None
 
     # ---- WGS84 原始位置 ----
     latitude: float = 0.0           # 纬度（°，北纬为正）

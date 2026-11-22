@@ -1,5 +1,5 @@
 meta:
-  synced_at: '2026-11-21T17:24:31+08:00'
+  synced_at: '2026-11-22T21:46:37+08:00'
   vehicle_id: RTG-002
   source: api
 yards:
@@ -131,7 +131,7 @@ yard_data:
       source: auto
       vehicle_id: null
       std_m: null
-    - id: 131
+    - id: 246
       point_type: mapping
       bay_no: 4
       bay_side: diesel
@@ -144,7 +144,7 @@ yard_data:
       source: auto
       vehicle_id: null
       std_m: null
-    - id: 101
+    - id: 247
       point_type: mapping
       bay_no: 4
       bay_side: elec
@@ -157,7 +157,7 @@ yard_data:
       source: auto
       vehicle_id: null
       std_m: null
-    - id: 132
+    - id: 253
       point_type: mapping
       bay_no: 5
       bay_side: diesel
@@ -170,7 +170,7 @@ yard_data:
       source: auto
       vehicle_id: null
       std_m: null
-    - id: 102
+    - id: 252
       point_type: mapping
       bay_no: 5
       bay_side: elec
@@ -183,7 +183,7 @@ yard_data:
       source: auto
       vehicle_id: null
       std_m: null
-    - id: 133
+    - id: 249
       point_type: mapping
       bay_no: 6
       bay_side: diesel
@@ -196,7 +196,7 @@ yard_data:
       source: auto
       vehicle_id: null
       std_m: null
-    - id: 103
+    - id: 248
       point_type: mapping
       bay_no: 6
       bay_side: elec
@@ -209,7 +209,7 @@ yard_data:
       source: auto
       vehicle_id: null
       std_m: null
-    - id: 134
+    - id: 251
       point_type: mapping
       bay_no: 7
       bay_side: diesel
@@ -222,7 +222,7 @@ yard_data:
       source: auto
       vehicle_id: null
       std_m: null
-    - id: 104
+    - id: 250
       point_type: mapping
       bay_no: 7
       bay_side: elec
@@ -313,7 +313,7 @@ yard_data:
       source: auto
       vehicle_id: null
       std_m: null
-    - id: 138
+    - id: 255
       point_type: mapping
       bay_no: 11
       bay_side: diesel
@@ -326,7 +326,7 @@ yard_data:
       source: auto
       vehicle_id: null
       std_m: null
-    - id: 108
+    - id: 254
       point_type: mapping
       bay_no: 11
       bay_side: elec

@@ -45,12 +45,13 @@ def align_calibration_arms(cal: Any, elec, diesel, extra: dict | None = None) ->
 
 
 def sanitize_saved_attitude(att: Any) -> Any:
-    """保存时只留 four_antenna | dual_receiver，去掉跨距类旧字段。"""
+    """保存时只留 four_antenna | dual_receiver，去掉跨距类旧字段；姿态统一 rigid。"""
     if not isinstance(att, dict):
         return att
     out = dict(att)
     mode = str(out.get("mode") or "").strip().lower()
     out["mode"] = "dual_receiver" if mode in ("dual_receiver", "dual") else "four_antenna"
+    out["tire_attitude"] = "rigid"
     out.pop("roll_span_m", None)
     body_cal = out.get("body_calibration")
     if isinstance(body_cal, dict):

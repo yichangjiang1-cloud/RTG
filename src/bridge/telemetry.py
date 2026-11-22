@@ -186,6 +186,7 @@ def position_result_to_realtime(result: PositionResult) -> dict:
             (result.gantry_attitude_compare or {}).get("diesel_dual")
         ),
         "gantry_attitude_compare": result.gantry_attitude_compare or {},
+        "gnss_pair_align": getattr(result, "gnss_pair_align", None) or {},
         "speed": g.speed,
         # 接收机1 双天线 WGS84（杆臂智能标定：A1=ref_antenna，A2=antenna2）
         "antenna2": {

@@ -9,7 +9,7 @@ import {
 import { StatCard, StatusBadge, StatusDot, Compass } from './common';
 import { useAppContext } from '../context/AppContext';
 import type { RealtimeData } from '../types';
-import { gnssAtEnd, headingAlongGnss } from '../utils/gnssName';
+import { gnssAtEnd } from '../utils/gnssName';
 
 /** 速度显示死区，与中控 motion_speed.DEADBAND_MPS 一致 */
 const SPEED_DISPLAY_DEADBAND = 0.03;
@@ -41,9 +41,6 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
   const layout = vehicles.find(v => v.vehicle_id === selectedVehicleId)?.receiver_layout;
   const attCmp = data.gantry_attitude_compare;
   const fourGgaReady = attCmp?.four_ready === true;
-  const primaryIsFour = attCmp?.primary_method === 'four_antenna';
-  const primaryIsDual = attCmp?.primary_method === 'dual_receiver';
-  const perSide = attCmp?.tire_attitude === 'per_side';
 
   const chartData = useMemo(
     () =>
@@ -118,13 +115,7 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
           <div className="min-h-0 flex-1 overflow-y-auto pr-1 space-y-3 scrollbar-thin">
             <div>
               <p className="text-[10px] text-slate-500 mb-2 leading-relaxed">
-                {perSide
-                  ? '分侧定姿：航向、俯仰取电气/动力两侧各自双 GGA 的平均，横滚取四天线刚体共用值'
-                  : primaryIsFour
-                    ? `${headingAlongGnss(layout)}，俯仰为该轴线仰角，横滚为电气房相对动力房`
-                    : primaryIsDual
-                      ? '双接收机四 GGA（跟随配置 mode=dual_receiver）'
-                      : '等待姿态解算'}
+                主通道：整车四天线刚体（H/P/R 一套）
                 {data.attitude_source ? ` · ${data.attitude_source}` : ''}
               </p>
               <div className="space-y-1">
@@ -141,20 +132,19 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
                   <span className="font-mono text-amber-400 text-sm whitespace-nowrap">{data.pitch.toFixed(3)}°</span>
                 </div>
               </div>
-              {perSide && (
-                <div className="mt-2 pt-2 border-t border-slate-700/60 space-y-1">
-                  {([['电气侧', attCmp?.elec_dual], ['动力侧', attCmp?.diesel_dual]] as const).map(([label, side]) => (
-                    <div key={label} className="flex justify-between items-baseline gap-2 font-mono">
-                      <span className="text-slate-500 text-[10px] shrink-0">{label} H / P</span>
-                      <span className={`text-sm whitespace-nowrap ${side?.valid ? 'text-emerald-400' : 'text-slate-600'}`}>
-                        {side?.valid && side.heading != null && side.pitch != null
-                          ? `${side.heading.toFixed(2)}° / ${side.pitch.toFixed(3)}°`
-                          : '— / —（回退整车）'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <div className="mt-2 pt-2 border-t border-slate-700/60 space-y-1">
+                <p className="text-[10px] text-slate-500 mb-1">单侧双 GGA（仅显示，不参与主通道投影）</p>
+                {([['电气侧', attCmp?.elec_dual], ['动力侧', attCmp?.diesel_dual]] as const).map(([label, side]) => (
+                  <div key={label} className="flex justify-between items-baseline gap-2 font-mono">
+                    <span className="text-slate-500 text-[10px] shrink-0">{label} H / P</span>
+                    <span className={`text-sm whitespace-nowrap ${side?.valid ? 'text-emerald-400' : 'text-slate-600'}`}>
+                      {side?.valid && side.heading != null && side.pitch != null
+                        ? `${side.heading.toFixed(2)}° / ${side.pitch.toFixed(3)}°`
+                        : '— / —'}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="pt-3 border-t border-slate-700/60 space-y-3">
@@ -344,23 +334,15 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
               const end = gnssAtEnd(layout, role, 'downstream') === gnss ? 'downstream' : 'upstream';
               const tireKey = `${role}_${end}` as 'elec_upstream' | 'elec_downstream' | 'diesel_upstream' | 'diesel_downstream';
               const point = data.gantry.tires?.[tireKey];
-              const rigid = data.gantry.tires_rigid?.[tireKey];
               const ok = point?.valid === true;
-              const rigidOk = rigid?.valid === true;
               return (
               <div key={label} className="bg-slate-900/50 rounded-lg p-3">
                 <p className="section-title mb-2">{label}</p>
               <div className="space-y-1">
                 <div className="flex justify-between items-baseline gap-2">
-                  <span className="text-[10px] text-slate-500 shrink-0">X（分侧）</span>
+                  <span className="text-[10px] text-slate-500 shrink-0">X</span>
                     <span className={`font-mono text-sm whitespace-nowrap ${ok ? color : 'text-slate-500'}`}>
                       {formatCoordM(point?.x ?? 0, ok)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-baseline gap-2">
-                  <span className="text-[10px] text-slate-500 shrink-0">X（四天线刚体）</span>
-                  <span className={`font-mono text-sm whitespace-nowrap ${rigidOk ? 'text-cyan-400' : 'text-slate-500'}`}>
-                    {rigidOk ? formatCoordM(rigid?.x ?? 0, true) : '—'}
                   </span>
                 </div>
                 <div className="flex justify-between items-baseline gap-2">
@@ -378,43 +360,24 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
           {/* 四门腿偏移 */}
           <div>
             <p className="section-title mb-2">门腿偏移量（相对跑道中心线）</p>
-            <p className="text-[10px] text-slate-500 mb-2">
-              分侧定姿（主用）与四天线刚体整车姿态并行对比
-            </p>
             <div className="grid grid-cols-2 gap-2">
               {(
                 [
-                  ['电气 GNSS1', data.gantry.leg_offsets.fl, data.gantry.leg_offsets_rigid?.fl],
-                  ['电气 GNSS2', data.gantry.leg_offsets.rl, data.gantry.leg_offsets_rigid?.rl],
-                  ['动力 GNSS1', data.gantry.leg_offsets.fr, data.gantry.leg_offsets_rigid?.fr],
-                  ['动力 GNSS2', data.gantry.leg_offsets.rr, data.gantry.leg_offsets_rigid?.rr],
-                ] as [string, number, number | undefined][]
-              ).map(([label, perSideOff, rigidOff]) => {
-                const rigidOk = rigidOff !== undefined && (
-                  data.gantry.tires_rigid?.elec_downstream?.valid
-                  || data.gantry.tires_rigid?.elec_upstream?.valid
-                  || data.gantry.tires_rigid?.diesel_downstream?.valid
-                  || data.gantry.tires_rigid?.diesel_upstream?.valid
-                );
-                return (
-                <div key={label} className="px-3 py-1.5 bg-slate-900/40 rounded-lg space-y-0.5">
-                  <div className="flex justify-between items-center">
-                    <span className="text-[10px] text-slate-500">{label}（分侧）</span>
-                    <span className={`font-mono text-xs font-bold ${Math.abs(perSideOff) < 0.05 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                      {perSideOff >= 0 ? '+' : ''}{perSideOff.toFixed(4)} m
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-[10px] text-slate-500">四天线刚体</span>
-                    <span className={`font-mono text-xs font-bold ${rigidOk && rigidOff !== undefined ? (Math.abs(rigidOff) < 0.05 ? 'text-emerald-400' : 'text-cyan-400') : 'text-slate-500'}`}>
-                      {rigidOk && rigidOff !== undefined
-                        ? `${rigidOff >= 0 ? '+' : ''}${rigidOff.toFixed(4)} m`
-                        : '—'}
-                    </span>
-                  </div>
+                  ['电气 GNSS1', data.gantry.leg_offsets.fl],
+                  ['电气 GNSS2', data.gantry.leg_offsets.rl],
+                  ['动力 GNSS1', data.gantry.leg_offsets.fr],
+                  ['动力 GNSS2', data.gantry.leg_offsets.rr],
+                ] as [string, number][]
+              ).map(([label, offset]) => (
+                <div key={label} className="flex justify-between items-center px-3 py-1.5 bg-slate-900/40 rounded-lg">
+                  <span className="text-[10px] text-slate-500">{label}</span>
+                  <span className={`font-mono text-xs font-bold ${
+                    Math.abs(offset) < 0.05 ? 'text-emerald-400' : 'text-amber-400'
+                  }`}>
+                    {offset >= 0 ? '+' : ''}{offset.toFixed(4)} m
+                  </span>
                 </div>
-                );
-              })}
+              ))}
             </div>
           </div>
 

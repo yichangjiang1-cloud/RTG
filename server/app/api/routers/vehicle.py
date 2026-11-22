@@ -111,12 +111,13 @@ def _arms_payload(config: VehicleConfig) -> dict:
 
 
 def _sanitize_attitude(att):
-    """只保留四天线 / 双接收机，去掉跨距类旧字段。"""
+    """只保留四天线 / 双接收机，去掉跨距类旧字段；主通道姿态固定 rigid。"""
     if not isinstance(att, dict):
         return att
     out = dict(att)
     mode = str(out.get("mode") or "").strip().lower()
     out["mode"] = "dual_receiver" if mode in ("dual_receiver", "dual") else "four_antenna"
+    out["tire_attitude"] = "rigid"
     out.pop("roll_span_m", None)
     body_cal = out.get("body_calibration")
     if isinstance(body_cal, dict):

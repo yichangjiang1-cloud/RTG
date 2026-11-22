@@ -342,7 +342,8 @@ function attitudeForSave(att: GantryAttitudeConfig | undefined): GantryAttitudeC
   const { roll_span_m: _roll, body_calibration, ...rest } = att;
   const cal = body_calibration ? { ...body_calibration } : undefined;
   if (cal) delete cal.span_m;
-  return { ...rest, mode, ...(cal ? { body_calibration: cal } : {}) };
+  // 主通道统一整车姿态，避免云端再写下 per_side
+  return { ...rest, mode, tire_attitude: 'rigid', ...(cal ? { body_calibration: cal } : {}) };
 }
 
 function asArm(
