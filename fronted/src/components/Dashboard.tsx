@@ -256,47 +256,6 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
               </div>
             </div>
 
-            <div className="pt-3 border-t border-slate-700/60 space-y-3">
-              <div>
-                <p className="section-title mb-1">两侧接收机 NMEA</p>
-                <p className="text-[10px] text-slate-500">
-                  PASHR/TRA/HDT 原值 · 不经四天线刚体
-                </p>
-              </div>
-              {([
-                ['左侧 a1', attCmp?.nmea_a1],
-                ['右侧 a2', attCmp?.nmea_a2],
-              ] as const).map(([label, nmea]) => {
-                const ok = Boolean(nmea && nmea.valid !== false);
-                const prOk = ok && nmea?.pitch_roll_valid !== false && nmea?.pitch != null && nmea?.roll != null;
-                return (
-                  <div key={label} className="space-y-1">
-                    <p className="text-[10px] text-slate-500">
-                      {label}{ok && !prOk ? ' · 仅航向' : ''}
-                    </p>
-                    <div className="flex justify-between items-baseline gap-2">
-                      <span className="text-slate-500 text-[10px] shrink-0">Heading</span>
-                      <span className={`font-mono text-sm whitespace-nowrap ${ok ? 'text-emerald-400' : 'text-slate-600'}`}>
-                        {ok ? `${nmea!.heading.toFixed(2)}°` : '—'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-baseline gap-2">
-                      <span className="text-slate-500 text-[10px] shrink-0">Pitch</span>
-                      <span className={`font-mono text-sm whitespace-nowrap ${prOk ? 'text-emerald-400' : 'text-slate-600'}`}>
-                        {prOk ? `${nmea!.pitch!.toFixed(3)}°` : '—'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-baseline gap-2">
-                      <span className="text-slate-500 text-[10px] shrink-0">Roll</span>
-                      <span className={`font-mono text-sm whitespace-nowrap ${prOk ? 'text-emerald-400' : 'text-slate-600'}`}>
-                        {prOk ? `${nmea!.roll!.toFixed(3)}°` : '—'}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
             <p className="text-[10px] text-slate-600 pt-2 border-t border-slate-800 leading-relaxed">
               {fourGgaReady
                 ? '四天线齐：可选四天线刚体或双接收机；主通道跟车辆配置解算模式'

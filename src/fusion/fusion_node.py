@@ -35,7 +35,11 @@ from src.fusion.gantry_attitude import (
     derive_heading_pitch_from_dual_gga,
     normalize_heading_deg,
 )
-from src.fusion.gnss_pair import DEFAULT_MAX_PAIR_SKEW_S, apply_pair_skew
+from src.fusion.gnss_pair import (
+    DEFAULT_MAX_PAIR_SKEW_S,
+    DEFAULT_TIRE_PAIR_HOLD_S,
+    apply_pair_skew,
+)
 from src.solver.side_layout import parse_side_layout
 from src.utils.config_loader import get_config
 
@@ -116,6 +120,9 @@ class FusionNode:
         self._max_pair_skew_s = max(
             0.05, float(cfg.get("gnss.max_pair_skew_s", DEFAULT_MAX_PAIR_SKEW_S))
         )
+        self._att_hold_s = max(
+            0.0, float(cfg.get("gnss.tire_pair_hold_s", DEFAULT_TIRE_PAIR_HOLD_S))
+        )
         self._pair_skew_log_ts = 0.0
         self._last_pair_align: dict = {
             "dt_s": None,
@@ -123,6 +130,8 @@ class FusionNode:
             "dropped": False,
             "max_skew_s": self._max_pair_skew_s,
         }
+        self._last_good_att: Optional[tuple[float, float, float, str, str]] = None
+        self._last_good_att_at: float = 0.0
         self._require_rtk_fixed = bool(cfg.get("gnss.require_rtk_fixed", True))
 
         # 三台接收机各自的状态
@@ -659,18 +668,38 @@ class FusionNode:
             )
             self._att_missing = False
 
-        # 主通道统一整车 primary（四天线/双机一套 H/P/R）；单侧双 GGA 仅进 compare 供仪表盘只读
+        # 主通道统一整车 primary；单侧双 GGA 仅进 compare 供仪表盘只读。
+        # 历元丢一侧时 dual 俯仰/横滚会跳（如 pitch -0.15 / roll 0），短时保持上一帧四天线姿态。
+        now_att = time.time()
+        both_live = bool(ga1_live and ga2_live)
         write_hdg = att.heading_deg
         write_pitch = att.pitch_deg
         write_roll = att.roll_deg
         att_src = att.source
+        primary_method = compare.primary_method
+        held_att = False
+        if both_live and primary_method == "four_antenna":
+            self._last_good_att = (
+                write_hdg, write_pitch, write_roll, att_src, primary_method,
+            )
+            self._last_good_att_at = now_att
+        elif (
+            not both_live
+            and self._last_good_att is not None
+            and self._att_hold_s > 0
+            and (now_att - self._last_good_att_at) <= self._att_hold_s
+        ):
+            write_hdg, write_pitch, write_roll, att_src, primary_method = self._last_good_att
+            att_src = f"{att_src}+hold"
+            held_att = True
 
         for d in (d_a1, d_a2):
             d["heading"] = write_hdg
             d["pitch"] = write_pitch
             d["roll"] = write_roll
             d["attitude_source"] = att_src
-            d["attitude_primary_method"] = compare.primary_method
+            d["attitude_primary_method"] = primary_method
+            d["attitude_held"] = held_att
 
         with s_a1._lock:
             s_a1.heading_deg = write_hdg
@@ -682,17 +711,24 @@ class FusionNode:
             s_a2.roll_deg = write_roll
 
         compare_dict = compare.to_dict()
-        if att.source != self._last_gantry_att_source:
-            self._last_gantry_att_source = att.source
+        log_src = att_src
+        if log_src != self._last_gantry_att_source:
+            self._last_gantry_att_source = log_src
             four = compare.four_antenna
             dual = compare.dual_receiver
             delta = compare.delta
-            if four is not None and dual is not None and delta is not None:
+            if held_att:
+                logger.info(
+                    "[gantry] 联合姿态 | 主用=hold 保持四天线 | hdg=%.2f° pitch=%.2f° roll=%.2f° | "
+                    "a1_live=%s a2_live=%s（历元不对齐短时保持）",
+                    write_hdg, write_pitch, write_roll, ga1_live, ga2_live,
+                )
+            elif four is not None and dual is not None and delta is not None:
                 logger.info(
                     "[gantry] 姿态主用=%s | 四GGA hdg=%.2f pitch=%.2f roll=%.2f | "
                     "双接收机(%s) hdg=%.2f pitch=%.2f roll=%.2f | "
                     "Δ(对比−主) hdg=%.2f pitch=%.2f roll=%.2f",
-                    compare.primary_method,
+                    primary_method,
                     four.heading_deg,
                     four.pitch_deg,
                     four.roll_deg,
@@ -708,7 +744,7 @@ class FusionNode:
                 logger.info(
                     "[gantry] 联合姿态 | 主用=%s 来源=%s | hdg=%.2f° pitch=%.2f° roll=%.2f° | "
                     "a1_live=%s a2_live=%s four_ready=%s",
-                    compare.primary_method,
+                    primary_method,
                     att.source,
                     att.heading_deg,
                     att.pitch_deg,

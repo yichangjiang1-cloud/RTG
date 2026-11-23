@@ -27,8 +27,10 @@ interface EndState {
   antenna: LlaStr;
   tire: LlaStr;
   antennaLocked: boolean;
-  /** 天线坐标被记住/锁定/手改的时间 */
+  /** 天线坐标对应时刻（优先 GNSS 历元转本地，否则墙钟） */
   antennaAt: string | null;
+  /** 天线坐标对应的 NMEA UTC（如 074856.00），便于对照 raw */
+  antennaGnssUtc: string | null;
   /** 现场实时偏差手填：沿车体 X 方向，cm */
   liveBiasX: string;
 }
@@ -46,8 +48,10 @@ interface SavedRecord {
   attitude: Attitude;
   attitude_source: string;
   antenna: Lla;
-  /** 记录天线坐标时的时间 */
+  /** 天线坐标对应时刻（本地墙钟/由 GNSS 历元换算） */
   antenna_at: string | null;
+  /** 天线坐标对应的 NMEA UTC 字符串（如 074856.00） */
+  antenna_gnss_utc: string | null;
   tire_measured: Lla;
   tire_predicted: Lla | null;
   l_arm_config: Vec3 | null;
@@ -98,7 +102,8 @@ const RECORD_FORMAT_EXAMPLE = `{
   "attitude": { "heading": 90.12, "roll": 0.05, "pitch": -0.12 },
   "attitude_source": "snapshot",
   "antenna": { "lat": 30.12345678, "lon": 120.12345678, "alt": 25.100 },
-  "antenna_at": "2026-11-21T11:15:30.000Z",
+  "antenna_at": "2026-11-21T11:15:30.000+08:00",
+  "antenna_gnss_utc": "031530.00",
   "tire_measured": { "lat": 30.12345000, "lon": 120.12346000, "alt": 4.200 },
   "tire_predicted": { "lat": ..., "lon": ..., "alt": ... } | null,
   "l_arm_config": [0.6505, 1.2457, 20.9560] | null,
@@ -180,6 +185,51 @@ function fmtLocal(iso: string | null | undefined): string {
   }
 }
 
+/** NMEA UTC HHMMSS(.ss) + 参考日 → ISO（UTC 瞬间）。 */
+function nmeaUtcToIso(nmeaUtc: string | null | undefined, refIso?: string | null): string | null {
+  if (!nmeaUtc) return null;
+  const m = /^(\d{2})(\d{2})(\d{2})(?:\.(\d+))?$/.exec(String(nmeaUtc).trim());
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  const ss = Number(m[3]);
+  const frac = m[4] ? Number(`0.${m[4]}`) : 0;
+  const ms = Math.round(frac * 1000);
+  const ref = refIso ? new Date(refIso) : new Date();
+  if (Number.isNaN(ref.getTime())) return null;
+  let t = Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), ref.getUTCDate(), hh, mm, ss, ms);
+  const refMs = ref.getTime();
+  if (t - refMs > 12 * 3600e3) t -= 86400e3;
+  if (refMs - t > 12 * 3600e3) t += 86400e3;
+  return new Date(t).toISOString();
+}
+
+/** 该端天线所属接收机的 NMEA UTC（a1=左机，a2=右机）。 */
+function liveGnssUtc(
+  data: RealtimeData,
+  layout: ReceiverLayout | undefined,
+  end: 'upstream' | 'downstream',
+): string | null {
+  if (!layout) {
+    return data.gnss_pair_align?.a1_utc ?? data.gnss_pair_align?.a2_utc ?? null;
+  }
+  const key = antennaKeyForEnd(layout, 'elec', end);
+  const fromLeft = key === 'a1' || key === 'a2';
+  const utc = fromLeft ? data.gnss_pair_align?.a1_utc : data.gnss_pair_align?.a2_utc;
+  return utc ?? data.gnss_pair_align?.a1_utc ?? data.gnss_pair_align?.a2_utc ?? null;
+}
+
+/** 天线时刻：有 GNSS UTC 则用历元，否则墙钟。 */
+function antennaEpoch(
+  data: RealtimeData,
+  layout: ReceiverLayout | undefined,
+  end: 'upstream' | 'downstream',
+): { at: string; gnssUtc: string | null } {
+  const gnssUtc = liveGnssUtc(data, layout, end);
+  const fromGnss = nmeaUtcToIso(gnssUtc, data.timestamp);
+  return { at: fromGnss ?? new Date().toISOString(), gnssUtc };
+}
+
 function parseBiasXCm(s: string): number | null {
   const v = parseFloat(s);
   return Number.isFinite(v) ? v : null;
@@ -242,11 +292,11 @@ export default function LeverCheck({ liveData }: Props) {
   const [ends, setEnds] = useState<Record<EndId, EndState>>({
     elec_down: {
       antenna: { ...EMPTY }, tire: { ...EMPTY }, antennaLocked: false,
-      antennaAt: null, liveBiasX: '',
+      antennaAt: null, antennaGnssUtc: null, liveBiasX: '',
     },
     elec_up: {
       antenna: { ...EMPTY }, tire: { ...EMPTY }, antennaLocked: false,
-      antennaAt: null, liveBiasX: '',
+      antennaAt: null, antennaGnssUtc: null, liveBiasX: '',
     },
   });
   const [records, setRecords] = useState<SavedRecord[]>([]);
@@ -392,6 +442,7 @@ export default function LeverCheck({ liveData }: Props) {
           measured_at: string;
           attitude: Attitude;
           antennas: Partial<Record<EndId, Lla>>;
+          antenna_gnss_utc?: Partial<Record<EndId, string | null>>;
         };
         setSnapAt(s.measured_at);
         setAtt(s.attitude);
@@ -402,12 +453,18 @@ export default function LeverCheck({ liveData }: Props) {
             antenna: s.antennas.elec_down ? toStr(s.antennas.elec_down) : prev.elec_down.antenna,
             antennaLocked: Boolean(s.antennas.elec_down),
             antennaAt: s.antennas.elec_down ? s.measured_at : prev.elec_down.antennaAt,
+            antennaGnssUtc: s.antennas.elec_down
+              ? (s.antenna_gnss_utc?.elec_down ?? prev.elec_down.antennaGnssUtc)
+              : prev.elec_down.antennaGnssUtc,
           },
           elec_up: {
             ...prev.elec_up,
             antenna: s.antennas.elec_up ? toStr(s.antennas.elec_up) : prev.elec_up.antenna,
             antennaLocked: Boolean(s.antennas.elec_up),
             antennaAt: s.antennas.elec_up ? s.measured_at : prev.elec_up.antennaAt,
+            antennaGnssUtc: s.antennas.elec_up
+              ? (s.antenna_gnss_utc?.elec_up ?? prev.elec_up.antennaGnssUtc)
+              : prev.elec_up.antennaGnssUtc,
           },
         }));
       }
@@ -419,24 +476,30 @@ export default function LeverCheck({ liveData }: Props) {
     setAtt(liveAttitude(liveData));
   }, [liveData, attSource]);
 
-  // 未锁定的天线框跟随实时，并刷新天线时刻
+  // 未锁定的天线框跟随实时，并刷新天线时刻（优先 GNSS UTC）
   useEffect(() => {
     setEnds((prev) => {
       let changed = false;
       const next = { ...prev };
-      const now = new Date().toISOString();
       (['elec_down', 'elec_up'] as EndId[]).forEach((id) => {
         if (prev[id].antennaLocked) return;
         const end = id === 'elec_down' ? 'downstream' : 'upstream';
         const live = liveAntenna(liveData, layout, end);
         if (!live) return;
         const s = toStr(live);
+        const epoch = antennaEpoch(liveData, layout, end);
         if (
           s.lat !== prev[id].antenna.lat
           || s.lon !== prev[id].antenna.lon
           || s.alt !== prev[id].antenna.alt
+          || epoch.gnssUtc !== prev[id].antennaGnssUtc
         ) {
-          next[id] = { ...prev[id], antenna: s, antennaAt: now };
+          next[id] = {
+            ...prev[id],
+            antenna: s,
+            antennaAt: epoch.at,
+            antennaGnssUtc: epoch.gnssUtc,
+          };
           changed = true;
         }
       });
@@ -488,12 +551,24 @@ export default function LeverCheck({ liveData }: Props) {
       return;
     }
     const attitude = liveAttitude(liveData);
-    const measured_at = new Date().toISOString();
+    const epDown = antennaEpoch(liveData, layout, 'downstream');
+    const epUp = antennaEpoch(liveData, layout, 'upstream');
+    const measured_at = (aDown ? epDown.at : null) ?? (aUp ? epUp.at : null) ?? new Date().toISOString();
     const antennas: Partial<Record<EndId, Lla>> = {};
-    if (aDown) antennas.elec_down = aDown;
-    if (aUp) antennas.elec_up = aUp;
+    const antenna_gnss_utc: Partial<Record<EndId, string | null>> = {};
+    if (aDown) {
+      antennas.elec_down = aDown;
+      antenna_gnss_utc.elec_down = epDown.gnssUtc;
+    }
+    if (aUp) {
+      antennas.elec_up = aUp;
+      antenna_gnss_utc.elec_up = epUp.gnssUtc;
+    }
     try {
-      localStorage.setItem(SNAP_KEY(selectedVehicleId), JSON.stringify({ measured_at, attitude, antennas }));
+      localStorage.setItem(
+        SNAP_KEY(selectedVehicleId),
+        JSON.stringify({ measured_at, attitude, antennas, antenna_gnss_utc }),
+      );
     } catch { /* ignore */ }
     setSnapAt(measured_at);
     setAtt(attitude);
@@ -503,13 +578,15 @@ export default function LeverCheck({ liveData }: Props) {
         ...prev.elec_down,
         antenna: aDown ? toStr(aDown) : prev.elec_down.antenna,
         antennaLocked: Boolean(aDown),
-        antennaAt: aDown ? measured_at : prev.elec_down.antennaAt,
+        antennaAt: aDown ? epDown.at : prev.elec_down.antennaAt,
+        antennaGnssUtc: aDown ? epDown.gnssUtc : prev.elec_down.antennaGnssUtc,
       },
       elec_up: {
         ...prev.elec_up,
         antenna: aUp ? toStr(aUp) : prev.elec_up.antenna,
         antennaLocked: Boolean(aUp),
-        antennaAt: aUp ? measured_at : prev.elec_up.antennaAt,
+        antennaAt: aUp ? epUp.at : prev.elec_up.antennaAt,
+        antennaGnssUtc: aUp ? epUp.gnssUtc : prev.elec_up.antennaGnssUtc,
       },
     }));
     showToast('已记住当前电气天线与姿态，可移车后填轮胎');
@@ -537,6 +614,8 @@ export default function LeverCheck({ liveData }: Props) {
         antenna: { ...prev[id].antenna, [field]: value },
         antennaLocked: true,
         antennaAt: now,
+        // 手改坐标：墙钟为准，清空 GNSS 历元以免误导
+        antennaGnssUtc: null,
       },
     }));
     if (attSource === 'live') setAttSource('manual');
@@ -563,10 +642,16 @@ export default function LeverCheck({ liveData }: Props) {
       showToast('实时天线无效', 'error');
       return;
     }
-    const now = new Date().toISOString();
+    const epoch = antennaEpoch(liveData, layout, end);
     setEnds((prev) => ({
       ...prev,
-      [id]: { ...prev[id], antenna: toStr(live), antennaLocked: true, antennaAt: now },
+      [id]: {
+        ...prev[id],
+        antenna: toStr(live),
+        antennaLocked: true,
+        antennaAt: epoch.at,
+        antennaGnssUtc: epoch.gnssUtc,
+      },
     }));
   };
 
@@ -684,7 +769,13 @@ export default function LeverCheck({ liveData }: Props) {
       attitude: { ...att },
       attitude_source: attSource,
       antenna: ant,
-      antenna_at: st.antennaAt,
+      antenna_at: st.antennaAt ?? antennaEpoch(
+        liveData,
+        layout,
+        id === 'elec_down' ? 'downstream' : 'upstream',
+      ).at,
+      antenna_gnss_utc: st.antennaGnssUtc
+        ?? liveGnssUtc(liveData, layout, id === 'elec_down' ? 'downstream' : 'upstream'),
       tire_measured: tire,
       tire_predicted: a?.predicted ?? null,
       l_arm_config: a?.cfg ?? null,
@@ -821,7 +912,11 @@ export default function LeverCheck({ liveData }: Props) {
 
         {snapAt && (
           <p className="text-[11px] text-emerald-400/90">
-            已记住 {fmtLocal(snapAt)} 的天线与姿态（可移车后只填轮胎）
+            已记住 GNSS 天线时刻 {fmtLocal(snapAt)}
+            {ends.elec_down.antennaGnssUtc || ends.elec_up.antennaGnssUtc
+              ? `（NMEA UTC ${ends.elec_down.antennaGnssUtc ?? ends.elec_up.antennaGnssUtc}）`
+              : ''}
+            的天线与姿态（可移车后只填轮胎）
           </p>
         )}
 
@@ -926,8 +1021,11 @@ export default function LeverCheck({ liveData }: Props) {
 
               <FieldGroup title="天线 WGS84" values={st.antenna} onChange={(f, v) => updateAnt(id, f, v)} />
               <p className="text-[10px] text-slate-500 -mt-2">
-                天线坐标时刻：
+                GNSS 天线时间：
                 <span className="font-mono text-slate-300 ml-1">{fmtLocal(st.antennaAt)}</span>
+                {st.antennaGnssUtc ? (
+                  <span className="font-mono text-slate-400 ml-1">（UTC {st.antennaGnssUtc}）</span>
+                ) : null}
                 {!st.antennaLocked && st.antennaAt ? (
                   <span className="text-slate-600 ml-1">（跟随实时，随坐标刷新）</span>
                 ) : null}
@@ -1149,7 +1247,7 @@ export default function LeverCheck({ liveData }: Props) {
               <div key={r.id} className="text-[11px] font-mono bg-slate-900/40 rounded-lg p-3 space-y-0.5">
                 <div className="flex items-start justify-between gap-2">
                   <p className="text-slate-300">
-                    保存 {fmtLocal(r.saved_at)} · {r.gnss} · {r.end}
+                    {r.gnss} · {r.end}
                   </p>
                   <div className="flex gap-1 shrink-0">
                     <button
@@ -1169,8 +1267,14 @@ export default function LeverCheck({ liveData }: Props) {
                     </button>
                   </div>
                 </div>
-                <p className="text-slate-500">
-                  天线时刻 {fmtLocal(r.antenna_at)}
+                <p className="text-slate-300">
+                  存储时间 {fmtLocal(r.saved_at)}
+                </p>
+                <p className="text-emerald-400/90">
+                  GNSS 天线时间 {fmtLocal(r.antenna_at)}
+                  {r.antenna_gnss_utc ? (
+                    <span className="text-slate-500">（UTC {r.antenna_gnss_utc}）</span>
+                  ) : null}
                 </p>
                 <p className="text-slate-500">
                   H/R/P {r.attitude.heading.toFixed(2)}/{r.attitude.roll.toFixed(3)}/{r.attitude.pitch.toFixed(3)}

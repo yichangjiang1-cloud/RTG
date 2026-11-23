@@ -51,7 +51,12 @@ from src.solver.side_layout import (
     split_sides,
 )
 from src.fusion.gantry_attitude import normalize_tire_attitude
-from src.fusion.gnss_pair import DEFAULT_MAX_PAIR_SKEW_S, apply_pair_skew
+from src.fusion.gnss_pair import (
+    DEFAULT_MAX_PAIR_SKEW_S,
+    DEFAULT_TIRE_PAIR_HOLD_S,
+    apply_pair_skew,
+    merge_held_tires,
+)
 from src.solver.motion_speed import (
     DEADBAND_MPS,
     MIN_DISPLACEMENT_M,
@@ -150,6 +155,11 @@ class SolverNode:
         self._max_pair_skew_s = max(
             0.05, float(cfg.get("gnss.max_pair_skew_s", DEFAULT_MAX_PAIR_SKEW_S))
         )
+        self._tire_pair_hold_s = max(
+            0.0, float(cfg.get("gnss.tire_pair_hold_s", DEFAULT_TIRE_PAIR_HOLD_S))
+        )
+        self._last_good_tires_ecef: Optional[dict] = None
+        self._last_good_tires_at: float = 0.0
         self._require_rtk_fixed = bool(cfg.get("gnss.require_rtk_fixed", True))
 
         # 小车零点（大车车体系，锚定 L-Point，随大车移动）
@@ -798,7 +808,23 @@ class SolverNode:
             attitude_compare=att_cmp,
             tire_attitude=tire_mode,
         )
+        # 历元丢一侧 → 四轮胎暂时不齐 → 场内/场外狂跳；短时用上一帧齐整轮胎填缺
+        tires_ecef, tires_held = merge_held_tires(
+            tires_ecef,
+            self._last_good_tires_ecef,
+            self._last_good_tires_at,
+            now,
+            self._tire_pair_hold_s,
+        )
+        if isinstance(pair_align, dict):
+            pair_align = dict(pair_align)
+            pair_align["tires_held"] = bool(tires_held)
         center_ll = self._tire_centroid_wgs84(tires_ecef)
+        if center_ll is not None and not tires_held:
+            self._last_good_tires_ecef = {
+                k: tires_ecef.get(k) for k in ("elec1", "elec2", "diesel1", "diesel2")
+            }
+            self._last_good_tires_at = now
         if not self._yard_manager._yard_meta:
             if not self._yard_missing_logged:
                 logger.warning(

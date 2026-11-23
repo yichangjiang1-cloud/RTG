@@ -1,0 +1,14 @@
+# Ubuntu 20.04 / Python 3.8 / x86_64 离线包。版本停在仍提供 3.8 轮子的最后一代。
+numpy==1.24.4
+scipy==1.10.1
+PyYAML==6.0.2
+pyserial==3.5
+paho-mqtt==2.1.0
+requests==2.32.3
+urllib3==2.2.3
+charset-normalizer==3.3.2
+idna==3.10
+certifi==2024.8.30
+pip==24.3.1
+setuptools==69.5.1
+wheel==0.44.0

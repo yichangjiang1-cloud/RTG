@@ -9,9 +9,37 @@ from __future__ import annotations
 
 from typing import Optional
 
-DEFAULT_MAX_PAIR_SKEW_S = 0.15
+DEFAULT_MAX_PAIR_SKEW_S = 0.25
 DEFAULT_MAX_INTRA_ANTENNA_SKEW_S = 0.05
+DEFAULT_TIRE_PAIR_HOLD_S = 1.0
 _DAY_S = 86400.0
+_TIRE_KEYS = ("elec1", "elec2", "diesel1", "diesel2")
+
+
+def merge_held_tires(
+    tires: dict,
+    held: Optional[dict],
+    held_at: float,
+    now: float,
+    hold_s: float,
+) -> tuple[dict, bool]:
+    """
+    当前帧四轮胎不齐时，在 hold_s 内用上一帧齐整结果填缺。
+    返回 (合并后的 tires 浅拷贝, 是否用了 hold)。
+    """
+    out = dict(tires or {})
+    if all(out.get(k) is not None for k in _TIRE_KEYS):
+        return out, False
+    if not held or hold_s <= 0:
+        return out, False
+    if (now - float(held_at)) > float(hold_s):
+        return out, False
+    used = False
+    for k in _TIRE_KEYS:
+        if out.get(k) is None and held.get(k) is not None:
+            out[k] = held[k]
+            used = True
+    return out, used
 
 
 def utc_sod_diff_s(a: Optional[float], b: Optional[float]) -> Optional[float]:
