@@ -1,6 +1,9 @@
 """
 大车速度：作业点地速 = 走行 + ω×r。
 中控展示的是走行（沿航向平移），必须用航向变化把转动切向扣掉。
+
+幅值优先用作业点差分（扣 ω×r 后）；RMC/VTG 仅在位移不足时作备用，
+避免 GNSS 天线地速量化 + 慢更新把仪表盘拖慢、拖糊。
 """
 
 from __future__ import annotations
@@ -11,13 +14,15 @@ from dataclasses import dataclass
 from src.solver.gantry_frame import heading_axes_lycs
 
 DEADBAND_MPS = 0.03
-EMA_ALPHA = 0.35
+EMA_ALPHA = 0.60
 MIN_DISPLACEMENT_M = 1e-4
 MIN_COURSE_ALIGN = 0.3
 # 超过此航向变化率视为在转；GNSS 地速又接近 0 时按原地转处理
 MIN_YAW_RATE_DPS = 8.0
 PAIR_DT = 0.05
 FLUSH_DT = 0.18
+# 位移足够时，GNSS 与差分幅值差过大则仍信差分（抑制天线地速偏置）
+GNSS_POS_REJECT_RATIO = 2.5
 
 
 def use_gantry_speed_sample(live_count: int, since_any: float, dt: float) -> bool:
@@ -134,6 +139,31 @@ def hold_gnss_speed(
     return state.speed
 
 
+def _pick_speed_magnitude(
+    pos_speed: float,
+    gnss_speed_mps: float,
+    *,
+    deadband: float,
+) -> float | None:
+    """
+    选幅值：位移差分优先；GNSS 仅在差分不足时备用。
+    两者都够但 GNSS 离谱偏高/偏低时仍信差分。
+    """
+    pos_ok = pos_speed >= deadband
+    gnss_ok = gnss_speed_mps >= deadband
+    if pos_ok and gnss_ok:
+        lo = min(pos_speed, gnss_speed_mps)
+        hi = max(pos_speed, gnss_speed_mps)
+        if lo > 1e-6 and hi / lo > GNSS_POS_REJECT_RATIO:
+            return pos_speed
+        return pos_speed
+    if pos_ok:
+        return pos_speed
+    if gnss_ok:
+        return gnss_speed_mps
+    return None
+
+
 def update_motion_speed(
     state: MotionSpeedState,
     dx: float,
@@ -151,8 +181,8 @@ def update_motion_speed(
     """
     大车速度 = 作业点地速去掉 ω×r 后的沿航向走行。
 
-    有航向变化时用 translational_along_m；GNSS 有地速时以 VTG/RMC 为幅值
-   （模拟器 VTG 是车体中心速度：只转=0，直行=2）。
+    有航向变化时用 translational_along_m。幅值优先作业点差分；
+    位移过小才回落到 VTG/RMC。
     """
     if dt <= 0:
         state.speed = _snap(state.speed, deadband)
@@ -187,20 +217,13 @@ def update_motion_speed(
     else:
         vx, vy = dx / dt, dy / dt
         pos_speed = math.hypot(vx, vy)
-    gnss_ok = gnss_speed_mps >= deadband
-    pos_ok = pos_speed >= deadband
 
-    if not gnss_ok and not pos_ok:
+    mag = _pick_speed_magnitude(pos_speed, gnss_speed_mps, deadband=deadband)
+    if mag is None:
         state.vx = 0.0
         state.vy = 0.0
         state.speed = _snap(0.0, deadband)
         return state.speed
-
-    if gnss_ok:
-        # 中控实时速度跟车体中心地速：有 VTG/RMC 时以它为幅值，稳定
-        mag = gnss_speed_mps
-    else:
-        mag = pos_speed
 
     if abs(state.vx) > 1e-9 or abs(state.vy) > 1e-9:
         dot = vx * state.vx + vy * state.vy

@@ -48,6 +48,16 @@ function rowsByBay(points: SurveyPoint[]): BayRow[] {
   return [...map.values()].sort((a, b) => a.bay - b.bay);
 }
 
+function fmtLycs(point?: SurveyPoint): string | null {
+  if (point?.lycs_x == null || point?.lycs_y == null) return null;
+  if (!Number.isFinite(point.lycs_x) || !Number.isFinite(point.lycs_y)) return null;
+  const z =
+    point.lycs_z != null && Number.isFinite(point.lycs_z)
+      ? ` Z ${point.lycs_z.toFixed(3)}`
+      : '';
+  return `X ${point.lycs_x.toFixed(3)}  Y ${point.lycs_y.toFixed(3)}${z}`;
+}
+
 function PointCell({ point }: { point?: SurveyPoint }) {
   if (!point) return <span className="text-xs text-slate-600">未采集</span>;
   const sourceTag =
@@ -55,12 +65,16 @@ function PointCell({ point }: { point?: SurveyPoint }) {
       : point.source === 'rtg_end' ? '头尾'
         : point.source === 'rtg_fix' ? '重采'
           : point.source === 'rtk' ? 'RTK' : '';
+  const lycs = fmtLycs(point);
   return (
     <div className="leading-tight">
       <div className="font-mono text-xs text-slate-200">{point.lat.toFixed(7)}, {point.lon.toFixed(7)}</div>
       <div className="mt-0.5 font-mono text-[10px] text-slate-500">
         {point.alt.toFixed(3)} m{sourceTag ? ` · ${sourceTag}` : ''}
       </div>
+      {lycs && (
+        <div className="mt-0.5 font-mono text-[10px] text-sky-300/90">LYCS {lycs} m</div>
+      )}
     </div>
   );
 }
@@ -178,7 +192,8 @@ export default function Mapping({ liveData }: MappingProps) {
       .then((resp: { code: number; data: Array<{
         id: number; bay_id?: string; bay_no?: number; bay_side?: string; point_type?: string;
         lat: number; lon: number; alt: number;
-        local_z?: number; created_at: string;
+        local_z?: number; lycs_x?: number | null; lycs_y?: number | null; lycs_z?: number | null;
+        created_at: string;
         source?: string; vehicle_id?: string | null; std_m?: number | null;
       }> } | null) => {
         if (resp?.code === 200 && Array.isArray(resp.data)) {
@@ -191,7 +206,10 @@ export default function Mapping({ liveData }: MappingProps) {
             lat: p.lat,
             lon: p.lon,
             alt: p.alt,
-            dz: p.local_z ?? 0,
+            dz: p.lycs_z ?? p.local_z ?? 0,
+            lycs_x: p.lycs_x ?? null,
+            lycs_y: p.lycs_y ?? null,
+            lycs_z: p.lycs_z ?? null,
             timestamp: p.created_at,
             synced: true,
             source: (p.source as SurveyPointSource | undefined) || 'rtk',
@@ -803,6 +821,7 @@ export default function Mapping({ liveData }: MappingProps) {
                               backendBase={baseUrl}
                               yardId={yardId}
                               bayNo={row.bay}
+                              bayCount={selectedYard?.total_bays}
                               elec={row.elec}
                               diesel={row.diesel}
                               defaultSide={baySide}

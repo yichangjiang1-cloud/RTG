@@ -13,6 +13,8 @@ interface BayPointAdjustProps {
   backendBase: string;
   yardId: string;
   bayNo: number;
+  /** 场地贝位总数；用于判断是否头/尾贝 */
+  bayCount?: number;
   elec?: SurveyPoint | null;
   diesel?: SurveyPoint | null;
   defaultSide?: Side;
@@ -77,6 +79,7 @@ export default function BayPointAdjust({
   backendBase,
   yardId,
   bayNo,
+  bayCount,
   elec,
   diesel,
   defaultSide = 'both',
@@ -85,6 +88,7 @@ export default function BayPointAdjust({
   onApplied,
   onClose,
 }: BayPointAdjustProps) {
+  const isEndBay = bayNo === 1 || (bayCount != null && bayCount > 0 && bayNo === bayCount);
   const initialSide: Side = allowBoth
     ? defaultSide
     : (defaultSide === 'diesel' ? 'diesel' : 'elec');
@@ -273,7 +277,14 @@ export default function BayPointAdjust({
       </div>
 
       <div className="space-y-2">
-        <p className="text-[10px] text-slate-500">手动写经纬度（保存后关闭；改头/尾会重算自动贝位并更新原点/+Y）</p>
+        <p className="text-[10px] text-slate-500">
+          手动写经纬度（保存后关闭）。
+          {isEndBay
+            ? (bayNo === 1
+              ? '改头贝：会更新原点、重钉 +Y，并重算所有「自动」中间贝。'
+              : '改尾贝：会重钉 +Y，并重算所有「自动」中间贝。')
+            : '改中间贝：只改本贝位，不会动其它点。'}
+        </p>
         {side === 'both' ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div className="space-y-1">
@@ -309,7 +320,10 @@ export default function BayPointAdjust({
 
       <div className="space-y-2 border-t border-slate-800 pt-2">
         <p className="text-[10px] text-slate-500">
-          沿堆场坐标平移（+X 右，+Y 沿贝位）。点一下移一步；改头/尾时中间「自动」点会一起重算。
+          沿堆场坐标平移（+X 右，+Y 沿贝位）。点一下移一步。
+          {isEndBay
+            ? '改头/尾时中间「自动」点会一起重算。'
+            : '中间贝只平移本点。'}
         </p>
         <label className="flex items-center gap-2 text-[10px] text-slate-400">
           <span className="shrink-0">每步距离</span>

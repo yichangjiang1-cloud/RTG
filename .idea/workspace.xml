@@ -4,28 +4,18 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="纠偏验证">
+    <list default="true" id="c73eaacb-089d-40a9-8b76-5e92339297df" name="更改" comment="姿态角改回全车姿态">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/system.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/system.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/vehicle_params.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/vehicle_params.yaml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/config/yard_config.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/yard_config.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/fronted/src/App.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/App.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/BayPointAdjust.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/BayPointAdjust.tsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/fronted/src/components/Dashboard.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Dashboard.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/fronted/src/components/Navbar.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Navbar.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/fronted/src/components/VehicleConfig.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/VehicleConfig.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fronted/src/components/Mapping.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/components/Mapping.tsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/fronted/src/types/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/fronted/src/types/index.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/server/app/api/routers/vehicle.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/api/routers/vehicle.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/server/app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/bridge/telemetry.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/bridge/telemetry.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/driver/gnss_receiver.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/gnss_receiver.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/driver/nmea_parser.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/driver/nmea_parser.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/fusion/fusion_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/fusion/fusion_node.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/fusion/gantry_attitude.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/fusion/gantry_attitude.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/fusion/gnss_pair.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/fusion/gnss_pair.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/models/gnss_data.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/gnss_data.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/models/positioning.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/positioning.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/api/routers/lever_check.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/api/routers/lever_check.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/server/app/api/routers/survey.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/app/api/routers/survey.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/solver/motion_speed.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/motion_speed.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/solver/solver_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/solver/solver_node.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/utils/vehicle_params_backup.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/vehicle_params_backup.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_motion_speed.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_motion_speed.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -373,7 +363,15 @@
       <option name="project" value="LOCAL" />
       <updated>1795257476036</updated>
     </task>
-    <option name="localTasksCounter" value="19" />
+    <task id="LOCAL-00019" summary="姿态角改回全车姿态">
+      <option name="closed" value="true" />
+      <created>1795355608882</created>
+      <option name="number" value="00019" />
+      <option name="presentableId" value="LOCAL-00019" />
+      <option name="project" value="LOCAL" />
+      <updated>1795355608882</updated>
+    </task>
+    <option name="localTasksCounter" value="20" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -412,7 +410,8 @@
     <MESSAGE value="PLC下发协议更改" />
     <MESSAGE value="修改一堆" />
     <MESSAGE value="纠偏验证" />
-    <option name="LAST_COMMIT_MESSAGE" value="纠偏验证" />
+    <MESSAGE value="姿态角改回全车姿态" />
+    <option name="LAST_COMMIT_MESSAGE" value="姿态角改回全车姿态" />
   </component>
   <component name="github-copilot-workspace">
     <instructionFileLocations>

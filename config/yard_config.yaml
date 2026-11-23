@@ -1,5 +1,5 @@
 meta:
-  synced_at: '2026-11-22T21:46:37+08:00'
+  synced_at: '2026-11-22T22:36:52+08:00'
   vehicle_id: RTG-002
   source: api
 yards:
@@ -79,7 +79,7 @@ yard_data:
       source: rtg_end
       vehicle_id: RTG-002
       std_m: null
-    - id: 160
+    - id: 257
       point_type: mapping
       bay_no: 2
       bay_side: diesel
@@ -92,7 +92,7 @@ yard_data:
       source: auto
       vehicle_id: null
       std_m: null
-    - id: 159
+    - id: 256
       point_type: mapping
       bay_no: 2
       bay_side: elec

@@ -40,6 +40,7 @@ from app.utils.yard_geometry import (
     to_yard_xy,
 )
 from app.utils.logger import get_logger
+from app.utils.survey_adjust_log import path_for as adjust_log_path, read_records as read_adjust_records
 
 RTK_VEHICLE_ID = "RTK_HANDHELD"
 
@@ -177,6 +178,36 @@ def _yard_axis(yard: Yard, elec_pts, diesel_pts):
             diesel_pts, "fit", None, yard.origin_lat, yard.origin_lon,
         )
     return axis
+
+
+def _mapping_lycs_by_id(
+    db: Session,
+    yard_id: str,
+    points: list[SurveyPoint] | None = None,
+) -> dict[int, dict[str, float]]:
+    """按当前堆场原点 +Y 把 mapping 点投到 LYCS（米）。"""
+    yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
+    if yard is None or yard.origin_lat is None or yard.origin_lon is None:
+        return {}
+    rows = points if points is not None else _mapping_points(db, yard_id)
+    if not rows:
+        return {}
+    elec = _en_of(_points_on_side(rows, "elec"), yard.origin_lat, yard.origin_lon)
+    diesel = _en_of(_points_on_side(rows, "diesel"), yard.origin_lat, yard.origin_lon)
+    axis = _yard_axis(yard, elec, diesel)
+    if axis is None:
+        return {}
+    origin_alt = float(yard.origin_alt or 0.0)
+    out: dict[int, dict[str, float]] = {}
+    for p in rows:
+        east, north = en_meters(p.lat, p.lon, yard.origin_lat, yard.origin_lon)
+        x, y = to_yard_xy(east, north, axis[0], axis[1])
+        out[int(p.id)] = {
+            "x": round(float(x), 4),
+            "y": round(float(y), 4),
+            "z": round(float(p.alt or 0.0) - origin_alt, 4),
+        }
+    return out
 
 
 def _reject_close_bays(db: Session, yard_id: str) -> None:
@@ -399,6 +430,30 @@ def _upsert_calibration_transform(
     return row
 
 
+@router.get("/adjust-log", response_model=ApiResponse)
+async def get_adjust_log(yard_id: str, end_only: bool = False, limit: int = 50):
+    """贝位点修正审计（含头/尾 XY 平移的堆场米增量）。"""
+    yard_id = (yard_id or "").strip()
+    if not yard_id:
+        raise HTTPException(status_code=400, detail="缺少 yard_id")
+    records = read_adjust_records(yard_id)
+    if end_only:
+        records = [r for r in records if r.get("is_end_bay")]
+    try:
+        n = max(1, min(int(limit), 200))
+    except (TypeError, ValueError):
+        n = 50
+    return ApiResponse(
+        code=200,
+        message="ok",
+        data={
+            "yard_id": yard_id,
+            "path": adjust_log_path(yard_id),
+            "records": records[:n],
+        },
+    )
+
+
 @router.post("/points/adjust", response_model=ApiResponse)
 async def adjust_survey_point(req: SurveyPointAdjustRequest, db: Session = Depends(get_db)):
     """
@@ -422,17 +477,20 @@ async def adjust_survey_point(req: SurveyPointAdjustRequest, db: Session = Depen
     parts = [f"贝位 {req.bay_no} 已{action}"]
     if result.get("origin_updated"):
         parts.append("原点已随 1 号电气侧更新")
-    gen = result.get("generated") or {}
-    auto_n = int(gen.get("updated") or 0) + int(gen.get("created") or 0)
-    if auto_n > 0:
-        parts.append(f"已重算 {auto_n} 个自动贝位")
     summary = result.get("summary") or {}
-    bearing = summary.get("y_axis_bearing_deg")
-    if bearing is not None and int(req.bay_no) in (
-        1,
-        int((summary.get("bay_count") or 0) or 0),
-    ):
-        parts.append(f"+Y 方位 {float(bearing):.2f}°")
+    bay_count = int((summary.get("bay_count") or 0) or 0)
+    is_end = int(req.bay_no) in (1, bay_count) if bay_count >= 1 else False
+    # 仅头/尾编辑才提示重算；中间贝只改本点，避免「已重算其它点」误导
+    if is_end or summary.get("end_bay_edit"):
+        gen = result.get("generated") or {}
+        auto_n = int(gen.get("updated") or 0) + int(gen.get("created") or 0)
+        if auto_n > 0:
+            parts.append(f"已重算 {auto_n} 个自动贝位")
+        bearing = summary.get("y_axis_bearing_deg")
+        if bearing is not None:
+            parts.append(f"+Y 方位 {float(bearing):.2f}°")
+    else:
+        parts.append("仅本贝位，未改其它点")
     return ApiResponse(
         code=200,
         message="；".join(parts),
@@ -860,6 +918,7 @@ async def get_survey_history(
             SurveyPoint.created_at.asc(),
         ).all()
 
+        lycs_map = _mapping_lycs_by_id(db, yard_id, points)
         return ApiResponse(
             code=200,
             message="获取成功",
@@ -873,13 +932,17 @@ async def get_survey_history(
                     "lat": p.lat,
                     "lon": p.lon,
                     "alt": p.alt,
-                    "local_x": p.local_x,
-                    "local_y": p.local_y,
-                    "local_z": p.local_z,
+                    "local_x": (lycs_map.get(p.id) or {}).get("x", p.local_x),
+                    "local_y": (lycs_map.get(p.id) or {}).get("y", p.local_y),
+                    "local_z": (lycs_map.get(p.id) or {}).get("z", p.local_z),
+                    "lycs_x": (lycs_map.get(p.id) or {}).get("x"),
+                    "lycs_y": (lycs_map.get(p.id) or {}).get("y"),
+                    "lycs_z": (lycs_map.get(p.id) or {}).get("z"),
                     "source": p.source or "rtk",
                     "vehicle_id": p.vehicle_id,
                     "std_m": p.std_m,
                     "created_at": p.created_at.isoformat(),
+                    "updated_at": p.updated_at.isoformat() if p.updated_at else None,
                 }
                 for p in points
             ],

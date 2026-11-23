@@ -121,7 +121,8 @@ def bracket_bay_nos(
 ) -> Optional[dict[str, Any]]:
     """
     按堆场 Y 找出夹住轮胎的两个场地贝位。
-    返回 from_bay / to_bay（沿 +Y 从小到大）、各自 Y、以及插值比例 t∈[0,1]。
+    返回 from_bay / to_bay（沿 +Y 从小到大）、各自 Y、插值比例 t∈[0,1]，
+    以及更接近的贝位号 / 距离。
     """
     if len(bay_xy) < 2:
         return None
@@ -139,6 +140,12 @@ def bracket_bay_nos(
     else:
         t = (float(along_y) - float(y0)) / span
     t = max(0.0, min(1.0, t))
+    d0 = abs(float(along_y) - float(y0))
+    d1 = abs(float(along_y) - float(y1))
+    if d0 <= d1:
+        closer_bay, closer_dist_m, farther_bay = int(b0), d0, int(b1)
+    else:
+        closer_bay, closer_dist_m, farther_bay = int(b1), d1, int(b0)
     return {
         "from_bay": int(b0),
         "to_bay": int(b1),
@@ -146,7 +153,11 @@ def bracket_bay_nos(
         "to_y_m": round(float(y1), 4),
         "tire_y_m": round(float(along_y), 4),
         "t": round(float(t), 4),
+        "closer_bay": closer_bay,
+        "closer_dist_m": round(float(closer_dist_m), 4),
+        "farther_bay": farther_bay,
         "label": f"贝位 {int(b0)}–{int(b1)} 之间",
+        "hint": f"贝位 {int(b0)}–{int(b1)} 之间，更接近贝位 {closer_bay}",
     }
 
 
@@ -303,11 +314,49 @@ class BayOffsetBatchRequest(BaseModel):
     points: dict[str, dict[str, float]] = Field(default_factory=dict)
 
 
+class BayBetweenLycsRequest(BaseModel):
+    """用堆场 LYCS 坐标查轮胎夹在哪两个贝位之间（Dashboard 用）。"""
+    yard_id: str
+    side: str = "elec"
+    points: dict[str, dict[str, float]] = Field(default_factory=dict)
+
+
 class Wgs84ToLycsRequest(BaseModel):
     yard_id: str
     lat: float
     lon: float
     alt: float = 0.0
+
+
+def compute_bay_between_lycs(
+    db: Session,
+    yard_id: str,
+    lycs_y: float,
+    side: str = "elec",
+) -> Optional[dict[str, Any]]:
+    """按堆场 Y 返回电气/动力侧贝位夹持信息。"""
+    yard = db.query(Yard).filter(Yard.yard_id == yard_id).first()
+    if yard is None or yard.origin_lat is None or yard.origin_lon is None:
+        return None
+    elec_en = _mapping_side_en(db, yard, "elec")
+    diesel_en = _mapping_side_en(db, yard, "diesel")
+    axis = _yard_axis(yard, elec_en, diesel_en)
+    if axis is None:
+        return None
+    elec_bay_xy = _en_to_bay_xy(elec_en, axis)
+    diesel_bay_xy = _en_to_bay_xy(diesel_en, axis)
+    on_diesel = normalize_bay_side(side) == "diesel"
+    own_bay = diesel_bay_xy if on_diesel else elec_bay_xy
+    bay_between = bracket_bay_nos(float(lycs_y), own_bay)
+    if bay_between is None and on_diesel:
+        bay_between = bracket_bay_nos(float(lycs_y), elec_bay_xy)
+    if bay_between is None:
+        return None
+    return {
+        "yard_id": yard_id,
+        "side": "diesel" if on_diesel else "elec",
+        "bay_between": bay_between,
+    }
 
 
 def wgs84_to_lycs_m(
@@ -368,6 +417,24 @@ def bay_offset_batch(req: BayOffsetBatchRequest, db: Session = Depends(get_db)):
             continue
         out[name] = compute_bay_offset_m(db, req.yard_id, lat, lon, req.side, alt)
     return ApiResponse(data={"yard_id": req.yard_id, "side": req.side, "offsets": out})
+
+
+@router.post("/bay-between/lycs", response_model=ApiResponse)
+def bay_between_lycs(req: BayBetweenLycsRequest, db: Session = Depends(get_db)):
+    """Dashboard：轮胎 LYCS Y → 夹在哪两个贝位、更接近哪个。"""
+    out: dict[str, Any] = {}
+    for name, pt in (req.points or {}).items():
+        try:
+            y = float(pt["y"])
+        except (KeyError, TypeError, ValueError):
+            out[name] = None
+            continue
+        if not math.isfinite(y):
+            out[name] = None
+            continue
+        info = compute_bay_between_lycs(db, req.yard_id, y, req.side)
+        out[name] = None if info is None else info.get("bay_between")
+    return ApiResponse(data={"yard_id": req.yard_id, "side": req.side, "between": out})
 
 
 @router.get("/{vehicle_id}", response_model=ApiResponse)

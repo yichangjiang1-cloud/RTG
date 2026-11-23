@@ -401,6 +401,10 @@ export interface SurveyPoint {
   lon: number;
   alt: number;
   dz: number;
+  /** 堆场坐标系 LYCS（米），由建图历史接口按当前原点/+Y 计算 */
+  lycs_x?: number | null;
+  lycs_y?: number | null;
+  lycs_z?: number | null;
   timestamp: string;
   synced: boolean;
   source?: SurveyPointSource;

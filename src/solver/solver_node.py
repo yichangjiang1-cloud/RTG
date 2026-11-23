@@ -1078,9 +1078,9 @@ class SolverNode:
 
         gnss_speed, course_deg = _pick_gnss_motion(ga1, ga2, recv1_live, recv2_live)
 
-        # ── 大车速度估计（位移+GNSS融合，带多重保护） ──
+        # ── 大车速度估计（位移优先，GNSS 备用） ──
         _MAX_SPEED_DT = 2.0    # 会话间隔上限：超过视为重启/跳变
-        _STATIC_DECAY = 0.90   # 静止衰减因子（每帧×0.90，约 30 帧归零）
+        _STATIC_DECAY = 0.55   # 静止衰减（每接受帧×0.55，约 6 帧归零）
 
         cur_live = int(recv1_live) + int(recv2_live)
         prev_live = getattr(self, "_last_gantry_live_count", cur_live)
@@ -1162,10 +1162,15 @@ class SolverNode:
         speed_abs = abs(gantry.speed)
         moving = speed_abs >= DEADBAND_MPS or self._last_speed_log > DEADBAND_MPS
         if moving and now - self._last_speed_log_time >= 1.0:
+            pos_est = (
+                math.hypot(dx, dy) / dt
+                if dt >= PAIR_DT else float("nan")
+            )
             logger.info(
-                "[速度] gantry.speed=%.4f m/s | gnss=%.4f course=%.1f | "
+                "[速度] gantry.speed=%.4f m/s | pos≈%.4f gnss=%.4f course=%.1f | "
                 "dx=%.4f dy=%.4f dt=%.3f | lpoint=(%.4f, %.4f) | recv=%d live | hdg=%.2f ω=%.1f°/s",
-                gantry.speed, gnss_speed, course_deg if course_deg is not None else float("nan"),
+                gantry.speed, pos_est, gnss_speed,
+                course_deg if course_deg is not None else float("nan"),
                 dx, dy, dt, gantry.lpoint_x, gantry.lpoint_y, cur_live, heading,
                 yaw_rate_dps,
             )
@@ -1554,20 +1559,25 @@ def _pick_gnss_motion(
     a1_live: bool,
     a2_live: bool,
 ) -> tuple[float, float | None]:
-    """取有实时数据接收机的 GNSS 地速与航迹角。"""
-    candidates = []
+    """取有实时数据接收机的 GNSS 地速与航迹角（两侧平均，避免取 max 偏高）。"""
+    speeds: list[float] = []
+    courses: list[float] = []
     if a1_live:
         spd = float(ga1.get("speed_mps", 0.0))
         if spd > 0:
-            candidates.append((spd, float(ga1.get("course_deg", 0.0))))
+            speeds.append(spd)
+            courses.append(float(ga1.get("course_deg", 0.0)))
     if a2_live:
         spd = float(ga2.get("speed_mps", 0.0))
         if spd > 0:
-            candidates.append((spd, float(ga2.get("course_deg", 0.0))))
-    if not candidates:
+            speeds.append(spd)
+            courses.append(float(ga2.get("course_deg", 0.0)))
+    if not speeds:
         return 0.0, None
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    return candidates[0]
+    mag = sum(speeds) / len(speeds)
+    # 航迹角：取更接近平均地速的那一侧，避免两侧航迹差 180° 时乱平均
+    best_i = min(range(len(speeds)), key=lambda i: abs(speeds[i] - mag))
+    return mag, courses[best_i]
 
 
 def _apply_matrix(M: np.ndarray, x: float, y: float):

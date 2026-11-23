@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -10,6 +10,35 @@ import { StatCard, StatusBadge, StatusDot, Compass } from './common';
 import { useAppContext } from '../context/AppContext';
 import type { RealtimeData } from '../types';
 import { gnssAtEnd } from '../utils/gnssName';
+import { httpBase } from '../utils/backendUrl';
+
+type BayBetweenHint = {
+  from_bay: number;
+  to_bay: number;
+  closer_bay?: number;
+  closer_dist_m?: number;
+  hint?: string;
+  label?: string;
+  t?: number;
+};
+
+function fmtElecBayHint(
+  b: BayBetweenHint | null | undefined,
+  status: 'idle' | 'loading' | 'ok' | 'no_yard' | 'error',
+): string {
+  if (b && b.from_bay != null && b.to_bay != null) {
+    const closer = b.closer_bay != null ? `，更接近贝位 ${b.closer_bay}` : '';
+    const dist =
+      b.closer_dist_m != null && Number.isFinite(b.closer_dist_m)
+        ? `（约 ${b.closer_dist_m.toFixed(2)} m）`
+        : '';
+    return `在贝位 ${b.from_bay}–${b.to_bay} 之间${closer}${dist}`;
+  }
+  if (status === 'no_yard') return '贝位区间：无当前堆场';
+  if (status === 'loading') return '贝位区间：计算中…';
+  if (status === 'error') return '贝位区间：查询失败';
+  return '贝位区间：—';
+}
 
 /** 速度显示死区，与中控 motion_speed.DEADBAND_MPS 一致 */
 const SPEED_DISPLAY_DEADBAND = 0.03;
@@ -36,11 +65,22 @@ interface DashboardProps {
   connStatus: 'connecting' | 'connected' | 'disconnected';
 }
 
+function roundYardY(y: number | null | undefined): number | null {
+  if (y == null || !Number.isFinite(y)) return null;
+  // 厘米级取整：避免 WS 每帧毫米抖动反复取消贝位查询
+  return Math.round(y * 100) / 100;
+}
+
 export default function Dashboard({ data, history, isMock, connStatus }: DashboardProps) {
-  const { vehicles, selectedVehicleId } = useAppContext();
+  const { vehicles, selectedVehicleId, selectedYardId, backendConfig, useMock } = useAppContext();
   const layout = vehicles.find(v => v.vehicle_id === selectedVehicleId)?.receiver_layout;
   const attCmp = data.gantry_attitude_compare;
   const fourGgaReady = attCmp?.four_ready === true;
+  const [elecBayHints, setElecBayHints] = useState<{
+    gnss1: BayBetweenHint | null;
+    gnss2: BayBetweenHint | null;
+  }>({ gnss1: null, gnss2: null });
+  const [elecBayHintStatus, setElecBayHintStatus] = useState<'idle' | 'loading' | 'ok' | 'no_yard' | 'error'>('idle');
 
   const chartData = useMemo(
     () =>
@@ -52,6 +92,75 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
       })),
     [history],
   );
+
+  const elecTireYs = useMemo(() => {
+    const up = data.gantry.tires?.elec_upstream;
+    const dn = data.gantry.tires?.elec_downstream;
+    const gnss1End = gnssAtEnd(layout, 'elec', 'downstream') === 'GNSS1' ? 'downstream' : 'upstream';
+    const g1 = gnss1End === 'downstream' ? dn : up;
+    const g2 = gnss1End === 'downstream' ? up : dn;
+    return {
+      gnss1: g1?.valid === true && Number.isFinite(g1.y) ? roundYardY(g1.y) : null,
+      gnss2: g2?.valid === true && Number.isFinite(g2.y) ? roundYardY(g2.y) : null,
+    };
+  }, [data.gantry.tires, layout]);
+
+  const resolveYardId = (data.yard_id || selectedYardId || '').trim();
+
+  useEffect(() => {
+    if (useMock || isMock) {
+      setElecBayHints({ gnss1: null, gnss2: null });
+      setElecBayHintStatus('idle');
+      return;
+    }
+    const yardId = resolveYardId;
+    if (!yardId) {
+      setElecBayHints({ gnss1: null, gnss2: null });
+      setElecBayHintStatus('no_yard');
+      return;
+    }
+    const points: Record<string, { y: number }> = {};
+    if (elecTireYs.gnss1 != null) points.gnss1 = { y: elecTireYs.gnss1 };
+    if (elecTireYs.gnss2 != null) points.gnss2 = { y: elecTireYs.gnss2 };
+    if (!Object.keys(points).length) {
+      setElecBayHints({ gnss1: null, gnss2: null });
+      setElecBayHintStatus('idle');
+      return;
+    }
+    const baseUrl = httpBase(backendConfig);
+    const ac = new AbortController();
+    setElecBayHintStatus((s) => (s === 'ok' ? s : 'loading'));
+    const timer = window.setTimeout(() => {
+      fetch(`${baseUrl}/api/lever-check/bay-between/lycs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ yard_id: yardId, side: 'elec', points }),
+        signal: ac.signal,
+      })
+        .then(async (r) => {
+          const j = await r.json().catch(() => null);
+          if (!r.ok || j?.code !== 200) throw new Error(j?.message || `HTTP ${r.status}`);
+          return j;
+        })
+        .then((j) => {
+          const between = j?.data?.between || {};
+          setElecBayHints({
+            gnss1: between.gnss1 ?? null,
+            gnss2: between.gnss2 ?? null,
+          });
+          setElecBayHintStatus('ok');
+        })
+        .catch((err) => {
+          if (err?.name === 'AbortError') return;
+          // 保留上次成功结果，避免抖动请求失败时闪成 —
+          setElecBayHintStatus((s) => (s === 'ok' ? s : 'error'));
+        });
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      ac.abort();
+    };
+  }, [backendConfig, resolveYardId, elecTireYs.gnss1, elecTireYs.gnss2, useMock, isMock]);
 
   // 非模拟模式且未真实连接时，显示遮罩
   const showOverlay = !isMock && connStatus !== 'connected';
@@ -335,6 +444,10 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
               const tireKey = `${role}_${end}` as 'elec_upstream' | 'elec_downstream' | 'diesel_upstream' | 'diesel_downstream';
               const point = data.gantry.tires?.[tireKey];
               const ok = point?.valid === true;
+              const bayHint =
+                role === 'elec'
+                  ? (gnss === 'GNSS1' ? elecBayHints.gnss1 : elecBayHints.gnss2)
+                  : null;
               return (
               <div key={label} className="bg-slate-900/50 rounded-lg p-3">
                 <p className="section-title mb-2">{label}</p>
@@ -351,6 +464,11 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
                       {formatCoordM(point?.y ?? 0, ok)}
                   </span>
                 </div>
+                {role === 'elec' && (
+                  <p className="text-[10px] text-slate-400 leading-snug pt-1">
+                    {ok ? fmtElecBayHint(bayHint, elecBayHintStatus) : '贝位区间：无数据'}
+                  </p>
+                )}
                 </div>
               </div>
               );

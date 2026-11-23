@@ -25,6 +25,18 @@ def test_update_blend_stays_near_two():
     assert 1.7 <= state.speed <= 2.3
 
 
+def test_prefers_pos_over_stale_gnss():
+    """减速时 GNSS 仍偏高：应以作业点差分为准，尽快跟上。"""
+    state = MotionSpeedState(speed=0.80)
+    for _ in range(8):
+        # 航向 0° 前向为 +X；差分约 0.15 m/s，GNSS 仍报 0.70
+        update_motion_speed(
+            state, 0.015, 0.0, 0.10,
+            gnss_speed_mps=0.70, course_deg=0.0, heading_deg=0.0,
+        )
+    assert abs(state.speed) < 0.35
+
+
 def test_along_heading_ignores_rotation_sweep():
     """朝北时纯横向位移（原地转的切向）不计入大车速度。"""
     state = MotionSpeedState()
