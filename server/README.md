@@ -46,6 +46,7 @@ RTG 高精度定位系统的 **Web 后端**：连接 **中控机（MQTT）**、*
 | ① | RTK 场地真值（建图） | `POST /api/survey/confirm` (mapping) | `survey_points`, `yards.mapped` |
 | ② | RTG 静态参数 | `POST /api/vehicle/config` | `vehicle_configs` |
 | ③ | 车辆校准（逐贝对比） | `confirm` (calibration) → `finalize` | `vehicle_bay_transforms`, `calibration_data` |
+| 调试 | 航向死区纠偏（会改 PLC 12–15） | `POST /api/vehicle/heading-deadband` | `vehicle_configs.heading_deadband` |
 | 作业 | 读校准态 / 实时定位 | `GET /api/yard/map`, `WS /ws/realtime` | 聚合查询 + WS |
 
 **校准模式**（`GET /api/calibration/mode`）：
@@ -128,7 +129,7 @@ server/
 | `Vehicle` | `vehicles` | 车辆注册：`vehicle_id`、`sn`、是否已初始化 |
 | `Yard` | `yards` | 堆场元数据：原点、朝向、贝位数、`mapped`（有 RTK 即为 true） |
 | `SurveyPoint` | `survey_points` | **RTK 真值**（`point_type=mapping` 等），按 `yard_id + bay_no` 覆盖 |
-| `VehicleConfig` | `vehicle_configs` | 杆臂、跨距、天线角色等静态参数 |
+| `VehicleConfig` | `vehicle_configs` | 杆臂、姿态、航向死区、天线角色等静态参数 |
 | `VehicleBayTransform` | `vehicle_bay_transforms` | **逐贝校准**：RTK ref vs 车载 meas、`delta_*` |
 | `CalibrationData` | `calibration_data` | 每车每场地一条：`status`、`m_matrix`（finalize 快照） |
 

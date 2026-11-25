@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -6,11 +6,19 @@ import {
   Navigation, Activity, Signal, Layers, Gauge,
   ArrowLeftRight, MoveHorizontal, WifiOff, Loader2,
 } from 'lucide-react';
-import { StatCard, StatusBadge, StatusDot, Compass } from './common';
+import { StatCard, StatusBadge, StatusDot, Compass, showToast } from './common';
 import { useAppContext } from '../context/AppContext';
 import type { RealtimeData } from '../types';
 import { gnssAtEnd } from '../utils/gnssName';
 import { httpBase } from '../utils/backendUrl';
+
+const HDG_DB_KEY = (vid: string) => `rtg.heading_deadband.${vid}`;
+
+type HdgDeadbandLocal = {
+  enabled: boolean;
+  refDeg: string;
+  bandDeg: string;
+};
 
 type BayBetweenHint = {
   from_bay: number;
@@ -81,6 +89,80 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
     gnss2: BayBetweenHint | null;
   }>({ gnss1: null, gnss2: null });
   const [elecBayHintStatus, setElecBayHintStatus] = useState<'idle' | 'loading' | 'ok' | 'no_yard' | 'error'>('idle');
+  const [hdgDb, setHdgDb] = useState<HdgDeadbandLocal>({
+    enabled: false,
+    refDeg: '',
+    bandDeg: '0.5',
+  });
+  const [hdgDbBusy, setHdgDbBusy] = useState(false);
+
+  useEffect(() => {
+    if (!selectedVehicleId) return;
+    try {
+      const raw = localStorage.getItem(HDG_DB_KEY(selectedVehicleId));
+      if (!raw) {
+        setHdgDb({ enabled: false, refDeg: data.heading.toFixed(2), bandDeg: '0.5' });
+        return;
+      }
+      const s = JSON.parse(raw) as HdgDeadbandLocal;
+      setHdgDb({
+        enabled: Boolean(s.enabled),
+        refDeg: s.refDeg || data.heading.toFixed(2),
+        bandDeg: s.bandDeg || '0.5',
+      });
+    } catch {
+      setHdgDb({ enabled: false, refDeg: data.heading.toFixed(2), bandDeg: '0.5' });
+    }
+    // 仅切换车辆时加载本地缓存
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedVehicleId]);
+
+  const pushHeadingDeadband = useCallback(async (next: HdgDeadbandLocal) => {
+    if (!selectedVehicleId) {
+      showToast('请先选择车辆', 'error');
+      return;
+    }
+    const ref = parseFloat(next.refDeg);
+    const band = parseFloat(next.bandDeg);
+    if (!Number.isFinite(ref)) {
+      showToast('请填写有效的参考航向', 'error');
+      return;
+    }
+    if (!Number.isFinite(band) || band < 0) {
+      showToast('死区须为 ≥0 的数字', 'error');
+      return;
+    }
+    setHdgDb(next);
+    try {
+      localStorage.setItem(HDG_DB_KEY(selectedVehicleId), JSON.stringify(next));
+    } catch { /* */ }
+    if (isMock || useMock) {
+      showToast(next.enabled ? `模拟：死区 ±${band}° 已开` : '模拟：死区已关');
+      return;
+    }
+    setHdgDbBusy(true);
+    try {
+      const res = await fetch(`${httpBase(backendConfig)}/api/vehicle/heading-deadband`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vehicle_id: selectedVehicleId,
+          enabled: next.enabled,
+          ref_deg: ref,
+          band_deg: band,
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json() as { code: number; message?: string };
+      if (json.code !== 200) throw new Error(json.message || '下发失败');
+      showToast(next.enabled ? `死区纠偏已开 ±${band.toFixed(2)}°` : '死区纠偏已关');
+    } catch (e) {
+      showToast(`下发失败：${e instanceof Error ? e.message : e}`, 'error');
+    } finally {
+      setHdgDbBusy(false);
+    }
+  }, [selectedVehicleId, isMock, useMock, backendConfig]);
 
   const chartData = useMemo(
     () =>
@@ -181,10 +263,12 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
       )}
       {/* Top stat row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="card p-5 sm:col-span-2 lg:col-span-1">
-          <p className="section-title mb-1">大车 L-Point（堆场坐标）</p>
-          <p className="text-[10px] text-slate-500 mb-3">解算输出 · LYCS · X 北向，Y 东向</p>
-          <div className="space-y-1">
+        <div className="card p-5 flex flex-col sm:col-span-2 lg:col-span-1">
+          <div>
+            <p className="section-title mb-1">大车 L-Point（堆场坐标）</p>
+            <p className="text-[10px] text-slate-500">解算输出 · LYCS · X 北向，Y 东向</p>
+          </div>
+          <div className="space-y-1 my-auto">
             <div className="flex justify-between items-baseline">
               <span className="text-[10px] text-slate-500">X</span>
               <span className="font-mono text-emerald-400 text-sm">{data.local_coord.x.toFixed(4)} m</span>
@@ -200,10 +284,12 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
           </div>
         </div>
 
-        <div className="card p-5">
-          <p className="section-title mb-1">大车 L-Point（大地坐标）</p>
-          <p className="text-[10px] text-slate-500 mb-3">解算输出 · WGS84 · 由堆场坐标反算</p>
-          <div className="space-y-1">
+        <div className="card p-5 flex flex-col">
+          <div>
+            <p className="section-title mb-1">大车 L-Point（大地坐标）</p>
+            <p className="text-[10px] text-slate-500">解算输出 · WGS84 · 由堆场坐标反算</p>
+          </div>
+          <div className="space-y-1 my-auto">
             <div className="flex justify-between items-baseline">
               <span className="text-[10px] text-slate-500">LAT</span>
               <span className="font-mono text-blue-400 text-sm">{data.lpoint_geo.lat.toFixed(8)}°</span>
@@ -219,7 +305,7 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
           </div>
         </div>
 
-        <div className="card p-5 flex flex-col max-h-[16rem]">
+        <div className="card p-5 flex flex-col max-h-[10rem]">
           <p className="section-title mb-1 shrink-0">实时姿态（主通道 · L-Point）</p>
           <div className="min-h-0 flex-1 overflow-y-auto pr-1 space-y-3 scrollbar-thin">
             <div>
@@ -254,7 +340,9 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
                   </div>
                 ))}
               </div>
+
             </div>
+
 
             <p className="text-[10px] text-slate-600 pt-2 border-t border-slate-800 leading-relaxed">
               {fourGgaReady
@@ -280,6 +368,86 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
             {new Date(data.timestamp).toLocaleTimeString('zh-CN')}
           </div>
         </div>
+      </div>
+
+      {/* 航向死区纠偏：只改轮胎投影航向，会改下发 PLC 12-15；上方 Heading 仍显示真实值 */}
+      <div className="card p-4">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <p className="section-title">
+            航向死区纠偏
+            <span className="ml-1 text-[10px] font-normal text-slate-500">（仅投影 · 会改下发 PLC 12-15）</span>
+          </p>
+          <label className="flex items-center gap-1.5 text-[11px] text-slate-300 cursor-pointer">
+            <input
+              type="checkbox"
+              className="rounded border-slate-600"
+              checked={hdgDb.enabled}
+              disabled={hdgDbBusy}
+              onChange={(e) => {
+                void pushHeadingDeadband({ ...hdgDb, enabled: e.target.checked });
+              }}
+            />
+            {hdgDb.enabled ? '已启用' : '关闭'}
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] text-slate-500">
+            参考航向
+            <span className="inline-block w-24">
+              <input
+                className="input-field font-mono text-[11px] py-1 px-2"
+                type="number"
+                step="0.01"
+                value={hdgDb.refDeg}
+                disabled={hdgDbBusy}
+                onChange={(e) => setHdgDb((s) => ({ ...s, refDeg: e.target.value }))}
+              />
+            </span>
+            °
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] text-slate-500">
+            死区 ±
+            <span className="inline-block w-20">
+              <input
+                className="input-field font-mono text-[11px] py-1 px-2"
+                type="number"
+                step="0.05"
+                min="0"
+                value={hdgDb.bandDeg}
+                disabled={hdgDbBusy}
+                onChange={(e) => setHdgDb((s) => ({ ...s, bandDeg: e.target.value }))}
+              />
+            </span>
+            °
+          </label>
+          <button
+            type="button"
+            className="btn-outline text-[9px] px-2 py-1"
+            disabled={hdgDbBusy}
+            onClick={() => setHdgDb((s) => ({ ...s, refDeg: data.heading.toFixed(2) }))}
+          >
+            记当前航向
+          </button>
+          <button
+            type="button"
+            className="btn-primary text-[9px] px-2 py-1"
+            disabled={hdgDbBusy}
+            onClick={() => void pushHeadingDeadband(hdgDb)}
+          >
+            {hdgDbBusy ? '下发中…' : '应用到中控'}
+          </button>
+          {data.heading_deadband?.enabled ? (
+            <span className="font-mono text-[10px] text-emerald-400/90">
+              投影用 {data.heading_deadband.heading_proj != null ? `${data.heading_deadband.heading_proj.toFixed(2)}°` : '—'}
+              {' · '}真实 {data.heading.toFixed(2)}°
+              {' · '}Δ {data.heading_deadband.delta_deg != null ? `${data.heading_deadband.delta_deg >= 0 ? '+' : ''}${data.heading_deadband.delta_deg.toFixed(2)}°` : '—'}
+              {data.heading_deadband.antennas_rotated ? ' · 天线已随航向旋转' : ''}
+              {' · '}ref {data.heading_deadband.ref_deg != null ? `${data.heading_deadband.ref_deg.toFixed(2)}°` : '—'}
+              ±{data.heading_deadband.band_deg ?? '—'}°
+            </span>
+          ) : null}
+        </div>
+        <p className="mt-1 text-[9px] text-slate-600 leading-relaxed">
+          停正记下参考角；|Δ|≤死区用参考角投轮胎，超出则只保留超出部分。上方 Heading 仍显示真实值。
+        </p>
       </div>
 
       {/* Main content row */}

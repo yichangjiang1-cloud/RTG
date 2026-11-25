@@ -87,6 +87,7 @@ def persist_vehicle_params(
     l_arm_diesel = l_arm_diesel_down
     cal = block.get("l_arm_calibration")
     gantry_att = block.get("gantry_attitude")
+    hdb = block.get("heading_deadband")
     if not (
         l_arm_elec
         or l_arm_diesel
@@ -97,6 +98,7 @@ def persist_vehicle_params(
         or isinstance(block.get("receiver_layout"), dict)
         or isinstance(block.get("ntrip"), dict)
         or isinstance(block.get("trolley"), dict)
+        or isinstance(hdb, dict)
     ):
         return False
 
@@ -151,6 +153,9 @@ def persist_vehicle_params(
         trolley_cfg = block.get("trolley")
         if isinstance(trolley_cfg, dict) and trolley_cfg:
             data["trolley"] = trolley_cfg
+
+        if isinstance(hdb, dict) and hdb:
+            data["heading_deadband"] = hdb
 
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:

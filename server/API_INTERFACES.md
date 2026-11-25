@@ -241,11 +241,39 @@ Base URL: `http://localhost:8000`
     "height": 8.45,
     "w_span": 20.0,
     "antennas": {"ant1": {"label": "大车左前"}},
+    "gantry_attitude": {"mode": "four_antenna", "baseline_m": 6.93, "antenna_body": {"a1": [0, 0, 0]}},
+    "heading_deadband": {"enabled": false, "ref_deg": 228.22, "band_deg": 0.5},
     "created_at": "2026-05-29T15:28:10",
     "updated_at": "2026-05-29T15:35:10"
   }
 }
 ```
+
+---
+
+### 1.7 航向死区纠偏
+
+`POST /api/vehicle/heading-deadband`
+
+仪表盘调试用：`|Δ| ≤ band` 时轮胎投影用 `ref_deg`；`|Δ| > band` 时只保留超出部分（`ref_deg ± (|Δ| − band)`）。
+**只改轮胎/杆臂投影航向，页面 Heading 仍显示真实值**；但投影结果会进入下发 PLC 的字段 12–15（四个轮胎横向偏离），因此该开关会影响 PLC 下发。
+
+**请求：**
+
+```json
+{"vehicle_id": "RTG-001", "enabled": true, "ref_deg": 228.22, "band_deg": 0.5}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `vehicle_id` | string | 必填 |
+| `enabled` | bool | 开关，缺省 `false` |
+| `ref_deg` | float\|null | 停正时记下的参考航向；缺省则不覆盖旧值 |
+| `band_deg` | float\|null | 死区宽度（0~10）；缺省则不覆盖旧值 |
+
+**副作用：**
+- `vehicle_configs.heading_deadband`：merge 落库，重启/云同步时可恢复
+- MQTT：向 `rtg/{vehicle_id}/control` 下发 `SET_HEADING_DEADBAND`，中控落盘 `vehicle_params.yaml`
 
 ---
 
@@ -910,7 +938,7 @@ ws://localhost:8000/ws/realtime?vehicle_id=RTG-001
 | 表名 | 用途 | 关键字段 |
 |------|------|----------|
 | `vehicles` | 车辆注册 | `vehicle_id`, `sn`, `initialized` |
-| `vehicle_configs` | 步骤② 静态参数 | `l_arm`, `height`, `w_span`, `antennas` |
+| `vehicle_configs` | 步骤② 静态参数 | `l_arm_elec_up/down`, `l_arm_diesel_up/down`, `gantry_attitude`, `heading_deadband`, `antennas` |
 | `yards` | 堆场元信息 | `origin_*`, `mapped`（有 RTK 真值即为 true） |
 | `survey_points` | 步骤① RTK 真值 | `point_type=mapping`, `bay_no`, `lat/lon/alt` |
 | `vehicle_bay_transforms` | 步骤③ 逐贝转换列表 | `(vehicle_id, yard_id, bay_no)` 唯一，`ref_*`, `meas_*`, `delta_*` |

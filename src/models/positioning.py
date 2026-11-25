@@ -226,4 +226,6 @@ class PositionResult:
     gantry_attitude_compare: dict = field(default_factory=dict)
     # 左右机历元对齐诊断：dt_s / source(utc|arrival) / dropped
     gnss_pair_align: dict = field(default_factory=dict)
+    # 仪表盘航向死区纠偏：enabled/ref/band/heading_raw/heading_proj（仅投影用）
+    heading_deadband: dict = field(default_factory=dict)
 

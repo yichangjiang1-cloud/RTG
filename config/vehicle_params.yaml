@@ -22,6 +22,10 @@ ntrip:
   username: ''
   password: ''
   gga_interval_s: 10
+heading_deadband:
+  enabled: true
+  ref_deg: 228.22
+  band_deg: 0.6
 gantry:
   attitude:
     mode: four_antenna
@@ -50,12 +54,12 @@ gantry:
       baseline_m: 6.933269456068031
       source: live
   l_arm_elec: &id001
-  - 0.6167019035190608
-  - 1.2754491275429523
+  - 0.62
+  - 1.242
   - 20.957634046185856
   l_arm_diesel: &id002
   - 0.6721052718693612
-  - -0.2955152773635714
+  - -0.32
   - 20.922582001545145
   l_arm_calibration:
     elec_up:
@@ -100,8 +104,8 @@ gantry:
         pitch: 0.017031419767323988
         heading: 228.26442800083632
       l_arm:
-      - 0.6167019035190608
-      - 1.2754491275429523
+      - 0.62
+      - 1.242
       - 20.957634046185856
       method: snapshot
       receiver_id: gantry_a1
@@ -112,6 +116,7 @@ gantry:
         gga_order:
         - elec
         - diesel
+      note: 原始采集有误，按现场实测更正 dx/dy；dz 与上水未动；antenna/lpoint 快照未改
     diesel_down:
       measured_at: '2026-11-22T02:36:37.501Z'
       lpoint:
@@ -128,7 +133,7 @@ gantry:
         heading: 228.26442800083632
       l_arm:
       - 0.6721052718693612
-      - -0.2955152773635714
+      - -0.32
       - 20.922582001545145
       method: snapshot
       receiver_id: gantry_a2
@@ -139,6 +144,7 @@ gantry:
         gga_order:
         - elec
         - diesel
+      note: 原始采集有误，按现场实测更正 dx/dy；dz 与上水未动；antenna/lpoint 快照未改
     diesel_up:
       measured_at: '2026-11-22T02:36:26.352Z'
       lpoint:
@@ -166,6 +172,55 @@ gantry:
         gga_order:
         - elec
         - diesel
+    corrections:
+    - at: '2026-11-25T08:58:28+08:00'
+      by: 现场人工
+      reason: 原始采集有误，按现场实测更正 dx/dy；dz 与上水未动；antenna/lpoint 快照未改
+      ends:
+        elec_down:
+          before:
+          - 0.6167019035190608
+          - 1.2754491275429523
+          - 20.957634046185856
+          after:
+          - 0.62
+          - 1.242
+          - 20.957634046185856
+          delta_mm:
+          - 3.3
+          - -33.4
+          - 0.0
+          lpoint_derived:
+            lat: 32.20067468
+            lon: 119.05381151
+            alt: 9.63179745
+          lpoint_delta_body_m:
+          - -0.0033
+          - 0.033444
+          - 0.0
+          lpoint_delta_mm: 33.6
+        diesel_down:
+          before:
+          - 0.6721052718693612
+          - -0.2955152773635714
+          - 20.922582001545145
+          after:
+          - 0.6721052718693612
+          - -0.32
+          - 20.922582001545145
+          delta_mm:
+          - 0.0
+          - -24.5
+          - 0.0
+          lpoint_derived:
+            lat: 32.20083326
+            lon: 119.05364656
+            alt: 9.79885226
+          lpoint_delta_body_m:
+          - -2.0e-06
+          - 0.024485
+          - 0.0
+          lpoint_delta_mm: 24.5
   l_arm_elec_down: *id001
   l_arm_elec_up:
   - -1.8345539038413001

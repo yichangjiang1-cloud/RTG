@@ -275,6 +275,7 @@ class RTGSystem:
           - YARD_MAP_UPDATED:      场地贝位点变更（RTG 头尾采点 / 重采），重新同步
           - SET_ACTIVE_YARD:       前端场地偏好（仅重叠消歧）；yard_id 空则恢复面积最小
           - SET_TROLLEY_ORIGIN:    小车零点（捕获/手动/重置）
+          - SET_HEADING_DEADBAND:  仪表盘航向死区纠偏（仅轮胎投影）
 
         建图/校准采点走 Web API（POST /api/survey/confirm），不经 MQTT 打点指令。
         """
@@ -298,6 +299,8 @@ class RTGSystem:
                 self._handle_set_active_yard(cmd)
             elif cmd_type == "SET_TROLLEY_ORIGIN":
                 self._handle_set_trolley_origin(cmd)
+            elif cmd_type == "SET_HEADING_DEADBAND":
+                self._handle_set_heading_deadband(cmd)
             else:
                 logger.warning(f"⚠ 未知控制指令: {cmd_type}")
         except Exception as e:
@@ -496,6 +499,20 @@ class RTGSystem:
         if isinstance(trolley_cfg, dict):
             self._solver_node.apply_trolley_origin_config(trolley_cfg)
             persist_vehicle_params({"trolley": trolley_cfg}, self._vehicle_params_path)
+
+    def _handle_set_heading_deadband(self, cmd: dict) -> None:
+        """仪表盘航向死区：仅改轮胎投影航向，显示仍用真实角；同步落盘 vehicle_params.yaml。"""
+        data = cmd.get("data", {}) or {}
+        enabled = bool(data.get("enabled", False))
+        ref = data.get("ref_deg", None)
+        band = data.get("band_deg", None)
+        info = self._solver_node.set_heading_deadband(
+            enabled,
+            None if ref is None else float(ref),
+            None if band is None else float(band),
+        )
+        logger.info("✓ 航向死区已更新: %s", info)
+        persist_vehicle_params({"heading_deadband": info}, self._vehicle_params_path)
 
     # ------------------------------------------------------------------
     # 堆场数据：API 真源 + yard_config.yaml 备份

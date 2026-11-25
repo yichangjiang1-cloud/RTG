@@ -178,6 +178,16 @@ export interface RealtimeData {
   heading: number;
   roll: number;
   pitch: number;
+  /** 航向死区纠偏状态（仅投影；heading 字段仍为真实角） */
+  heading_deadband?: {
+    enabled?: boolean;
+    ref_deg?: number | null;
+    band_deg?: number | null;
+    heading_raw?: number | null;
+    heading_proj?: number | null;
+    delta_deg?: number | null;
+    antennas_rotated?: boolean;
+  };
   /** 主通道姿态来源，如 nmea_a1+roll_height */
   attitude_source?: string;
   /** NMEA+高差 vs 四 GGA 刚体 对比 */

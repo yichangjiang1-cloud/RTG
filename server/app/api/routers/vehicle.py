@@ -1,8 +1,9 @@
 """车辆管理接口"""
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import json
 import math
 
@@ -162,6 +163,54 @@ def _publish_trolley_origin(vehicle_id: str, payload: dict) -> None:
     body = {"cmd": "SET_TROLLEY_ORIGIN", "data": payload}
     _mqtt_client.publish(topic, json.dumps(body, ensure_ascii=False, default=str), qos=1)
     logger.info(f"已下发小车零点: {topic} action={payload.get('action')}")
+
+
+class HeadingDeadbandRequest(BaseModel):
+    vehicle_id: str
+    enabled: bool = False
+    ref_deg: Optional[float] = None
+    band_deg: Optional[float] = Field(default=None, ge=0.0, le=10.0)
+
+
+@router.post("/heading-deadband", response_model=ApiResponse)
+async def set_heading_deadband(req: HeadingDeadbandRequest, db: Session = Depends(get_db)):
+    """
+    仪表盘航向死区纠偏：|Δ|≤band 用 ref；超出则 ref±(|Δ|-band)。
+    只影响轮胎/杆臂投影，遥测显示仍为真实航向。
+    """
+    vehicle_id = (req.vehicle_id or "").strip()
+    if not vehicle_id:
+        raise HTTPException(status_code=400, detail="需要 vehicle_id")
+    vehicle = db.query(Vehicle).filter(Vehicle.vehicle_id == vehicle_id).first()
+    if vehicle is None:
+        raise HTTPException(status_code=404, detail=f"车辆 {vehicle_id} 不存在")
+    if not _mqtt_client or not _mqtt_client.is_connected():
+        raise HTTPException(status_code=503, detail="MQTT 未连接，无法通知中控")
+
+    data = {"enabled": bool(req.enabled)}
+    if req.ref_deg is not None:
+        data["ref_deg"] = float(req.ref_deg) % 360.0
+    if req.band_deg is not None:
+        data["band_deg"] = float(req.band_deg)
+
+    # 落库：merge 到 vehicle_configs.heading_deadband，供重启/云同步恢复
+    cfg = db.query(VehicleConfig).filter(VehicleConfig.vehicle_id == vehicle_id).first()
+    hdb = dict(getattr(cfg, "heading_deadband", None) or {}) if cfg else {}
+    hdb["enabled"] = bool(req.enabled)
+    if req.ref_deg is not None:
+        hdb["ref_deg"] = float(req.ref_deg) % 360.0
+    if req.band_deg is not None:
+        hdb["band_deg"] = float(req.band_deg)
+    if cfg is not None:
+        cfg.heading_deadband = hdb
+        db.commit()
+
+    topic = f"rtg/{vehicle_id}/control"
+    body = {"cmd": "SET_HEADING_DEADBAND", "data": data}
+    _mqtt_client.publish(topic, json.dumps(body, ensure_ascii=False, default=str), qos=1)
+    logger.info("已下发航向死区并落库: %s %s", topic, data)
+    return ApiResponse(code=200, message="航向死区已下发", data={"vehicle_id": vehicle_id, **hdb})
+
 
 @router.post("/init", response_model=ApiResponse)
 async def init_vehicle(
@@ -565,6 +614,7 @@ async def get_vehicle_config(vehicle_id: str, db: Session = Depends(get_db)):
                 **_arms_payload(config),
                 "antennas": config.antennas,
                 "gantry_attitude": config.gantry_attitude,
+                "heading_deadband": getattr(config, "heading_deadband", None),
                 "receiver_layout": config.receiver_layout,
                 "ntrip": getattr(config, "ntrip", None),
                 "trolley": config.trolley,

@@ -50,7 +50,12 @@ from src.solver.side_layout import (
     parse_side_layout,
     split_sides,
 )
-from src.fusion.gantry_attitude import normalize_tire_attitude
+from src.fusion.gantry_attitude import (
+    apply_heading_deadband,
+    normalize_tire_attitude,
+    rotate_receiver_antennas_for_heading,
+    _circular_diff_deg,
+)
 from src.fusion.gnss_pair import (
     DEFAULT_MAX_PAIR_SKEW_S,
     DEFAULT_TIRE_PAIR_HOLD_S,
@@ -191,6 +196,20 @@ class SolverNode:
             att_block = gantry_block.get("attitude") if isinstance(gantry_block.get("attitude"), dict) else {}
         # 主通道统一整车姿态（忽略配置里遗留的 per_side）
         self._tire_attitude = "rigid"
+        # 仪表盘航向死区纠偏：仅投影用，显示仍用真实航向；启动从配置读默认值
+        hdb = cfg.get("heading_deadband") if isinstance(cfg.get("heading_deadband"), dict) else {}
+        self._hdg_deadband_enabled = bool(hdb.get("enabled", False))
+        self._hdg_deadband_ref_deg = (
+            float(hdb["ref_deg"]) if hdb.get("ref_deg") is not None else 0.0
+        ) % 360.0
+        self._hdg_deadband_band_deg = max(0.0, float(hdb.get("band_deg", 0.5)))
+        self._last_heading_deadband: dict = {
+            "enabled": False,
+            "ref_deg": None,
+            "band_deg": 0.5,
+            "heading_raw": None,
+            "heading_proj": None,
+        }
         self._last_elec_y: Optional[tuple[float, float]] = None
         self._last_diesel_y: Optional[tuple[float, float]] = None
         self._last_trolley_x: Optional[tuple[float, float]] = None
@@ -204,6 +223,29 @@ class SolverNode:
         self._yard_missing_logged = False
         self._solve_place = ""
         logger.info("SolverNode 初始化完成 tire_attitude=%s", self._tire_attitude)
+
+    def set_heading_deadband(
+        self,
+        enabled: bool,
+        ref_deg: Optional[float] = None,
+        band_deg: Optional[float] = None,
+    ) -> dict:
+        """仪表盘调试：航向死区纠偏开关与参数。"""
+        self._hdg_deadband_enabled = bool(enabled)
+        if ref_deg is not None:
+            self._hdg_deadband_ref_deg = float(ref_deg) % 360.0
+        if band_deg is not None:
+            self._hdg_deadband_band_deg = max(0.0, float(band_deg))
+        info = {
+            "enabled": self._hdg_deadband_enabled,
+            "ref_deg": round(self._hdg_deadband_ref_deg, 4),
+            "band_deg": round(self._hdg_deadband_band_deg, 4),
+        }
+        logger.info(
+            "航向死区纠偏: enabled=%s ref=%.4f° band=±%.4f°",
+            info["enabled"], info["ref_deg"], info["band_deg"],
+        )
+        return info
 
     # ------------------------------------------------------------------
     # 回调：处理融合状态
@@ -784,30 +826,65 @@ class SolverNode:
         upstream = self._upstream_heading(ga1, ga2, recv1_live, recv2_live)
         synth = att_cmp.get("synthetic_heading")
         if tire_mode == "per_side" and synth is not None:
-            heading = float(synth)
+            heading_raw = float(synth)
         elif upstream is not None:
-            heading = float(upstream)
+            heading_raw = float(upstream)
         else:
-            heading = float((ga1 if recv1_live else ga2).get("heading") or 0.0)
+            heading_raw = float((ga1 if recv1_live else ga2).get("heading") or 0.0)
 
+        # 死区纠偏：投影航向 + 天线绕水平中心转到该航向，再投轮胎；显示仍用真实航向
+        if self._hdg_deadband_enabled:
+            heading_proj = apply_heading_deadband(
+                heading_raw,
+                self._hdg_deadband_ref_deg,
+                self._hdg_deadband_band_deg,
+            )
+        else:
+            heading_proj = heading_raw
+        dpsi = float(_circular_diff_deg(heading_raw, heading_proj))
+        antennas_rotated = abs(dpsi) >= 1e-4
+
+        # 显示/参考天线保持实测；投影用「转到 heading_proj」的天线副本
         ga1 = dict(ga1)
         ga2 = dict(ga2)
-        ga1["heading"] = heading
-        ga2["heading"] = heading
+        ga1["heading"] = heading_raw
+        ga2["heading"] = heading_raw
         ga1["roll"] = roll
         ga2["roll"] = roll
+        ga1_proj, ga2_proj = ga1, ga2
+        if antennas_rotated:
+            ga1_proj, ga2_proj = rotate_receiver_antennas_for_heading(
+                ga1, ga2, recv1_live, recv2_live, dpsi,
+            )
+            ga1_proj = dict(ga1_proj)
+            ga2_proj = dict(ga2_proj)
+            ga1_proj["heading"] = heading_proj
+            ga2_proj["heading"] = heading_proj
+            ga1_proj["roll"] = roll
+            ga2_proj["roll"] = roll
+
+        self._last_heading_deadband = {
+            "enabled": bool(self._hdg_deadband_enabled),
+            "ref_deg": round(float(self._hdg_deadband_ref_deg), 4),
+            "band_deg": round(float(self._hdg_deadband_band_deg), 4),
+            "heading_raw": round(float(heading_raw), 4),
+            "heading_proj": round(float(heading_proj), 4),
+            "delta_deg": round(float(dpsi), 4),
+            "antennas_rotated": bool(antennas_rotated),
+        }
 
         tires_ecef = self._four_tire_ecef(
-            ga1,
-            ga2,
+            ga1_proj,
+            ga2_proj,
             roll,
             pitch,
-            heading,
+            heading_proj,
             recv1_live,
             recv2_live,
             attitude_compare=att_cmp,
             tire_attitude=tire_mode,
         )
+        heading = heading_raw
         # 历元丢一侧 → 四轮胎暂时不齐 → 场内/场外狂跳；短时用上一帧齐整轮胎填缺
         tires_ecef, tires_held = merge_held_tires(
             tires_ecef,
@@ -857,6 +934,7 @@ class SolverNode:
                 else "轮胎中心不在任一堆场多边形内"
             )
             self._note_solve_place(f"场外（{reason}）")
+            outside.heading_deadband = dict(self._last_heading_deadband)
             return outside
 
         self._note_solve_place(f"场内 {yard_id}")
@@ -1022,6 +1100,7 @@ class SolverNode:
         result.gantry.heading = float(hdg_src.get("heading", 0.0))
         result.gantry.pitch = float(hdg_src.get("pitch", 0.0))
         result.gantry.roll = float(hdg_src.get("roll", 0.0))
+        result.heading_deadband = dict(self._last_heading_deadband)
         return result
 
     def _solve_gantry(
@@ -1425,6 +1504,13 @@ class SolverNode:
         trolley_cfg = block.get("trolley")
         if isinstance(trolley_cfg, dict):
             self.apply_trolley_origin_config(trolley_cfg)
+        hdb = block.get("heading_deadband")
+        if isinstance(hdb, dict):
+            self.set_heading_deadband(
+                bool(hdb.get("enabled", False)),
+                hdb.get("ref_deg"),
+                hdb.get("band_deg"),
+            )
 
     def reload_calibration(
         self,

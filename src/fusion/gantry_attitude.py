@@ -243,6 +243,131 @@ def _circular_diff_deg(a: float, b: float) -> float:
     return (b - a + 180.0) % 360.0 - 180.0
 
 
+def apply_heading_deadband(
+    heading_deg: float,
+    ref_deg: float,
+    band_deg: float,
+) -> float:
+    """
+    航向死区纠偏（仅用于轮胎/杆臂投影，不改显示）：
+      |Δ| ≤ band → 用 ref
+      |Δ| > band → ref + sign(Δ)·(|Δ| − band)
+    例：ref=228.22, band=0.5, 真值偏 0.6° → 投影用 228.32 / 228.12。
+    """
+    ref = normalize_heading_deg(ref_deg)
+    band = max(0.0, float(band_deg))
+    if band <= 0.0:
+        return normalize_heading_deg(heading_deg)
+    delta = _circular_diff_deg(ref, float(heading_deg))
+    if abs(delta) <= band:
+        return ref
+    return normalize_heading_deg(ref + math.copysign(abs(delta) - band, delta))
+
+
+def _yaw_rotate_enu_cw(east: float, north: float, delta_heading_deg: float) -> tuple[float, float]:
+    """
+    航向增大（北 0 顺时针）时，水平点绕竖轴顺时针转 Δψ。
+    航向从 0→ψ 时，原正北点 (0,L) → (L·sinψ, L·cosψ)。
+    """
+    d = math.radians(float(delta_heading_deg))
+    c, s = math.cos(d), math.sin(d)
+    return east * c + north * s, -east * s + north * c
+
+
+def rotate_receiver_antennas_for_heading(
+    ga1: dict,
+    ga2: dict,
+    recv1_live: bool,
+    recv2_live: bool,
+    delta_heading_deg: float,
+) -> tuple[dict, dict]:
+    """
+    投影航向相对真实航向转了 Δψ 时：天线 ECEF 未变，须先绕天线群水平中心
+    按同一 Δψ 转到「投影姿态」下，再套杆臂算轮胎。
+    Δψ = wrap(heading_proj − heading_raw)。|Δψ|<1e-4° 时原样返回。
+    """
+    from src.solver.coordinate_transform import (
+        ecef_to_enu,
+        ecef_to_wgs84,
+        enu_to_ecef,
+    )
+
+    dpsi = float(_circular_diff_deg(0.0, float(delta_heading_deg)))
+    if abs(dpsi) < 1e-4:
+        return ga1, ga2
+
+    # 参考点：优先左机主天线 WGS84，否则右机
+    if recv1_live and ga1:
+        ref_lat = float(ga1.get("lat") or 0.0)
+        ref_lon = float(ga1.get("lon") or 0.0)
+        ref_alt = float(ga1.get("alt") or 0.0)
+    elif recv2_live and ga2:
+        ref_lat = float(ga2.get("lat") or 0.0)
+        ref_lon = float(ga2.get("lon") or 0.0)
+        ref_alt = float(ga2.get("alt") or 0.0)
+    else:
+        return ga1, ga2
+
+    slots: list[tuple[str, tuple[str, str, str], tuple[str, str, str]]] = []
+
+    def _push(side: str, live: bool, g: dict, primary: bool) -> None:
+        if not live or not g:
+            return
+        if primary:
+            slots.append((
+                side,
+                ("ecef_x", "ecef_y", "ecef_z"),
+                ("lat", "lon", "alt"),
+            ))
+        elif g.get("has_antenna2"):
+            slots.append((
+                side,
+                ("antenna2_ecef_x", "antenna2_ecef_y", "antenna2_ecef_z"),
+                ("antenna2_lat", "antenna2_lon", "antenna2_alt"),
+            ))
+
+    out1, out2 = dict(ga1), dict(ga2)
+    side_map = {"a1": out1, "a2": out2}
+    _push("a1", recv1_live, out1, True)
+    _push("a1", recv1_live, out1, False)
+    _push("a2", recv2_live, out2, True)
+    _push("a2", recv2_live, out2, False)
+    if not slots:
+        return ga1, ga2
+
+    enu_pts: list[tuple[float, float, float]] = []
+    valid_slots: list[tuple[str, tuple[str, str, str], tuple[str, str, str]]] = []
+    for side, ekeys, wkeys in slots:
+        g = side_map[side]
+        try:
+            x = float(g.get(ekeys[0]) or 0.0)
+            y = float(g.get(ekeys[1]) or 0.0)
+            z = float(g.get(ekeys[2]) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if abs(x) < 1.0 and abs(y) < 1.0:
+            continue
+        e, n, u = ecef_to_enu(x, y, z, ref_lat, ref_lon, ref_alt)
+        enu_pts.append((e, n, u))
+        valid_slots.append((side, ekeys, wkeys))
+
+    if len(enu_pts) < 1:
+        return ga1, ga2
+
+    ce = sum(p[0] for p in enu_pts) / len(enu_pts)
+    cn = sum(p[1] for p in enu_pts) / len(enu_pts)
+
+    for (side, ekeys, wkeys), (e, n, u) in zip(valid_slots, enu_pts):
+        e2, n2 = _yaw_rotate_enu_cw(e - ce, n - cn, dpsi)
+        x2, y2, z2 = enu_to_ecef(e2 + ce, n2 + cn, u, ref_lat, ref_lon, ref_alt)
+        g = side_map[side]
+        g[ekeys[0]], g[ekeys[1]], g[ekeys[2]] = x2, y2, z2
+        lat, lon, alt = ecef_to_wgs84(x2, y2, z2)
+        g[wkeys[0]], g[wkeys[1]], g[wkeys[2]] = lat, lon, alt
+
+    return out1, out2
+
+
 def _resolve_baseline_heading(heading_deg: float, ref_heading: Optional[float]) -> float:
     """
     双 GGA 基线航向存在 180° 模糊；用 PASHR/NMEA 参考航向消歧。

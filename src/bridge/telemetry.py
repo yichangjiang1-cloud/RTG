@@ -167,6 +167,7 @@ def position_result_to_realtime(result: PositionResult) -> dict:
         "heading": g.heading,
         "roll": g.roll,
         "pitch": g.pitch,
+        "heading_deadband": getattr(result, "heading_deadband", None) or {},
         "attitude_source": (
             (result.gantry_attitude_compare or {}).get("primary") or {}
         ).get("source", ""),

@@ -96,6 +96,7 @@ class VehicleConfig(Base):
     antennas = Column(JSON, nullable=True)  # 天线标识 {"ant1": {"label": "大车左前"}, ...}，用于区分 6 根天线的物理角色
     l_arm_calibration = Column(JSON, nullable=True)  # 杆臂智能标定溯源 {elec?, diesel?}
     gantry_attitude = Column(JSON, nullable=True)  # 姿态 {mode, baseline_m, roll_span_m, antenna_body}
+    heading_deadband = Column(JSON, nullable=True)  # 航向死区纠偏 {enabled, ref_deg, band_deg}
     receiver_layout = Column(JSON, nullable=True)  # 接收机布局 / EVK host:port / transport
     ntrip = Column(JSON, nullable=True)  # 全局 NTRIP {enabled, caster_host, mountpoint, ...}
     trolley = Column(JSON, nullable=True)  # 小车零点 {origin_mode, origin_body} 大车车体系
