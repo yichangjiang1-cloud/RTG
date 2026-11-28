@@ -280,6 +280,8 @@ def encode_gnss_to_plc(
     # 16-17：电气/动力侧作业点到堆场原点的平面距离 √(X²+Y²)（mm）
     # 18：小车相对起始零点的行程 |travel_distance|（mm）
     #     起始零点 = 静态采集时小车相对大车停放位置（车体系 origin_body）
+    #     取的是车体系 Y（沿门架横梁的真实行程），不是堆场系 ΔX：
+    #     横梁方向才是小车实际走的轨道，斜停时两者差 cos(偏航角)，这里不能用堆场系。
     gantry_elec_mm = _planar_dist_mm(g.center_elec_side, g.center_elec_y)
     gantry_dsl_mm = _planar_dist_mm(g.center_engine_side, g.center_engine_y)
     trolley_travel_mm = abs(_m_to_mm(t.travel_distance))

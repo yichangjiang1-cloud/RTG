@@ -423,6 +423,13 @@ export function useWebSocket({ url, forceMock, onDiscovery }: UseWebSocketOption
                   y: Number(trolleyPos.y ?? 0),
                   z: Number(trolleyPos.z ?? 0),
                 },
+                // 堆场系位移（X 横跨 / Y 沿贝位）；老中控没有就留 undefined，
+                // 页面会用 position 兜底。这里必须显式带过来，否则会被本函数丢掉。
+                position_yard: trolleyRaw.position_yard ? {
+                  x: Number(trolleyRaw.position_yard.x ?? 0),
+                  y: Number(trolleyRaw.position_yard.y ?? 0),
+                  z: Number(trolleyRaw.position_yard.z ?? 0),
+                } : undefined,
                 body_position: trolleyRaw.body_position ? {
                   x: Number(trolleyRaw.body_position.x ?? 0),
                   y: Number(trolleyRaw.body_position.y ?? 0),

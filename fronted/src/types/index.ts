@@ -94,6 +94,8 @@ export interface TrolleyData {
   valid?: boolean;
   /** 相对零点位置（大车车体系） */
   position: LocalCoord;
+  /** 相对零点位置（堆场 LYCS）：X 横跨、Y 沿贝位，与大车 L-Point 同轴；老中控没有此字段 */
+  position_yard?: LocalCoord;
   /** 当前位置（大车车体系，相对 L-Point） */
   body_position?: LocalCoord;
   /** 已配置零点（大车车体系） */
@@ -169,6 +171,10 @@ export interface RealtimeData {
   lpoint_geo: GpsCoord;
   /** 解算输出：大车 L-Point 堆场坐标 (LYCS) */
   local_coord: LocalCoord;
+  /** 堆场 +Y 的东向分量；与 north 同时接近 0 表示未拟合贝位轴 */
+  yard_axis_east?: number;
+  /** 堆场 +Y 的北向分量 */
+  yard_axis_north?: number;
   /** 解算输入：参考接收机主天线 WGS84 */
   ref_antenna: RefAntennaCoord;
   /** 接收机1 副天线 A2 WGS84（智能杆臂标定柴油机侧） */

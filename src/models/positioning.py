@@ -127,6 +127,12 @@ class TrolleyResult:
     rel_y: float = 0.0
     rel_z: float = 0.0
 
+    # ---- 相对起始零点（堆场 LYCS，米；供页面显示，与大车 L-Point 同轴）----
+    # X 横跨跑道（垂直贝位线），Y 沿贝位线（下水→上水）。
+    # 只是把 rel_x / rel_y 按当前航向投影过去，物理上是同一个位移。
+    rel_x_yard: float = 0.0
+    rel_y_yard: float = 0.0
+
     # ---- 已配置零点（大车车体系，供前端展示）----
     origin_body_x: float = 0.0
     origin_body_y: float = 0.0

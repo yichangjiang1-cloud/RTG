@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -84,6 +84,11 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
   const layout = vehicles.find(v => v.vehicle_id === selectedVehicleId)?.receiver_layout;
   const attCmp = data.gantry_attitude_compare;
   const fourGgaReady = attCmp?.four_ready === true;
+  // 小车位移：优先用堆场系（与大车 L-Point 同轴）；老中控没有该字段时退回车体系
+  const tPosYard = data.trolley.position_yard ?? data.trolley.position;
+  // 堆场 +Y 已拟合到贝位轴？两个分量都接近 0 说明还是默认的 (X 北, Y 东)
+  const yardAxisFitted =
+    Math.hypot(data.yard_axis_east ?? 0, data.yard_axis_north ?? 0) > 0.1;
   const [elecBayHints, setElecBayHints] = useState<{
     gnss1: BayBetweenHint | null;
     gnss2: BayBetweenHint | null;
@@ -189,60 +194,72 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
 
   const resolveYardId = (data.yard_id || selectedYardId || '').trim();
 
+  // 贝位区间查询：改成固定节流轮询。
+  // 原来是 250 ms debounce + 依赖"厘米级 Y"，车一动 Y 每 ~20 ms 变一次，
+  // 定时器一直被重置 → 只有停下来才真正发请求（看起来"刷新很慢"）。
+  // 现在用 ref 拿最新值，按固定间隔发，最多在途一个请求。
+  const tireYRef = useRef(elecTireYs);
+  tireYRef.current = elecTireYs;
+  const bayYardIdRef = useRef(resolveYardId);
+  bayYardIdRef.current = resolveYardId;
+
   useEffect(() => {
     if (useMock || isMock) {
       setElecBayHints({ gnss1: null, gnss2: null });
       setElecBayHintStatus('idle');
       return;
     }
-    const yardId = resolveYardId;
-    if (!yardId) {
-      setElecBayHints({ gnss1: null, gnss2: null });
-      setElecBayHintStatus('no_yard');
-      return;
-    }
-    const points: Record<string, { y: number }> = {};
-    if (elecTireYs.gnss1 != null) points.gnss1 = { y: elecTireYs.gnss1 };
-    if (elecTireYs.gnss2 != null) points.gnss2 = { y: elecTireYs.gnss2 };
-    if (!Object.keys(points).length) {
-      setElecBayHints({ gnss1: null, gnss2: null });
-      setElecBayHintStatus('idle');
-      return;
-    }
+    let alive = true;
+    let inFlight = false;
     const baseUrl = httpBase(backendConfig);
-    const ac = new AbortController();
-    setElecBayHintStatus((s) => (s === 'ok' ? s : 'loading'));
-    const timer = window.setTimeout(() => {
-      fetch(`${baseUrl}/api/lever-check/bay-between/lycs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ yard_id: yardId, side: 'elec', points }),
-        signal: ac.signal,
-      })
-        .then(async (r) => {
-          const j = await r.json().catch(() => null);
-          if (!r.ok || j?.code !== 200) throw new Error(j?.message || `HTTP ${r.status}`);
-          return j;
-        })
-        .then((j) => {
-          const between = j?.data?.between || {};
-          setElecBayHints({
-            gnss1: between.gnss1 ?? null,
-            gnss2: between.gnss2 ?? null,
-          });
-          setElecBayHintStatus('ok');
-        })
-        .catch((err) => {
-          if (err?.name === 'AbortError') return;
-          // 保留上次成功结果，避免抖动请求失败时闪成 —
-          setElecBayHintStatus((s) => (s === 'ok' ? s : 'error'));
+
+    const poll = async () => {
+      if (inFlight) return;
+      const yardId = bayYardIdRef.current;
+      if (!yardId) {
+        setElecBayHints({ gnss1: null, gnss2: null });
+        setElecBayHintStatus('no_yard');
+        return;
+      }
+      const { gnss1, gnss2 } = tireYRef.current;
+      const points: Record<string, { y: number }> = {};
+      if (gnss1 != null) points.gnss1 = { y: gnss1 };
+      if (gnss2 != null) points.gnss2 = { y: gnss2 };
+      if (!Object.keys(points).length) {
+        setElecBayHints({ gnss1: null, gnss2: null });
+        setElecBayHintStatus('idle');
+        return;
+      }
+      inFlight = true;
+      try {
+        const r = await fetch(`${baseUrl}/api/lever-check/bay-between/lycs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ yard_id: yardId, side: 'elec', points }),
         });
-    }, 250);
-    return () => {
-      window.clearTimeout(timer);
-      ac.abort();
+        const j = await r.json().catch(() => null);
+        if (!r.ok || j?.code !== 200) throw new Error(j?.message || `HTTP ${r.status}`);
+        if (!alive) return;
+        const between = j?.data?.between || {};
+        setElecBayHints({ gnss1: between.gnss1 ?? null, gnss2: between.gnss2 ?? null });
+        setElecBayHintStatus('ok');
+      } catch {
+        // 保留上次成功结果，避免抖动请求失败时闪成 —
+        if (alive) setElecBayHintStatus((s) => (s === 'ok' ? s : 'error'));
+      } finally {
+        inFlight = false;
+      }
     };
-  }, [backendConfig, resolveYardId, elecTireYs.gnss1, elecTireYs.gnss2, useMock, isMock]);
+
+    setElecBayHintStatus((s) => (s === 'ok' ? s : 'loading'));
+    void poll();
+    // 250 ms 一轮（4 Hz）：本地后端一次往返只有几毫秒，够快也不刷屏
+    const id = window.setInterval(() => { void poll(); }, 250);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [backendConfig, useMock, isMock]);
 
   // 非模拟模式且未真实连接时，显示遮罩
   const showOverlay = !isMock && connStatus !== 'connected';
@@ -266,7 +283,9 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
         <div className="card p-5 flex flex-col sm:col-span-2 lg:col-span-1">
           <div>
             <p className="section-title mb-1">大车 L-Point（堆场坐标）</p>
-            <p className="text-[10px] text-slate-500">解算输出 · LYCS · X 北向，Y 东向</p>
+            <p className="text-[10px] text-slate-500">
+              解算输出 · LYCS · {yardAxisFitted ? 'X 横跨，Y 沿贝位' : 'X 北向，Y 东向（未拟合贝位轴）'}
+            </p>
           </div>
           <div className="space-y-1 my-auto">
             <div className="flex justify-between items-baseline">
@@ -652,11 +671,15 @@ export default function Dashboard({ data, history, isMock, connStatus }: Dashboa
 
           {/* 相对起始点位置 + 速度 */}
           <div className="grid grid-cols-3 gap-2 text-center">
-            {(['x', 'y', 'z'] as const).map(axis => (
-              <div key={axis} className="bg-slate-900/50 rounded-lg p-2">
-                <p className="section-title mb-1">Δ{axis.toUpperCase()}</p>
+            {([
+              ['ΔX 横跨', tPosYard.x],
+              ['ΔY 沿贝位', tPosYard.y],
+              ['ΔZ 高度', data.trolley.position.z],
+            ] as [string, number][]).map(([label, value]) => (
+              <div key={label} className="bg-slate-900/50 rounded-lg p-2">
+                <p className="section-title mb-1">{label}</p>
                 <span className="font-mono text-emerald-400 text-sm">
-                  {data.trolley.position[axis].toFixed(3)} m
+                  {value.toFixed(3)} m
                 </span>
               </div>
             ))}

@@ -1,6 +1,7 @@
-﻿"""
+"""
 驱动节点：driver_node
-负责编排所有接收机线程（GNSS x 3 + IMU x 1）的生命周期管理。
+负责编排所有接收机线程（GNSS x 3 + 可选 IMU x 1）的生命周期管理。
+IMU 由 imu.enabled 控制，默认关闭（现场用接收机内置解，不单独接 IMU）。
 大车：一侧 EVK(TCP) + 一侧双 GGA(UDP)，谁是 EVK 由 layout.transport 决定；
 小车保持 UDP 监听。
 全局一份 NTRIP，RTCM 仅转发给大车 EVK(TCP) 侧。
@@ -53,8 +54,13 @@ class DriverNode:
             self._by_role[role] = rcv
 
         imu_host = cfg.get("imu.host", "0.0.0.0")
-        imu_port = cfg.get("imu.port", 9010)
-        self._imu_receiver = ImuReceiver(host=imu_host, port=imu_port)
+        imu_port = int(cfg.get("imu.port", 9010))
+        self._imu_enabled = bool(cfg.get("imu.enabled", False))
+        if self._imu_enabled:
+            self._imu_receiver = ImuReceiver(host=imu_host, port=imu_port)
+        else:
+            self._imu_receiver = None
+            logger.info("IMU 未启用（imu.enabled=false），不启动 IMU 接收线程")
 
         self._init_ntrip_from_cfg(cfg)
 
@@ -191,8 +197,9 @@ class DriverNode:
     def start(self) -> None:
         """启动所有接收机线程。"""
         self._running = True
+        imu_note = " + 1 台 IMU" if self._imu_receiver else "（IMU 未启用）"
         logger.info(
-            f"DriverNode 启动，共 {len(self._receivers)} 台 GNSS 接收机 + 1 台 IMU"
+            f"DriverNode 启动，共 {len(self._receivers)} 台 GNSS 接收机{imu_note}"
         )
         for rcv in self._receivers:
             logger.info(

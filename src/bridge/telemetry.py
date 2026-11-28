@@ -137,6 +137,10 @@ def position_result_to_realtime(result: PositionResult) -> dict:
         "timestamp": timestamp,
         "yard_id": result.yard_id,
         "current_bay_no": int(result.current_bay_no or 0),
+        # 堆场 +Y 方向（东/北分量）：两个都接近 0 表示未拟合贝位轴，
+        # 此时 LYCS 退回默认 (X 北, Y 东)；否则 X 横跨、Y 沿贝位。
+        "yard_axis_east": getattr(result, "yard_axis_east", 0.0),
+        "yard_axis_north": getattr(result, "yard_axis_north", 0.0),
         # 解算输出：大车 L-Point
         "lpoint_geo": {
             "lat": result.lpoint_latitude,
@@ -284,6 +288,12 @@ def position_result_to_realtime(result: PositionResult) -> dict:
             "position": {
                 "x": t.rel_x,
                 "y": t.rel_y,
+                "z": t.rel_z,
+            },
+            # 堆场 LYCS 下的同一位移：X 横跨、Y 沿贝位（与大车 L-Point 同轴）
+            "position_yard": {
+                "x": getattr(t, "rel_x_yard", t.rel_x),
+                "y": getattr(t, "rel_y_yard", t.rel_y),
                 "z": t.rel_z,
             },
             "body_position": {

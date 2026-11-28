@@ -64,9 +64,19 @@ fronted/node_modules/
 fronted/.npm_cache
 
 # 临时/本地工具脚本
-tools/test.py
-tools/test_roll.py
+tools
+tests
 
 # 大型 GNSS 回放日志（本地联调用）
 tests/20260407_gnss_mock/COM*_clean.log
 tests/20260407_gnss_mock/.claude/
+
+# 相关文档
+book
+docs
+
+全场备份
+首尾贝+逐贝位地图备份
+首尾贝地图
+首尾贝地图电气下水杆臂修正后备份
+deploy

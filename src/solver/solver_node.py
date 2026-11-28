@@ -73,7 +73,7 @@ from src.solver.motion_speed import (
     relative_planar_speed,
     use_gantry_speed_sample,
 )
-from src.solver.gantry_frame import lycs_to_gantry_body
+from src.solver.gantry_frame import heading_axes_lycs, lycs_to_gantry_body
 from src.utils.config_loader import get_config
 
 logger = logging.getLogger(__name__)
@@ -182,6 +182,8 @@ class SolverNode:
         self._last_raw_gantry_x: Optional[float] = None
         self._last_raw_gantry_y: Optional[float] = None
         self._gantry_motion = MotionSpeedState()
+        # 是否已经收到过机内地速（RMC/VTG）：决定速度幅值用 RMC 还是位置差分
+        self._gnss_speed_seen = False
         self._last_gantry_time: float = 0.0
         self._last_gantry_any_time: float = 0.0
         self._last_gantry_heading: float = 0.0
@@ -1181,7 +1183,14 @@ class SolverNode:
         self._apply_lane_corrections(gantry, transform, yard_id)
         self._fill_lane(gantry, transform, yard_id)
 
-        gnss_speed, course_deg = _pick_gnss_motion(ga1, ga2, recv1_live, recv2_live)
+        gnss_speed, gnss_signed, course_deg = _pick_gnss_motion(
+            ga1, ga2, recv1_live, recv2_live, heading
+        )
+        # 一旦收到过机内地速（RMC/VTG 非零），就认为这台接收机有速度输出，
+        # 之后幅值全信 RMC；只有全程拿不到速度的接收机才回退位置差分。
+        if gnss_speed > 0.0:
+            self._gnss_speed_seen = True
+        gnss_available = self._gnss_speed_seen
 
         # ── 大车速度估计（位移优先，GNSS 备用） ──
         _MAX_SPEED_DT = 2.0    # 会话间隔上限：超过视为重启/跳变
@@ -1238,9 +1247,14 @@ class SolverNode:
                     heading_deg=heading,
                     heading_prev_deg=self._last_gantry_heading,
                     r2d=speed_r2d,
+                    gnss_signed_mps=gnss_signed,
+                    gnss_available=gnss_available,
                 )
             elif gnss_speed >= DEADBAND_MPS:
-                hold_gnss_speed(self._gantry_motion, gnss_speed, course_deg, r2d=speed_r2d)
+                hold_gnss_speed(
+                    self._gantry_motion, gnss_speed, course_deg,
+                    r2d=speed_r2d, gnss_signed_mps=gnss_signed,
+                )
             elif abs(self._gantry_motion.speed) >= DEADBAND_MPS:
                 self._gantry_motion.speed *= _STATIC_DECAY
                 from src.solver.motion_speed import _snap
@@ -1382,6 +1396,11 @@ class SolverNode:
         trolley.rel_x = bx - ox
         trolley.rel_y = by - oy
         trolley.rel_z = bz - oz
+        # 同一个位移换到堆场系显示：X 横跨、Y 沿贝位（与大车 L-Point 同轴）。
+        # 只影响页面/遥测显示；行程与 PLC 字段 18 仍用车体系 Y（沿横梁的真实行程）。
+        (fx, fy), (rx, ry) = heading_axes_lycs(float(gantry.heading), transform.r2d)
+        trolley.rel_x_yard = trolley.rel_x * fx + trolley.rel_y * rx
+        trolley.rel_y_yard = trolley.rel_x * fy + trolley.rel_y * ry
         trolley.travel_distance = trolley.rel_y
 
         # 相对速度 = 仪表盘 ΔX/ΔY 在约 0.4 s 内的变化率。
@@ -1670,26 +1689,41 @@ def _pick_gnss_motion(
     ga2: dict,
     a1_live: bool,
     a2_live: bool,
-) -> tuple[float, float | None]:
-    """取有实时数据接收机的 GNSS 地速与航迹角（两侧平均，避免取 max 偏高）。"""
-    speeds: list[float] = []
+    heading_deg: float,
+) -> tuple[float, float, float | None]:
+    """
+    两侧 GNSS 地速投影到航向、带符号平均。
+
+    每侧 v_i = speed_i·cos(course_i − heading)：
+      - 平移：两侧同号，平均后保留；
+      - 转向：两侧切向等值反向，平均后抵消，不会被当成走行速度。
+    原实现取绝对值平均，方向信息丢失，转向时会凭空多出一个速度。
+
+    返回 (沿航向幅值, 带符号合成值, 航迹角)。
+    """
+    signed: list[float] = []
+    mags: list[float] = []
     courses: list[float] = []
-    if a1_live:
-        spd = float(ga1.get("speed_mps", 0.0))
-        if spd > 0:
-            speeds.append(spd)
-            courses.append(float(ga1.get("course_deg", 0.0)))
-    if a2_live:
-        spd = float(ga2.get("speed_mps", 0.0))
-        if spd > 0:
-            speeds.append(spd)
-            courses.append(float(ga2.get("course_deg", 0.0)))
-    if not speeds:
-        return 0.0, None
-    mag = sum(speeds) / len(speeds)
-    # 航迹角：取更接近平均地速的那一侧，避免两侧航迹差 180° 时乱平均
-    best_i = min(range(len(speeds)), key=lambda i: abs(speeds[i] - mag))
-    return mag, courses[best_i]
+    for ga, live in ((ga1, a1_live), (ga2, a2_live)):
+        if not live:
+            continue
+        spd = float(ga.get("speed_mps", 0.0) or 0.0)
+        if spd <= 0.0:
+            continue
+        mags.append(spd)
+        crs = ga.get("course_deg")
+        if crs is None:
+            # 没有航迹角：只能给标量，方向留给位移判
+            signed.append(spd)
+            continue
+        c = float(crs)
+        courses.append(c)
+        signed.append(spd * math.cos(math.radians(c - float(heading_deg))))
+    if not mags:
+        return 0.0, 0.0, None
+    v = sum(signed) / len(signed)
+    mag = abs(v) if courses else sum(mags) / len(mags)
+    return mag, v, (courses[0] if courses else None)
 
 
 def _apply_matrix(M: np.ndarray, x: float, y: float):
